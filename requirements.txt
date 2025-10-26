@@ -1,0 +1,15 @@
+# basic scientific stack
+numpy
+scipy
+matplotlib
+pandas
+jupyterlab
+# Gmsh Python bindings + meshio for conversions
+gmsh
+meshio
+# PyMFEM (wrapper for MFEM) - pip may build MFEM during install
+mfem
+# optional helpers
+pygmsh
+# Mesh viewer
+meshio

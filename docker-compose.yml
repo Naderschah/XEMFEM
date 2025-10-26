@@ -1,0 +1,37 @@
+services:
+  mfem-shell:
+    build: .
+    user: felix
+    container_name: mfem_shell
+    tty: true
+    stdin_open: true
+    command: bash
+    profiles: ["shell"]
+    environment:
+      - DISPLAY=${DISPLAY}               # propagate DISPLAY
+      - QT_X11_NO_MITSHM=1
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw     # X11 socket
+      - $HOME/.Xauthority:/home/felix/.Xauthority:ro  # X auth (if used)
+      - /home/felix/MFEM_ENV:/home/felix/work:rw,delegated
+    devices:
+      - /dev/dri:/dev/dri                    # optional: hardware accel
+
+
+  mfem-jupyter:
+    build: .
+    user: felix 
+    container_name: mfem_jupyter
+    ports:
+      - "8888:8888"
+    command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --NotebookApp.token=''
+    environment:
+      - DISPLAY=${DISPLAY}               # propagate DISPLAY
+      - QT_X11_NO_MITSHM=1
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw     # X11 socket
+      - $HOME/.Xauthority:/home/felix/.Xauthority:ro  # X auth (if used)
+      - /home/felix/MFEM_ENV:/home/felix/work:rw,delegated
+    devices:
+      - /dev/dri:/dev/dri                    # optional: hardware accel
+
