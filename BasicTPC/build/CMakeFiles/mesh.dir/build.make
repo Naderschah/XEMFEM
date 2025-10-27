@@ -70,6 +70,11 @@ CMakeFiles/mesh: geometry.msh
 
 geometry.msh: build_geometry
 geometry.msh: /home/felix/work/BasicTPC/src/geometry/main.cpp
+geometry.msh: /home/felix/work/BasicTPC/src/geometry/partition_tools.cpp
+geometry.msh: /home/felix/work/BasicTPC/src/geometry/partition_tools.h
+geometry.msh: /home/felix/work/BasicTPC/src/geometry/debugging_things.cpp
+geometry.msh: /home/felix/work/BasicTPC/src/geometry/debugging_things.h
+geometry.msh: /home/felix/work/BasicTPC/src/constants.h
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/felix/work/BasicTPC/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Running geometry generator and copying tpc_occ.msh into build directory"
 	cd /home/felix/work/BasicTPC/src/geometry && /home/felix/work/BasicTPC/build/build_geometry
 	cd /home/felix/work/BasicTPC/src/geometry && /usr/bin/cmake -E copy_if_different /home/felix/work/BasicTPC/src/geometry/tpc_occ.msh /home/felix/work/BasicTPC/build/geometry.msh

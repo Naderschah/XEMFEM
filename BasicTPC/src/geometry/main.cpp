@@ -7,203 +7,13 @@
 #include <sstream>
 #include <unordered_set>
 
-// ------------ Debug flags ------------
-constexpr bool INCLUDE_BACKGROUND = true;
-constexpr bool INCLUDE_ANODE      = false;
-constexpr bool INCLUDE_CATHODE    = false;
 
-using DimTag = std::pair<int,int>;
+#include "constants.h" 
+#include "partition_tools.h" 
+#include "debugging_things.h"
+using namespace tpc::dbg;
 
-//---------------------------- Debugging --------------------------------
-// Print any surfaces whose 1D boundary isn't closed
-static void reportOpenSurfaceLoops() {
-  std::vector<DimTag> surfs;
-  gmsh::model::getEntities(surfs, 2);
-
-  int bad = 0;
-  for (const auto &s : surfs) {
-    // curves on this surface
-    std::vector<DimTag> curves;
-    gmsh::model::getBoundary({s}, curves,
-                             /*combined=*/false,
-                             /*oriented=*/true,
-                             /*recursive=*/false);
-
-    // count endpoints of all curves
-    std::unordered_map<int,int> pointDegree;
-
-    for (const auto &c : curves) {
-      if (c.first != 1) continue;
-      std::vector<DimTag> pts;
-      gmsh::model::getBoundary({c}, pts,
-                               /*combined=*/false,
-                               /*oriented=*/true,
-                               /*recursive=*/false);
-      for (const auto &p : pts)
-        if (p.first == 0) pointDegree[p.second]++; // end points
-    }
-
-    // endpoints in a closed loop come in pairs (even degree)
-    bool open = false;
-    for (const auto &kv : pointDegree) {
-      if (kv.second % 2 != 0) { open = true; break; }
-    }
-    if (open) {
-      bad++;
-      std::cout << "[OPEN] surface tag " << s.second
-                << " with " << curves.size()
-                << " boundary curves (odd-degree point found)\n";
-    }
-  }
-
-  if (bad == 0) std::cout << "All surface loops appear closed.\n";
-}
-// Collect unique surface tags bounding a volume
-static std::unordered_set<int> surfaceSetOfVolume(int volTag) {
-  std::vector<DimTag> bdr, arg = {{3, volTag}};
-  gmsh::model::getBoundary(arg, bdr, /*combined=*/true, /*oriented=*/false, /*recursive=*/false);
-  std::unordered_set<int> s;
-  for (auto &dt : bdr) if (dt.first == 2) s.insert(dt.second);
-  return s;
-}
-
-// Describe one surface: bbox, type, and which major volume(s) it belongs to
-static void describeSurface(int surfTag,
-                            const std::unordered_set<int> &bgSurfs,
-                            const std::unordered_set<int> &anodeSurfs,
-                            const std::unordered_set<int> &cathodeSurfs)
-{
-  // bbox
-  double xmin, ymin, zmin, xmax, ymax, zmax;
-  gmsh::model::getBoundingBox(2, surfTag, xmin, ymin, zmin, xmax, ymax, zmax);
-  const double cx = 0.5 * (xmin + xmax);
-  const double cy = 0.5 * (ymin + ymax);
-  const double cz = 0.5 * (zmin + zmax);
-
-  // type (output parameter)
-  std::string typ;
-  gmsh::model::getType(2, surfTag, typ); // e.g. "Plane Surface", "Cylinder"
-
-  // parents (volumes that own this surface)
-  std::vector<int> upDims, upTags;
-  gmsh::model::getAdjacencies(2, surfTag, upDims, upTags);
-  std::vector<int> parents;
-  for (size_t i = 0; i < upDims.size(); ++i)
-    if (upDims[i] == 3) parents.push_back(upTags[i]);
-
-  std::cout << "Surface " << surfTag
-            << "  type=" << typ
-            << "  bbox=[(" << xmin << "," << ymin << "," << zmin << ")→("
-            << xmax << "," << ymax << "," << zmax << ")]"
-            << "  center=(" << cx << "," << cy << "," << cz << ")\n";
-
-  std::cout << "  Belongs to volumes: ";
-  for (int v : parents) std::cout << v << " ";
-  std::cout << "\n";
-
-  std::cout << "  In sets: "
-            << (bgSurfs.count(surfTag) ? "Background " : "")
-            << (anodeSurfs.count(surfTag) ? "Anode " : "")
-            << (cathodeSurfs.count(surfTag) ? "Cathode " : "")
-            << "\n";
-}
-
-// Convenience: print summary for a specific tag (e.g. 8)
-static void debugSurfaceTag(int surfTag, int background_vol, int anodeVol, int cathodeVol) {
-  auto bgSet      = surfaceSetOfVolume(background_vol);
-  auto anodeSet   = surfaceSetOfVolume(anodeVol);
-  auto cathodeSet = surfaceSetOfVolume(cathodeVol);
-  describeSurface(surfTag, bgSet, anodeSet, cathodeSet);
-}
-// helper: join tags into comma-separated list
-static std::string joinTags(const std::vector<DimTag> &vec) {
-  std::ostringstream ss;
-  for (size_t i = 0; i < vec.size(); ++i) {
-    if (i > 0) ss << ", ";
-    ss << vec[i].second;
-  }
-  return ss.str();
-}
-
-// concise debug wrapper for gmsh::model::occ::fragment
-static void debugFragment(const std::string &title,
-                          const std::vector<DimTag> &objects,
-                          const std::vector<DimTag> &tools,
-                          std::vector<DimTag> &newEntities,
-                          std::vector<std::vector<DimTag>> &provenanceByInput,
-                          int tag = -1,
-                          bool removeObject = true,
-                          bool removeTool = false)
-{
-  std::cout << "\n=== " << title << " ===\n";
-  std::cout << "Objects (" << objects.size() << "): " << joinTags(objects);
-  if (removeObject) std::cout << "  [marked for removal]";
-  std::cout << '\n';
-
-  std::cout << "Tools (" << tools.size() << "): " << joinTags(tools);
-  if (removeTool) std::cout << "  [marked for removal]";
-  std::cout << '\n';
-
-  gmsh::model::occ::fragment(objects, tools,
-                             newEntities, provenanceByInput,
-                             tag, removeObject, removeTool);
-
-  std::cout << "NewEntities (" << newEntities.size() << "): "
-            << joinTags(newEntities) << '\n';
-
-  for (size_t i = 0; i < provenanceByInput.size(); ++i)
-    std::cout << "Provenance[" << i << "] ("
-              << provenanceByInput[i].size() << "): "
-              << joinTags(provenanceByInput[i]) << '\n';
-
-  std::cout << "============================================================\n";
-}
-
-auto getSurfaces = [](int volTag) {
-  std::vector<std::pair<int,int>> vol = {{3, volTag}};
-  std::vector<std::pair<int,int>> surfs;
-  gmsh::model::getBoundary(vol, surfs, /*combined=*/true, /*oriented=*/false, /*recursive=*/false);
-
-  // Extract the surface tags only without the dim specifier
-  std::vector<int> surfTags;
-  surfTags.reserve(surfs.size());
-  for (auto &dt : surfs)
-    if (dt.first == 2) surfTags.push_back(dt.second);
-  return surfTags;
-};
-// Remove any 2D faces that are not on the boundary of a 3D volume
-static void removeOrphanSurfaces() {
-  // Collect all 2D faces that actually bound some 3D volume
-  std::vector<DimTag> vols;
-  gmsh::model::getEntities(vols, 3);
-
-  std::unordered_set<int> boundarySurfs;
-  for (const auto &v : vols) {
-    std::vector<DimTag> bdr;
-    gmsh::model::getBoundary({v}, bdr, /*combined=*/true, /*oriented=*/false, /*recursive=*/false);
-    for (const auto &dt : bdr) if (dt.first == 2) boundarySurfs.insert(dt.second);
-  }
-
-  // Find *all* 2D faces
-  std::vector<DimTag> surfs;
-  gmsh::model::getEntities(surfs, 2);
-
-  // Any surface not in boundarySurfs is orphaned → remove it
-  std::vector<DimTag> toRemove;
-  toRemove.reserve(surfs.size());
-  for (const auto &s : surfs) {
-    if (!boundarySurfs.count(s.second)) toRemove.push_back(s);
-  }
-
-  if (!toRemove.empty()) {
-    std::cout << "Removing orphan surfaces: ";
-    for (auto &s : toRemove) std::cout << s.second << " ";
-    std::cout << "\n";
-    gmsh::model::occ::remove(toRemove, /*recursive=*/true);
-  }
-}
-
-//---------------------------- AnodeWires --------------------------------
+//---------------------------- Electrodes --------------------------------
 
 auto makeWire = [](double xc, double yc, double zc,
                    double length, double radius)
@@ -330,150 +140,215 @@ static int makeParallelWireElectrodeAssembly(double xCenter,
   return out.front().second;
 }
 
+// --------------- PTFE Wall ----------------------
+
+static int makeCylindricalSleeve(double zMin, double zMax,
+                                 double rInner, double rOuter)
+{
+  const double h = zMax - zMin;
+  if (h <= 0.0 || rOuter <= rInner || rInner <= 0.0) return -1;
+
+  const int outerTag = gmsh::model::occ::addCylinder(0.0, 0.0, zMin,
+                                                     0.0, 0.0, h,
+                                                     rOuter, /*tag*/-1);
+  const int innerTag = gmsh::model::occ::addCylinder(0.0, 0.0, zMin,
+                                                     0.0, 0.0, h,
+                                                     rInner, /*tag*/-1);
+
+  std::vector<std::pair<int,int>> res;
+  std::vector<std::vector<std::pair<int,int>>> map;
+  gmsh::model::occ::cut({{3, outerTag}}, {{3, innerTag}},
+                        res, map, /*tag*/-1, /*removeObject=*/true, /*removeTool=*/true);
+
+  if (res.empty()) return -1;
+  return res.front().second;
+}
+
+// -------------------------- Main ------------------------------
+
 int main() {
   gmsh::initialize();
   gmsh::model::add("tpc_occ");
-
   // ---- Constants ----
-  const bool USE_ANODE   = true; // set true to include anode
-  const bool USE_CATHODE = true;  // set true to include cathode
 
-  constexpr double DriftRegionHeight   = 1.0;
-  constexpr int    n_wires             = 11;
-  constexpr double wire_diameter       = 0.002;
-  constexpr double inner_radius        = 0.2;
-  constexpr double outer_radius        = 0.25;
-  constexpr double anode_wire_height   = 0.95;
-  constexpr double cathode_wire_height = 0.05;
-  constexpr double ring_thickness      = 0.05;
-
-  constexpr int anode_BC_index   = 1000;
-  constexpr int cathode_BC_index = 1001;
-  constexpr int TPC_Volume_index = 2001;
-
-  const double H = DriftRegionHeight + 2*ring_thickness;
-  const double R = outer_radius * 1.1;
+  const double H     = DriftRegionHeight + 2 * ring_thickness;
+  const double R     = outer_radius * 1.1;
   const double rWire = wire_diameter * 0.5;
 
-  // ---------------------  Build Geometry --------------------- 
+  // TODO Precompute all possible physical alignments and verify them here before moving on
+  // TODO: Need to homogenise how i build things, I think i got my methods confused at this point
+
+  // ---------------------  Build Geometry ---------------------
   // Outer Volume
-  int background_vol = gmsh::model::occ::addCylinder(0, 0, 0, 
-                                                     0, 0, H, 
-                                                     R);
+  int background_vol = gmsh::model::occ::addCylinder(
+      0, 0, 0,
+      0, 0, H,
+      R
+  );
 
-  std::vector<DimTag> tools;                    // what we pass to fragment
-  std::vector<std::pair<std::string,int>> elec; // {name, tag} in the same order as 'tools'
+  // Collect all parts to subtract from background
+  std::vector<tpc::geom::Tool> tools;        // Stores all objects 
+  std::vector<tpc::geom::Tool> fluids;       // LXe / GXe only (low priority cutters relative to background)
+  std::vector<tpc::geom::Tool> cutters;      // electrodes+PTFE (High priority cutter)
 
-  // Ring Electrodes with wires
+
+  // --- Anode (wires at bottom extent: z_min + rWire) ---
   if (USE_ANODE) {
     const double anode_zBase       = anode_wire_height - ring_thickness;
     const double anode_wireCenterZ = anode_zBase + rWire + 0.005; // tiny nudge up
-    int anodeRing = makeParallelWireElectrodeAssembly( 0.0, 0.0, anode_zBase, anode_wireCenterZ, ring_thickness, inner_radius, outer_radius, n_wires, wire_diameter);
-    //int anodeRing =  makeRingElectrode(0.0, 0.0, anode_zBase, ring_thickness, inner_radius, outer_radius);
-    tools.emplace_back(3, anodeRing);
-    elec.push_back({"Anode", anodeRing});
+    const int anode = makeParallelWireElectrodeAssembly(
+        0.0, 0.0, anode_zBase, anode_wireCenterZ,
+        ring_thickness, inner_radius, outer_radius,
+        n_wires_anode, wire_diameter
+    );
+    tpc::geom::registerTool(tools, "Anode", anode, /*surfBC=*/anode_BC_index, /*volBC=*/-1, &fluids, &cutters);
   }
-  
-  // cathode (wires at top extent: z_max - rWire)
+  if (USE_GATE) {
+  const double gate_zBase       = gate_wire_height;                           // ring bottom
+  const double gate_wireCenterZ = gate_zBase + ring_thickness - rWire - 0.005; // tiny nudge down
+  const int gate = makeParallelWireElectrodeAssembly(
+      0.0, 0.0, gate_zBase, gate_wireCenterZ,
+      ring_thickness, inner_radius, outer_radius,
+      n_wires_gate, wire_diameter
+  );
+
+  tpc::geom::registerTool(tools, "Gate", gate, /*surfBC=*/gate_BC_index, /*volBC=*/-1, &fluids, &cutters);
+  }
+  // --- Cathode (wires at top extent: z_max - rWire) ---
   if (USE_CATHODE) {
     const double cathode_zBase       = cathode_wire_height;
     const double cathode_wireCenterZ = cathode_zBase + ring_thickness - rWire - 0.005; // tiny nudge down
-    int cathodeRing = makeParallelWireElectrodeAssembly(
+    const int cathode = makeParallelWireElectrodeAssembly(
         0.0, 0.0, cathode_zBase, cathode_wireCenterZ,
         ring_thickness, inner_radius, outer_radius,
-        n_wires, wire_diameter);
-    tools.emplace_back(3, cathodeRing);
-    elec.push_back({"Cathode", elec.empty() ? tools.back().second : tools.back().second}); // keep order
+        n_wires_cathode, wire_diameter
+    );
+    tpc::geom::registerTool(tools, "Cathode", cathode, /*surfBC=*/cathode_BC_index, /*volBC=*/-1, &fluids, &cutters);
   }
 
-
-  // Remove from background Volume
-  std::vector<DimTag> newEntities;
-  std::vector<std::vector<DimTag>> provenanceByInput;
-  
-  if (!tools.empty()) {
-    debugFragment("Partition background with rings",
-                  {{3, background_vol}}, tools,
-                  newEntities, provenanceByInput,
-                  /*tag*/ -1, /*removeObject=*/true, /*removeTool=*/false);
-  
-    // Track new background tag (bucket 0 is the object list)
-    if (!provenanceByInput.empty() && !provenanceByInput[0].empty())
-      background_vol = provenanceByInput[0][0].second;
-  
-    // Update each electrode’s tag from its provenance bucket
-    // (bucket i+1 corresponds to tools[i])
-    for (size_t i = 0; i < elec.size(); ++i) {
-      if (provenanceByInput.size() > i + 1 && !provenanceByInput[i + 1].empty())
-        elec[i].second = provenanceByInput[i + 1][0].second;
+  if (USE_PTFE)
+  {
+  // We will create two sleeves on these *normalized* intervals:
+  auto addPTFE = [&](const char* name, double z0, double z1) {
+    const double zMin = std::min(z0, z1);
+    const double zMax = std::max(z0, z1);
+    if (zMax - zMin <= 1e-9) return; // degenerate span → skip
+    const int vol = makeCylindricalSleeve(zMin, zMax, /*rInner=*/inner_radius, /*rOuter=*/outer_radius);
+    if (vol >= 0) {
+      // No surface BC; tag as PTFE material volume
+      tpc::geom::registerTool(tools, name, vol, /*surfBC=*/-1, /*volBC=*/PTFE_Volume_index, &fluids, &cutters);
+    } else {
+      std::cout << "[warn] PTFE \"" << name << "\" not created (empty span or OCC cut failed)\n";
     }
-  } else {
-    std::cout << "No electrodes selected; skipping fragment.\n";
+  };
+  // Gate to anode // TODO WHY ARE THESE THE BOUNDS THIS MAKES NO SENSE
+  addPTFE("PTFE_t", gate_wire_height + ring_thickness, anode_wire_height - ring_thickness);
+  // Cathode to Gate
+  addPTFE("PTFE_b", cathode_wire_height + ring_thickness, gate_wire_height);
+  }
+  auto addMedium = [&](const char* name, double z0, double z1, int volBC) {
+    const double zMin = std::min(z0, z1), zMax = std::max(z0, z1);
+    if (zMax - zMin <= 1e-9) return; // TODO Make it err
+    int v = gmsh::model::occ::addCylinder(0,0, zMin, 0,0, (zMax - zMin), /*radius=*/inner_radius, /*tag*/-1);
+    tpc::geom::registerTool(tools, name, v, /*surfBC=*/-1, /*volBC=*/volBC, &fluids, &cutters);
+  };
+
+  // TODO Im not sure if the material gets holes
+  if (USE_LXe && !USE_GXe)
+  {
+    addMedium("LXe", 0.0, anode_wire_height + ring_thickness, LXe_Volume_index);
+  }
+  else if (!USE_LXe && USE_GXe)
+  {
+    addMedium("GXe", 0.0, anode_wire_height + ring_thickness, GXe_Volume_index);
+  }
+  else if (USE_LXe && USE_GXe)
+  {
+    addMedium("LXe", 0.0, gate_wire_height, LXe_Volume_index);
+    addMedium("GXe", gate_wire_height + ring_thickness, anode_wire_height + ring_thickness, GXe_Volume_index);
   }
 
-  // ---------------------  Synchronize --------------------- 
+  tpc::geom::printRegisteredTools(tools, "Tools BEFORE fragment");
+  // --- Partition background once with whatever tools we have ---
+  if (!tools.empty()) {
+    // verbose version for debugging (optional):
+    std::vector<DimTag> objs = {{3, background_vol}};
+    std::vector<DimTag> tdim;
+    tdim.reserve(tools.size());
+    for (auto &t : tools) tdim.emplace_back(3, t.tag);
+
+    // TODO FIXME Need to cut electrodes out of LXe -> Cant seem to do it without loosing reference 
+    // Cutters didnt work because we lost reference second part worked fine but no liquid xenon
+    //tpc::geom::carveToolsByCutters(fluids, cutters, tools);
+    tpc::geom::fragmentAllTogether(background_vol, tools);
+    // Old Old
+    //tpc::geom::fragmentBackgroundWithTools(background_vol, tools);
+  } else {
+    std::cout << "[info] No tools selected; skipping fragment.\n";
+  }
+
+  // ---------------------  Synchronize & cleanup ---------------------
   gmsh::model::occ::removeAllDuplicates();
-  removeOrphanSurfaces();
+  tpc::dbg::removeOrphanSurfaces(); // Not required, but might as well TODO Remove when this is more developed
   gmsh::model::occ::synchronize();
-  reportOpenSurfaceLoops();
-  // ------------  Create Physical Groups & Save --------------------- 
+  tpc::geom::printRegisteredTools(tools, "Tools AFTER fragment");
+  tpc::dbg::reportOpenSurfaceLoops();
+
+  // ------------  Create Physical Groups & Save ---------------------
   gmsh::model::addPhysicalGroup(3, {background_vol}, TPC_Volume_index);
   gmsh::model::setPhysicalName(3, TPC_Volume_index, "TPC_Volume");
-  
-  // helper to get surface tags from a volume
-  auto getSurfaces = [](int volTag) {
-    std::vector<DimTag> bdr;
-    gmsh::model::getBoundary({{3, volTag}}, bdr, /*combined=*/true, /*oriented=*/false, /*recursive=*/false);
-    std::vector<int> out; out.reserve(bdr.size());
-    for (auto &dt : bdr) if (dt.first == 2) out.push_back(dt.second);
-    return out;
-  };
-  
-  // Add phys surfaces for whichever electrodes were included
-  for (auto &e : elec) {
-    const std::vector<int> s = getSurfaces(e.second);
-    if (s.empty()) {
-      std::cout << "[warn] No surfaces for " << e.first << " (tag " << e.second << ")\n";
-      continue;
-    }
-    if (e.first == "Anode") {
-      gmsh::model::addPhysicalGroup(2, s, anode_BC_index);
-      gmsh::model::setPhysicalName(2, anode_BC_index, "Anode");
-    } else if (e.first == "Cathode") {
-      gmsh::model::addPhysicalGroup(2, s, cathode_BC_index);
-      gmsh::model::setPhysicalName(2, cathode_BC_index, "Cathode");
-    }
-  }
 
+  // Per-tool surfaces/volumes (based on surfBC/volBC each tool requested)
+  tpc::geom::tagPhysicals(tools);
+
+  // -------------------- Misc ---------------------
   gmsh::option::setNumber("General.Terminal", 1);
-  gmsh::option::setNumber("General.Verbosity", 5); // more detail
+  gmsh::option::setNumber("General.Verbosity", 5);
 
-  // Pure Cad (does not include physical groups)
+  // Pure CAD (no physicals)
   gmsh::write("tpc_occ.brep");
-  // Internal Rep (includes physical groups)
-  // gmsh::write("tpc_occ.geo_unrolled");
+  // Internal system (includes physicals) -> DOes not work
+  // gmsh::write("tpc_occ.geo_unrolled");TODO Compiel with med support
 
   // -------------------- Meshing ---------------------
   gmsh::option::setNumber("Mesh.SaveAll", 0);
   gmsh::option::setNumber("Mesh.MshFileVersion", 2.2);
   gmsh::option::setNumber("Mesh.Optimize", 1);
-  //debugSurfaceTag(/*surfTag=*/8, background_vol, anodeRing, cathodeRing);
-  //debugSurfaceTag(/*surfTag=*/9, background_vol, anodeRing, cathodeRing);
+  // Multithreaded
+  gmsh::option::setNumber("General.NumThreads", threads);
 
-  // We generate the Maximum characteristic length based on the smallest geometry
-  double r = wire_diameter * 0.5;
-  double c = (2.0*inner_radius + 2.0*r) / (n_wires + 1.0);
-  double gap = std::max(0.0, c - 2.0*r);
-  double lc_circ = 2.0 * M_PI * r / 20.0;
-  double lc_rad  = r / 3.0;
-  double lc_gap  = (gap > 0.0) ? gap / 2.0 : lc_circ; // fallback if degenerate
-  double lcWire  = std::max(1e-6, std::min({lc_circ, lc_rad, lc_gap}));
-  
-  gmsh::option::setNumber("Mesh.CharacteristicLengthMax", lcWire);
-  
-  gmsh::model::mesh::generate(3); 
+  // lcMax from the smallest present wire plane
+  auto lcWireFor = [&](int n_wires) {
+    const double r   = rWire;
+    const double c   = (2.0 * inner_radius + 2.0 * r) / (n_wires + 1.0);
+    const double gap = std::max(0.0, c - 2.0 * r);
+    const double lc_circ = 2.0 * M_PI * r / 20.0;  // ~20 points around wire
+    const double lc_rad  = r / 3.0;                // ~3 elems across radius
+    const double lc_gap  = (gap > 0.0) ? (gap * 0.5) : lc_circ;
+    return std::max(1e-6, std::min({lc_circ, lc_rad, lc_gap}));
+  };
+
+  double lcWire = 0.05; // fallback coarse
+  bool anyWire = false; // TODO WHy did i add this 
+  if (USE_ANODE)   { lcWire = lcWireFor(n_wires_anode);   anyWire = true; }
+  if (USE_CATHODE) { lcWire = anyWire ? std::min(lcWire, lcWireFor(n_wires_cathode))
+                                      : lcWireFor(n_wires_cathode); anyWire = true; }
+
+  if (anyWire) gmsh::option::setNumber("Mesh.CharacteristicLengthMax", lcWire);
+
+  // In case a quick mesh generation is required to check things 
+  if (QuickMesh)
+  {
+    gmsh::option::setNumber("Mesh.CharacteristicLengthMax", lcWire * 3.0);
+    gmsh::option::setNumber("Mesh.CharacteristicLengthFromCurvature", 0);
+    gmsh::option::setNumber("Mesh.MinimumCirclePoints", 8); // Circle approximated by this many points
+    gmsh::option::setNumber("Mesh.Optimize", 0);
+  }
+
+  gmsh::model::mesh::generate(3);
 
   gmsh::write("tpc_occ.msh");
-  std::cout << "Created mesh file" << std::endl;
+  std::cout << "Created mesh file\n";
   gmsh::finalize();
+  return 0;
 }

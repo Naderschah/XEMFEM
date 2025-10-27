@@ -227,6 +227,30 @@ geometry.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/TPC.dir/build.make CMakeFiles/TPC.dir/geometry.cpp.s
 .PHONY : geometry.cpp.s
 
+geometry/debugging_things.o: geometry/debugging_things.cpp.o
+.PHONY : geometry/debugging_things.o
+
+# target to build an object file
+geometry/debugging_things.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/build_geometry.dir/build.make CMakeFiles/build_geometry.dir/geometry/debugging_things.cpp.o
+.PHONY : geometry/debugging_things.cpp.o
+
+geometry/debugging_things.i: geometry/debugging_things.cpp.i
+.PHONY : geometry/debugging_things.i
+
+# target to preprocess a source file
+geometry/debugging_things.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/build_geometry.dir/build.make CMakeFiles/build_geometry.dir/geometry/debugging_things.cpp.i
+.PHONY : geometry/debugging_things.cpp.i
+
+geometry/debugging_things.s: geometry/debugging_things.cpp.s
+.PHONY : geometry/debugging_things.s
+
+# target to generate assembly for a file
+geometry/debugging_things.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/build_geometry.dir/build.make CMakeFiles/build_geometry.dir/geometry/debugging_things.cpp.s
+.PHONY : geometry/debugging_things.cpp.s
+
 geometry/main.o: geometry/main.cpp.o
 .PHONY : geometry/main.o
 
@@ -250,6 +274,30 @@ geometry/main.s: geometry/main.cpp.s
 geometry/main.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/build_geometry.dir/build.make CMakeFiles/build_geometry.dir/geometry/main.cpp.s
 .PHONY : geometry/main.cpp.s
+
+geometry/partition_tools.o: geometry/partition_tools.cpp.o
+.PHONY : geometry/partition_tools.o
+
+# target to build an object file
+geometry/partition_tools.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/build_geometry.dir/build.make CMakeFiles/build_geometry.dir/geometry/partition_tools.cpp.o
+.PHONY : geometry/partition_tools.cpp.o
+
+geometry/partition_tools.i: geometry/partition_tools.cpp.i
+.PHONY : geometry/partition_tools.i
+
+# target to preprocess a source file
+geometry/partition_tools.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/build_geometry.dir/build.make CMakeFiles/build_geometry.dir/geometry/partition_tools.cpp.i
+.PHONY : geometry/partition_tools.cpp.i
+
+geometry/partition_tools.s: geometry/partition_tools.cpp.s
+.PHONY : geometry/partition_tools.s
+
+# target to generate assembly for a file
+geometry/partition_tools.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/build_geometry.dir/build.make CMakeFiles/build_geometry.dir/geometry/partition_tools.cpp.s
+.PHONY : geometry/partition_tools.cpp.s
 
 main.o: main.cpp.o
 .PHONY : main.o
@@ -319,9 +367,15 @@ help:
 	@echo "... geometry.o"
 	@echo "... geometry.i"
 	@echo "... geometry.s"
+	@echo "... geometry/debugging_things.o"
+	@echo "... geometry/debugging_things.i"
+	@echo "... geometry/debugging_things.s"
 	@echo "... geometry/main.o"
 	@echo "... geometry/main.i"
 	@echo "... geometry/main.s"
+	@echo "... geometry/partition_tools.o"
+	@echo "... geometry/partition_tools.i"
+	@echo "... geometry/partition_tools.s"
 	@echo "... main.o"
 	@echo "... main.i"
 	@echo "... main.s"

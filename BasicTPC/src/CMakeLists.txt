@@ -9,11 +9,15 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 # ---------------------------------------------------------
 add_executable(build_geometry
     ${CMAKE_SOURCE_DIR}/geometry/main.cpp
+    ${CMAKE_SOURCE_DIR}/geometry/partition_tools.cpp
+    ${CMAKE_SOURCE_DIR}/geometry/debugging_things.cpp
 )
-
 # Link against gmsh (must be installed system-wide or via package)
 find_library(GMSH_LIB gmsh REQUIRED)
 target_link_libraries(build_geometry PRIVATE ${GMSH_LIB})
+target_include_directories(build_geometry PRIVATE 
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/geometry)
 
 # ---------------------------------------------------------
 # --- Run geometry generator to produce .msh file ----------
@@ -28,7 +32,14 @@ add_custom_command(
   COMMAND ${CMAKE_COMMAND} -E copy_if_different        # copy .msh into build directory
           ${GEOM_MSH_SRC} ${GEOM_MSH_BIN}
   WORKING_DIRECTORY ${GEOM_SRC_DIR}                    # run inside geometry folder
-  DEPENDS build_geometry ${GEOM_SRC_DIR}/main.cpp
+  DEPENDS build_geometry 
+          ${CMAKE_SOURCE_DIR}/geometry/main.cpp
+          ${CMAKE_SOURCE_DIR}/geometry/partition_tools.cpp
+          ${CMAKE_SOURCE_DIR}/geometry/partition_tools.h
+          ${CMAKE_SOURCE_DIR}/geometry/debugging_things.cpp
+          ${CMAKE_SOURCE_DIR}/geometry/debugging_things.h
+          ${CMAKE_SOURCE_DIR}/constants.h
+  BYPRODUCTS ${GEOM_MSH_SRC}
   COMMENT "Running geometry generator and copying tpc_occ.msh into build directory"
   VERBATIM
 )

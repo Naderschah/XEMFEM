@@ -4,7 +4,7 @@
 # compile CXX with /usr/bin/c++
 CXX_DEFINES = 
 
-CXX_INCLUDES = 
+CXX_INCLUDES = -I/home/felix/work/BasicTPC/src -I/home/felix/work/BasicTPC/src/geometry
 
 CXX_FLAGS = 
 

@@ -83,18 +83,50 @@ CMakeFiles/build_geometry.dir/geometry/main.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/build_geometry.dir/geometry/main.cpp.s"
 	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/felix/work/BasicTPC/src/geometry/main.cpp -o CMakeFiles/build_geometry.dir/geometry/main.cpp.s
 
+CMakeFiles/build_geometry.dir/geometry/partition_tools.cpp.o: CMakeFiles/build_geometry.dir/flags.make
+CMakeFiles/build_geometry.dir/geometry/partition_tools.cpp.o: /home/felix/work/BasicTPC/src/geometry/partition_tools.cpp
+CMakeFiles/build_geometry.dir/geometry/partition_tools.cpp.o: CMakeFiles/build_geometry.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/felix/work/BasicTPC/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Building CXX object CMakeFiles/build_geometry.dir/geometry/partition_tools.cpp.o"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/build_geometry.dir/geometry/partition_tools.cpp.o -MF CMakeFiles/build_geometry.dir/geometry/partition_tools.cpp.o.d -o CMakeFiles/build_geometry.dir/geometry/partition_tools.cpp.o -c /home/felix/work/BasicTPC/src/geometry/partition_tools.cpp
+
+CMakeFiles/build_geometry.dir/geometry/partition_tools.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/build_geometry.dir/geometry/partition_tools.cpp.i"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/felix/work/BasicTPC/src/geometry/partition_tools.cpp > CMakeFiles/build_geometry.dir/geometry/partition_tools.cpp.i
+
+CMakeFiles/build_geometry.dir/geometry/partition_tools.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/build_geometry.dir/geometry/partition_tools.cpp.s"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/felix/work/BasicTPC/src/geometry/partition_tools.cpp -o CMakeFiles/build_geometry.dir/geometry/partition_tools.cpp.s
+
+CMakeFiles/build_geometry.dir/geometry/debugging_things.cpp.o: CMakeFiles/build_geometry.dir/flags.make
+CMakeFiles/build_geometry.dir/geometry/debugging_things.cpp.o: /home/felix/work/BasicTPC/src/geometry/debugging_things.cpp
+CMakeFiles/build_geometry.dir/geometry/debugging_things.cpp.o: CMakeFiles/build_geometry.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/felix/work/BasicTPC/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Building CXX object CMakeFiles/build_geometry.dir/geometry/debugging_things.cpp.o"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/build_geometry.dir/geometry/debugging_things.cpp.o -MF CMakeFiles/build_geometry.dir/geometry/debugging_things.cpp.o.d -o CMakeFiles/build_geometry.dir/geometry/debugging_things.cpp.o -c /home/felix/work/BasicTPC/src/geometry/debugging_things.cpp
+
+CMakeFiles/build_geometry.dir/geometry/debugging_things.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CXX source to CMakeFiles/build_geometry.dir/geometry/debugging_things.cpp.i"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/felix/work/BasicTPC/src/geometry/debugging_things.cpp > CMakeFiles/build_geometry.dir/geometry/debugging_things.cpp.i
+
+CMakeFiles/build_geometry.dir/geometry/debugging_things.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CXX source to assembly CMakeFiles/build_geometry.dir/geometry/debugging_things.cpp.s"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/felix/work/BasicTPC/src/geometry/debugging_things.cpp -o CMakeFiles/build_geometry.dir/geometry/debugging_things.cpp.s
+
 # Object files for target build_geometry
 build_geometry_OBJECTS = \
-"CMakeFiles/build_geometry.dir/geometry/main.cpp.o"
+"CMakeFiles/build_geometry.dir/geometry/main.cpp.o" \
+"CMakeFiles/build_geometry.dir/geometry/partition_tools.cpp.o" \
+"CMakeFiles/build_geometry.dir/geometry/debugging_things.cpp.o"
 
 # External object files for target build_geometry
 build_geometry_EXTERNAL_OBJECTS =
 
 build_geometry: CMakeFiles/build_geometry.dir/geometry/main.cpp.o
+build_geometry: CMakeFiles/build_geometry.dir/geometry/partition_tools.cpp.o
+build_geometry: CMakeFiles/build_geometry.dir/geometry/debugging_things.cpp.o
 build_geometry: CMakeFiles/build_geometry.dir/build.make
 build_geometry: /usr/lib/x86_64-linux-gnu/libgmsh.so
 build_geometry: CMakeFiles/build_geometry.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/felix/work/BasicTPC/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Linking CXX executable build_geometry"
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/felix/work/BasicTPC/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Linking CXX executable build_geometry"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/build_geometry.dir/link.txt --verbose=$(VERBOSE)
 
 # Rule to build all files generated by this target.

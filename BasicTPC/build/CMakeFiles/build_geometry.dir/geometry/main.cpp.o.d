@@ -196,4 +196,7 @@ CMakeFiles/build_geometry.dir/geometry/main.cpp.o: \
  /usr/include/c++/11/bits/ostream.tcc /usr/include/c++/11/istream \
  /usr/include/c++/11/bits/istream.tcc /usr/include/c++/11/sstream \
  /usr/include/c++/11/bits/sstream.tcc /usr/include/c++/11/unordered_set \
- /usr/include/c++/11/bits/unordered_set.h
+ /usr/include/c++/11/bits/unordered_set.h \
+ /home/felix/work/BasicTPC/src/constants.h \
+ /home/felix/work/BasicTPC/src/geometry/partition_tools.h \
+ /home/felix/work/BasicTPC/src/geometry/debugging_things.h

@@ -14,7 +14,7 @@ void ComputeElectricField(GridFunction &V, GridFunction &E)
 
     // Wrap the scalar GridFunction as a gradient coefficient
     GradientGridFunctionCoefficient gradV(&V); // computes ∇V
-    E.ProjectCoefficient(gradV); // Project gradient coefficient into vector-valued GridFunction
+    E.ProjectDiscCoefficient(gradV, GridFunction::ARITHMETIC); 
     E *= -0.01 ;// Convert V/m → V/cm for visualization and negate
 }
 

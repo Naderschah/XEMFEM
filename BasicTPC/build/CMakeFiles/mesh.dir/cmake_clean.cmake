@@ -1,4 +1,5 @@
 file(REMOVE_RECURSE
+  "/home/felix/work/BasicTPC/src/geometry/tpc_occ.msh"
   "CMakeFiles/mesh"
   "geometry.msh"
 )

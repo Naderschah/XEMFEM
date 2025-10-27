@@ -29,16 +29,24 @@ void ApplyDirichletValues(GridFunction &V, const Array<int> &/*unused*/)
 {
     Mesh *mesh = V.FESpace()->GetMesh();
 
-    // Cathode Voltage
-    {
-        Array<int> m = MakeBdrMarker(mesh, {cathode_BC_index});
-        if (m.Max() == 1) { ConstantCoefficient Vcat(VCathode);
-                            V.ProjectBdrCoefficient(Vcat, m); }
-    }
+    // TODO Wrap them in if use this
+
     // Anode Voltage
     {
         Array<int> m = MakeBdrMarker(mesh, {anode_BC_index});
         if (m.Max() == 1) { ConstantCoefficient Vanode(VAnode);
                             V.ProjectBdrCoefficient(Vanode, m); }
+    }
+    // Gate Voltage
+    {
+        Array<int> m = MakeBdrMarker(mesh, {gate_BC_index});
+        if (m.Max() == 1) { ConstantCoefficient Vcat(VGate);
+                            V.ProjectBdrCoefficient(Vcat, m); }
+    }
+    // Cathode Voltage
+    {
+        Array<int> m = MakeBdrMarker(mesh, {cathode_BC_index});
+        if (m.Max() == 1) { ConstantCoefficient Vcat(VCathode);
+                            V.ProjectBdrCoefficient(Vcat, m); }
     }
 }
