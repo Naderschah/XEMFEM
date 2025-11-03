@@ -1,5 +1,16 @@
+# Ignore mesh-related output files anywhere
 *.msh
 *.mesh
 *.gf
+# Ignore all builds anywhere in the tree
+**/build/
+# Ignore dotfiles
 .*
-build/*
+!.gitignore
+!.gitattributes
+!.github/
+# Ignore common local artifacts
+.DS_Store
+*.swp
+*.log
+*.bak
