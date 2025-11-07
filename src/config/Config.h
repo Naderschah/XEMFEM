@@ -1,6 +1,8 @@
 #pragma once
 #include <string>
 #include <unordered_map>
+
+// FIXME REMOVE THE DEFAULTS
 // TODO Remove defaults - fix documentation  
 // -------------------- Core Physics ----------------------------
 struct Boundary {
@@ -59,6 +61,8 @@ struct MeshSettings {
 // -------------------- Compute / Runtime Settings ----------------------------
 struct SolverSettings {
     // MFEM / solve controls
+    bool axisymmetric = false;
+    int axisymmetric_r0_bd_attribute = 9999;
     int    order = 3;
     std::string assembly_mode = "partial";
     std::string solver = "pcg";

@@ -1,5 +1,5 @@
 schema_version: 1
-geometry_id: 2DCapacitor
+geometry_id: 2DAxisymmCapacitor
 
 # Where the mesh is/should be produced
 # FIXME Unused at the moment 
@@ -36,8 +36,7 @@ debug:
 
 # solver configuration
 solver:
-  axisymmetric: false
-  axisymmetric_r0_bd_attribute: 9999           
+  axisymmetric: true                  # Maybe this should be a string but 2D and 3D are done by default
   order: 3
   # TODO 
   assembly_mode: partial              # full | partial | matrix_free

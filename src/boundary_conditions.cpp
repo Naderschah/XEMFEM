@@ -18,24 +18,35 @@ static Array<int> MakeBdrMarker(const Mesh *mesh,
 }
 
 // Identifies which boundaries should have Dirichlet conditions
-// TODO What were this markers again and what makes them distinct from the ids? 
-Array<int> GetDirichletAttributes(Mesh *mesh, const std::shared_ptr<const Config>& cfg)
+Array<int> GetDirichletAttributes(mfem::Mesh *mesh,
+                                  const std::shared_ptr<const Config>& cfg)
 {
-    // Collect all Dirichlet boundary IDs from the config
+    using namespace mfem;
+
+    // Collect all Dirichlet boundary IDs from config
     std::vector<int> dirichlet_ids;
     dirichlet_ids.reserve(cfg->boundaries.size());
-
     for (const auto& [name, bc] : cfg->boundaries)
     {
         if (bc.type == "dirichlet")
-        {
             dirichlet_ids.push_back(bc.bdr_id);
+    }
+    // Convert to MFEM boundary marker array
+    Array<int> ess = MakeBdrMarker(mesh, dirichlet_ids); // size = max bdr attr count
+
+    // --- The ONLY axisymmetric modification: remove the axis boundary ID ---
+    if (cfg->solver.axisymmetric)
+    {
+        int axis_id = cfg->solver.axisymmetric_r0_bd_attribute; // 1-based ID
+        if (axis_id > 0 && axis_id <= ess.Size())
+        {
+            ess[axis_id - 1] = 0;   // ← just kill it
         }
     }
-    // Get Bdr Markers 
-    Array<int> ess = MakeBdrMarker(mesh, dirichlet_ids);
+
     return ess;
 }
+
 
 
 void ApplyDirichletValues(GridFunction &V, const Array<int> &dirichlet_attr, const std::shared_ptr<const Config>& cfg)

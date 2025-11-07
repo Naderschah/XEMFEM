@@ -36,8 +36,6 @@ debug:
 
 # solver configuration
 solver:
-  axisymmetric: false
-  axisymmetric_r0_bd_attribute: 9999           
   order: 3
   # TODO 
   assembly_mode: partial              # full | partial | matrix_free

@@ -1,5 +1,5 @@
 rm -r * \ 
   && cmake ../src/ \
   && make && ./TPC \ 
-  && glvis -m simulation_mesh.mesh -g solution_V.gf -k "AmaagcmRj"
+  && glvis -m simulation_mesh.msh -g solution_V.gf -k "AmaagcmRj"
 

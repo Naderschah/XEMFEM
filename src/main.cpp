@@ -122,12 +122,22 @@ int main(int argc, char *argv[])
  
   // 1. Create the mesh
   auto mesh = CreateSimulationDomain(model_path, use_distributed, comm); 
+  if (cfg->solver.axisymmetric) {
+    if (mesh->Dimension() != 2) { std::cerr << "Axisymmetric Simulation Geometry 3D" << std::endl;  }
+    // Check r axis starts at null
+    CheckAxisymmetricMesh(*mesh,
+                          0,
+                          cfg->solver.axisymmetric_r0_bd_attribute);
+  }
+
   // 2. Create finite element collection and space
   H1_FECollection fec(cfg->solver.order, mesh->Dimension());
   FiniteElementSpace fespace(mesh.get(), &fec);
 
   // 3. Get Dirichlet boundary attributes
   Array<int> dirichlet_arr = GetDirichletAttributes(mesh.get(), cfg);
+  // FIXME: For Neumann and Robin and axisymmetric we still need to supply boundary markers
+
 
   // 4. Solve Poisson
   auto V = SolvePoisson(fespace, dirichlet_arr, cfg);

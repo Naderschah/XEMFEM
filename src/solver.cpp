@@ -1,5 +1,21 @@
 #include "solver.h"
 
+// Internal Helper for axisymmetric
+inline std::unique_ptr<mfem::Coefficient>
+MakeAxisymWeightCoeff(bool axisymmetric, int radial_idx)
+{
+  if (!axisymmetric) {
+    return std::make_unique<mfem::ConstantCoefficient>(1.0);
+  }
+
+  // FunctionCoefficient expects physical coords X
+  auto w_of_X = [radial_idx](const mfem::Vector &X) -> double {
+    double r = X(radial_idx);
+    if (r < 0.0) r = 0.0;               // guard tiny negatives from roundoff
+    return 2.0 * M_PI * r;
+  };
+  return std::make_unique<mfem::FunctionCoefficient>(w_of_X);
+}
 
 // Internal Helper for distributed
 inline bool IsDistributed(const mfem::FiniteElementSpace &fes)
@@ -103,7 +119,9 @@ std::unique_ptr<mfem::GridFunction> SolvePoisson(mfem::FiniteElementSpace &fespa
   *V = 0.0;
   ApplyDirichletValues(*V, dirichlet_attr, cfg);
 
-  a->AddDomainIntegrator(new DiffusionIntegrator(epsilon_pw));
+  auto w = MakeAxisymWeightCoeff(cfg->solver.axisymmetric, 0);
+  mfem::ProductCoefficient weps(*w, epsilon_pw);
+  a->AddDomainIntegrator(new DiffusionIntegrator(weps));
   a->Assemble();                 // Finalize() not needed with OperatorHandle path
 
   b->Assemble();

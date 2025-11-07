@@ -1,0 +1,7 @@
+#pragma once
+namespace embedded_config {
+// Note the custom raw-string delimiter to avoid accidental terminators.
+inline constexpr const char* kConfigYaml = R"EMBED(
+@CONFIG_YAML_CONTENT@
+)EMBED";
+} // namespace embedded_config
