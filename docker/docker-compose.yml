@@ -11,7 +11,9 @@ services:
     command: bash
     profiles: ["shell"]
     environment:
-      - DISPLAY=${DISPLAY}               # propagate DISPLAY
+      - DISPLAY=${DISPLAY}
+      - XAUTHORITY=/home/felix/.Xauthority
+      - XDG_RUNTIME_DIR=/tmp            # silence SDL/Wayland runtime dir error
       - QT_X11_NO_MITSHM=1
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw     # X11 socket

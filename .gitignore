@@ -4,6 +4,7 @@
 *.gf
 # Ignore all builds anywhere in the tree
 **/build/
+**/build*/
 # Ignore dotfiles
 .*
 !.gitignore

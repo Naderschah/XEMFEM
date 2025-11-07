@@ -1,6 +1,21 @@
 #include "solver.h"
 
 
+// Internal Helper for distributed
+inline bool IsDistributed(const mfem::FiniteElementSpace &fes)
+{
+  return dynamic_cast<const mfem::ParFiniteElementSpace*>(&fes) != nullptr;
+}
+
+inline MPI_Comm GetComm(const mfem::FiniteElementSpace &fes)
+{
+#ifdef MFEM_USE_MPI
+  if (auto pfes = dynamic_cast<const mfem::ParFiniteElementSpace*>(&fes))
+    return pfes->GetParMesh()->GetComm();
+#endif
+  return MPI_COMM_SELF; // safe fallback for serial path
+}
+
 // Build ε(x) that is piecewise-constant over element attributes (volume tags)
 static PWConstCoefficient BuildEpsilonPWConst(const Mesh &mesh, const std::shared_ptr<const Config>& cfg)
 {
@@ -36,46 +51,80 @@ static PWConstCoefficient BuildEpsilonPWConst(const Mesh &mesh, const std::share
     return PWConstCoefficient(eps_by_attr);
 }
 
-GridFunction SolvePoisson(FiniteElementSpace &fespace, const Array<int> &dirichlet_attr, const std::shared_ptr<const Config>& cfg)
+std::unique_ptr<mfem::GridFunction> SolvePoisson(mfem::FiniteElementSpace &fespace,
+                                                const mfem::Array<int> &dirichlet_attr,
+                                                const std::shared_ptr<const Config>& cfg)
 {
-    GridFunction V(&fespace);
-    
-    V = 0.0;
-    ApplyDirichletValues(V, dirichlet_attr, cfg);
+  using namespace mfem;
 
-    BilinearForm a(&fespace);
+  const Mesh &mesh = *fespace.GetMesh();
+  PWConstCoefficient epsilon_pw = BuildEpsilonPWConst(mesh, cfg);
 
-    // ---- Add Material Properties -------
-    const Mesh &mesh = *fespace.GetMesh();
-    PWConstCoefficient epsilon_pw = BuildEpsilonPWConst(mesh, cfg);
-    a.AddDomainIntegrator(new DiffusionIntegrator(epsilon_pw));
-    a.Assemble();
-    a.Finalize();
+  // common handles (filled inside the single if/else)
+  std::unique_ptr<GridFunction> V;        // GridFunction or ParGridFunction
+  std::unique_ptr<BilinearForm> a;        // BilinearForm or ParBilinearForm
+  std::unique_ptr<LinearForm>   b;        // LinearForm   or ParLinearForm
+  OperatorHandle                A;        // SparseMatrix or HypreParMatrix
+  Vector                        X, B;     // works for both
+  std::function<std::unique_ptr<Solver>(OperatorHandle&)> make_prec;
+  MPI_Comm                      comm = MPI_COMM_SELF;
 
-    LinearForm b(&fespace);
-    //Charge density goes here if required
-    b.Assemble();
+  const bool par = (dynamic_cast<ParFiniteElementSpace*>(&fespace) != nullptr);
 
-    Array<int> ess_tdof_list;
-    fespace.GetEssentialTrueDofs(dirichlet_attr, ess_tdof_list);
+  if (par) {
+    // ---------- parallel concrete types ----------
+    auto &pfes = static_cast<ParFiniteElementSpace&>(fespace);
+    V = std::make_unique<ParGridFunction>(&pfes);
+    a = std::make_unique<ParBilinearForm>(&pfes);
+    b = std::make_unique<ParLinearForm>(&pfes);
+    comm = pfes.GetParMesh()->GetComm();
 
-    SparseMatrix A;
-    Vector B, X;
-    a.FormLinearSystem(ess_tdof_list, V, b, A, X, B);
+    // build the proper preconditioner later, after A exists
+    make_prec = [=](OperatorHandle &Ah) -> std::unique_ptr<Solver>
+    {
+      auto *Ap = Ah.As<HypreParMatrix>();
+      return std::make_unique<HypreBoomerAMG>(*Ap);
+    };
+  } else {
+    // ---------- serial concrete types ----------
+    V = std::make_unique<GridFunction>(&fespace);
+    a = std::make_unique<BilinearForm>(&fespace);
+    b = std::make_unique<LinearForm>(&fespace);
+    comm = MPI_COMM_SELF;
 
-    // Solve with CG
-    CGSolver cg;
-    cg.SetRelTol(cfg->solver.rtol);
-    cg.SetAbsTol(cfg->solver.atol);
-    cg.SetMaxIter(cfg->solver.maxiter);
-    cg.SetPrintLevel(cfg->solver.printlevel);
+    make_prec = [=](OperatorHandle &Ah) -> std::unique_ptr<Solver>
+    {
+      auto *As = Ah.As<SparseMatrix>();
+      return std::make_unique<DSmoother>(*As);
+    };
+  }
 
-    DSmoother prec(A);
-    cg.SetPreconditioner(prec);
-    cg.SetOperator(A);
-    cg.Mult(B, X);
+  // ---------- shared body ----------
+  *V = 0.0;
+  ApplyDirichletValues(*V, dirichlet_attr, cfg);
 
-    a.RecoverFEMSolution(X, b, V);
+  a->AddDomainIntegrator(new DiffusionIntegrator(epsilon_pw));
+  a->Assemble();                 // Finalize() not needed with OperatorHandle path
 
-    return V;   // safe: fespace alive in main
+  b->Assemble();
+
+  Array<int> ess_tdof;
+  fespace.GetEssentialTrueDofs(dirichlet_attr, ess_tdof);
+
+  a->FormLinearSystem(ess_tdof, *V, *b, A, X, B);   // fills A, X, B for both modes
+
+  auto P = make_prec(A);          // DSmoother or HypreBoomerAMG, already decided
+
+  CGSolver cg(comm);
+  cg.SetOperator(*A.Ptr());       // OperatorHandle -> Operator&
+  cg.SetPreconditioner(*P);
+  cg.SetRelTol(cfg->solver.rtol);
+  cg.SetAbsTol(cfg->solver.atol);
+  cg.SetMaxIter(cfg->solver.maxiter);
+  cg.SetPrintLevel(cfg->solver.printlevel);
+  cg.Mult(B, X);
+
+  a->RecoverFEMSolution(X, *b, *V);
+
+  return V;
 }

@@ -1,4 +1,4 @@
-#include "InputParser.hpp"
+#include "cmdLineParser.h"
 
 /*
 https://stackoverflow.com/questions/865668/parsing-command-line-arguments-in-c
@@ -25,10 +25,9 @@ std::optional<std::string> InputParser::get(const std::string& opt) const {
 }
 
 std::filesystem::path to_absolute(const std::filesystem::path& p) {
-    using fs = std::filesystem;
-    fs::path abs = p.is_absolute() ? p : fs::absolute(p);
+    std::filesystem::path abs = p.is_absolute() ? p : std::filesystem::absolute(p);
     std::error_code ec;
-    fs::path norm = fs::weakly_canonical(abs, ec);
+    std::filesystem::path norm = std::filesystem::weakly_canonical(abs, ec);
     return ec ? abs : norm;
 }
 

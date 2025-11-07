@@ -1,22 +1,26 @@
 #include "load_mesh.h"
 #include <iostream>
 
-Mesh* CreateSimulationDomain(std::string path)
-{
-    Mesh *mesh = new Mesh(path);
-
-    if (mesh->bdr_attributes.Size() == 0)
-    {
-        std::cerr << "Error: Mesh has no boundary attributes!" << std::endl;
-        std::exit(1);
+std::unique_ptr<mfem::Mesh>
+CreateSimulationDomain(const std::string &path, bool use_distributed,
+#ifdef MFEM_USE_MPI
+                       MPI_Comm comm
+#else
+                       int /*comm*/
+#endif
+) {
+  // Load Mesh 
+  auto serial = std::make_unique<mfem::Mesh>(path.c_str());
+  if (serial->bdr_attributes.Size() == 0) { 
+    std::cerr << "No boundary attributes!\n"; std::exit(1); 
+  }
+  serial->EnsureNCMesh();
+  // Parallelize if required
+  #ifdef MFEM_USE_MPI
+    if (use_distributed) {
+      return std::make_unique<mfem::ParMesh>(comm, *serial); // upcasts to Mesh*
     }
-
-    mesh->EnsureNCMesh();
-
-    std::cout << "[Geometry] Loaded mesh with "
-              << mesh->GetNE() << " elements and "
-              << mesh->bdr_attributes.Size() << " boundary attributes."
-              << std::endl;
-
-    return mesh;
+  #endif
+  return serial;
 }
+

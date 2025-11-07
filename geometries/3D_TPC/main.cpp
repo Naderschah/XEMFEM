@@ -215,9 +215,8 @@ int main() {
       0.0, 0.0, gate_zBase, gate_wireCenterZ,
       ring_thickness, inner_radius, outer_radius,
       n_wires_gate, wire_diameter
-  );
-
-  tpc::geom::registerTool(tools, "Gate", gate, /*surfBC=*/cfg.materials.at("Gate").bc_idx, /*volBC=*/-1, &fluids, &cutters);
+    );
+    tpc::geom::registerTool(tools, "Gate", gate, /*surfBC=*/cfg.materials.at("Gate").bc_idx, /*volBC=*/-1, &fluids, &cutters);
   }
   if (USE_GATE) {
   const double gate_zBase       = gate_wire_height;                           // ring bottom
