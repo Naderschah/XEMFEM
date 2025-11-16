@@ -6,6 +6,9 @@
 
 
 
+
+
+
 ### Boundary Condition Reference
 From ChatGPT:
 
@@ -18,3 +21,25 @@ From ChatGPT:
 | **No BCs (default)** | $$ \varepsilon \nabla \phi \cdot \mathbf{n} = 0 \quad \text{on } \partial \Omega $$ | Homogeneous Neumann on all edges → insulated cavity; solution defined up to an arbitrary constant. | Implicitly assumes a closed, perfectly insulating box. Field lines cannot exit; potential is arbitrary up to a constant (singular system). |
 
 
+
+
+### Debugging
+
+This
+
+```
+[tower:02289] Signal: Segmentation fault (11)
+[tower:02289] Signal code: Address not mapped (1)
+[tower:02289] Failing at address: 0x2331e1
+[tower:02289] [ 0] /lib/x86_64-linux-gnu/libc.so.6(+0x42520)[0x7f0d96a85520]
+[tower:02289] [ 1] ./SOLVER(+0x198f1a)[0x55a809d85f1a]
+[tower:02289] [ 2] ./SOLVER(+0x1bd7ef)[0x55a809daa7ef]
+[tower:02289] [ 3] ./SOLVER(+0xb16c4)[0x55a809c9e6c4]
+[tower:02289] [ 4] ./SOLVER(+0xb0dc1)[0x55a809c9ddc1]
+[tower:02289] [ 5] ./SOLVER(+0xa54bf)[0x55a809c924bf]
+[tower:02289] [ 6] /lib/x86_64-linux-gnu/libc.so.6(+0x29d90)[0x7f0d96a6cd90]
+[tower:02289] [ 7] /lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x80)[0x7f0d96a6ce40]
+[tower:02289] [ 8] ./SOLVER(+0xa4845)[0x55a809c91845]
+```
+
+means you computed the BC twice, I encountered this when doing both a 1D meshing algo and NETGEN_1D2D which caused both netgen and the algo to create 1D meshes on boundaries. I do not know how to fix this gracefully while keeping boundary conditions so just drop NETGEN_1D2D to NETGEN_2D. TODO I want to make a test for this but dont know yet how this manifests in the loading function

@@ -11,8 +11,8 @@ CreateSimulationDomain(const std::string &path, bool use_distributed,
                        int /*comm*/
 #endif
 ) {
-  // Load Mesh 
-  auto serial = std::make_unique<mfem::Mesh>(path.c_str());
+  // Load Mesh  -  generate edges false, refine true, fix_orientation false TODO Add flag for the latter once i understand waht exactly it does
+  auto serial = std::make_unique<mfem::Mesh>(path.c_str(), 0, 1, false);
   if (serial->bdr_attributes.Size() == 0) { 
     std::cerr << "No boundary attributes!\n"; std::exit(1); 
   }

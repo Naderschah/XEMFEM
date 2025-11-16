@@ -8,15 +8,40 @@ Geomtries can be produced with Salome SHAPER a free to use open source software 
 
 Here is my blurb
 ```
+# Normal GPU 
 docker run --rm \
+  --user $(id -u):$(id -g) \
   -e DISPLAY=$DISPLAY \
   -e QT_X11_NO_MITSHM=1 \
+  -e XAUTHORITY=/home/felix/.Xauthority \
   -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
+  -v $XAUTHORITY:/home/felix/.Xauthority:ro \
+  -v /home/felix:/home/felix \
+  --shm-size=2g --ipc=host --net=host \
+  feelpp/salome:9.8.0-ubuntu-20.04 salome -m SHAPER
+
+# Nvidia GPU
+docker run --rm \
+  --user $(id -u):$(id -g) \
+  --device nvidia.com/gpu=all \
+  -e NVIDIA_VISIBLE_DEVICES=all \
+  -e NVIDIA_DRIVER_CAPABILITIES=all \
+  -e DISPLAY=$DISPLAY \
+  -e QT_X11_NO_MITSHM=1 \
+  -e XAUTHORITY=/home/felix/.Xauthority \
+  -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
+  -v $XAUTHORITY:/home/felix/.Xauthority:ro \
   -v /home/felix:/home/felix \
   --shm-size=2g --ipc=host --net=host \
   feelpp/salome:9.8.0-ubuntu-20.04 salome -m SHAPER
 ```
 It comes with a python package that can be used as a side by side scripting engine to generate the geometry. This makes life much easier
+
+
+Quality of life notes: 
+- for translation you need point cooridnates so if you just pass a point it creates you will get a segfault and be confused 
+- Try things in the gui Dump the study load the file find the line follow the syntax, the documentation is somewhat incomplete and imprecise - Watch out it exports all of the parts not just the current
+
 
 ## GMSH
 
