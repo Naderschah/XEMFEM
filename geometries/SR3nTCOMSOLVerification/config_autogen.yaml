@@ -1,12 +1,7 @@
 materials:
-  GXeRegion:
-    attr_id: 1
-    epsilon_r: 1.0
-  PTFE_Group:
-    attr_id: 2
-    epsilon_r: 2.1
-  LXeRegion:
-    attr_id: 3
-    epsilon_r: 1.95
 
 boundaries:
+  BC_AllEdges:
+    bdr_id: 3
+    type: dirichlet
+    value: 0.0

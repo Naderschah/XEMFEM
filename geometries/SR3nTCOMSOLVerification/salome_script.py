@@ -2517,6 +2517,478 @@ def face_feature_to_selections(src):
     return sels
 
 
+from collections import defaultdict, deque
+
+def shape_centroid(shape):
+    """Centroid of all vertices of a shape."""
+    verts = geompy.ExtractShapes(shape, geompy.ShapeType["VERTEX"], True)
+    if not verts:
+        return None
+    sx = sy = sz = 0.0
+    for v in verts:
+        x, y, z = geompy.PointCoordinates(v)
+        sx += x; sy += y; sz += z
+    n = len(verts)
+    return (sx / n, sy / n, sz / n)
+
+def edge_vertices(edge):
+    verts = geompy.ExtractShapes(edge, geompy.ShapeType["VERTEX"], True)
+    if len(verts) < 2:
+        return None, None
+    return verts[0], verts[1]
+
+def analyze_bc_loops(edge_list, bc_name, debug = False):
+    """
+    Split edge_list into connected components via shared vertices and
+    check each component ("loop") separately, using OCC topological
+    identity (v.IsSame(u)) to merge coincident vertices.
+    """
+    if not edge_list:
+        print(f"BC '{bc_name}': no edges to analyze.")
+        return
+
+    # ------------------------------------------------------------
+    # 1) Canonical vertex mapping using IsSame
+    # ------------------------------------------------------------
+    canonical_vertices = []  # list of unique OCC-vertices
+    def canon(v):
+        """Return canonical representative for vertex v using IsSame."""
+        for u in canonical_vertices:
+            if v.IsSame(u):
+                return u
+        canonical_vertices.append(v)
+        return v
+
+    edge_vertices_map = {}           # edge -> (canon_v1, canon_v2)
+    vertex_neighbors = defaultdict(set)
+
+    for e in edge_list:
+        verts = geompy.ExtractShapes(e, geompy.ShapeType["VERTEX"], True)
+        if len(verts) < 2:
+            print(f"BC '{bc_name}': edge with <2 vertices; skipping in loop analysis.")
+            continue
+
+        v1_raw, v2_raw = verts[0], verts[1]
+        v1 = canon(v1_raw)
+        v2 = canon(v2_raw)
+
+        edge_vertices_map[e] = (v1, v2)
+        vertex_neighbors[v1].add(v2)
+        vertex_neighbors[v2].add(v1)
+
+    if not edge_vertices_map:
+        print(f"BC '{bc_name}': no usable edges for loop analysis.")
+        return
+
+    # ------------------------------------------------------------
+    # 2) Connected components in the canonical-vertex graph
+    # ------------------------------------------------------------
+    unvisited = set(vertex_neighbors.keys())
+    components = []
+
+    while unvisited:
+        start = next(iter(unvisited))
+        queue = deque([start])
+        comp_vertices = {start}
+        unvisited.remove(start)
+
+        while queue:
+            v = queue.popleft()
+            for nbr in vertex_neighbors[v]:
+                if nbr in unvisited:
+                    unvisited.remove(nbr)
+                    comp_vertices.add(nbr)
+                    queue.append(nbr)
+        components.append(comp_vertices)
+
+    # ------------------------------------------------------------
+    # 3) Analyze each component => closed/open
+    # ------------------------------------------------------------
+    for i, comp_vertices in enumerate(components):
+        comp_edges = []
+        vertex_degree = defaultdict(int)
+
+        for e, (v1, v2) in edge_vertices_map.items():
+            if v1 in comp_vertices or v2 in comp_vertices:
+                comp_edges.append(e)
+                if v1 in comp_vertices:
+                    vertex_degree[v1] += 1
+                if v2 in comp_vertices:
+                    vertex_degree[v2] += 1
+
+        if not comp_edges:
+            print(f"BC '{bc_name}', loop {i}: no edges in this component (unexpected).")
+            continue
+
+        # Degree-1 canonical vertices are open ends
+        open_vertices = [v for v, deg in vertex_degree.items() if deg == 1]
+
+        if open_vertices:
+            print(
+                f"BC '{bc_name}', loop {i}: OPEN "
+                f"({len(open_vertices)} vertex(ces) with degree 1)."
+            )
+            for j, v in enumerate(open_vertices):
+                x, y, z = geompy.PointCoordinates(v)
+                print(f"    open vertex {j}: ({x:.6g}, {y:.6g}, {z:.6g})")
+        else:
+            if debug:
+                print(
+                    f"BC '{bc_name}', loop {i}: CLOSED "
+                    f"({len(comp_edges)} edges, {len(comp_vertices)} vertices)."
+                )
+def bc_components_from_edges(bc_edges, bc_name):
+    """
+    Given all edges of a BC shape, split into connected components via vertices.
+    Returns a list of components; each component is a set of vertex objects.
+    """
+    edge_vertices_map = {}
+    vertex_neighbors = defaultdict(set)
+
+    for e in bc_edges:
+        v1, v2 = edge_vertices(e)
+        if v1 is None:
+            print(f"BC '{bc_name}': degenerate BC edge; skipping in component build.")
+            continue
+        edge_vertices_map[e] = (v1, v2)
+        vertex_neighbors[v1].add(v2)
+        vertex_neighbors[v2].add(v1)
+
+    components = []
+    unvisited = set(vertex_neighbors.keys())
+
+    while unvisited:
+        start = next(iter(unvisited))
+        queue = deque([start])
+        comp_vertices = {start}
+        unvisited.remove(start)
+
+        while queue:
+            v = queue.popleft()
+            for nbr in vertex_neighbors[v]:
+                if nbr in unvisited:
+                    unvisited.remove(nbr)
+                    comp_vertices.add(nbr)
+                    queue.append(nbr)
+        components.append(comp_vertices)
+
+    return components
+
+def component_centroid(comp_vertices):
+    """Centroid of a set of vertex objects."""
+    if not comp_vertices:
+        return None
+    sx = sy = sz = 0.0
+    for v in comp_vertices:
+        x, y, z = geompy.PointCoordinates(v)
+        sx += x; sy += y; sz += z
+    n = len(comp_vertices)
+    return (sx / n, sy / n, sz / n)
+def match_component_to_wire(comp_vertices,
+                            wire_cache,
+                            dist_tol=1e-3,
+                            min_frac=0.3):
+    """
+    Match a BC component (set of vertices) to a *single* domain wire,
+    using vertex-based proximity.
+
+    - dist_tol: maximum distance for a BC vertex to count as 'matching'
+      some vertex on the wire.
+    - min_frac: minimum fraction of BC vertices that must be matched
+      for a wire to be accepted.
+
+    Returns: (best_wire, best_index, best_matches, best_avg_dist)
+    or (None, None, 0, None) if nothing matches.
+    """
+    if not comp_vertices:
+        return None, None, 0, None
+
+    # Precompute BC vertex coordinates
+    bc_coords = []
+    for v in comp_vertices:
+        bc_coords.append(geompy.PointCoordinates(v))
+
+    best_wire   = None
+    best_index  = None
+    best_score  = 0
+    best_avg    = None
+
+    for w, verts, idx in wire_cache:
+        matches = 0
+        dsum    = 0.0
+
+        # For each BC vertex, find nearest vertex on this wire
+        for (cx, cy, cz) in bc_coords:
+            mind = None
+            for v_wire, (wx, wy, wz) in verts:
+                dx = cx - wx
+                dy = cy - wy
+                dz = cz - wz
+                d = math.sqrt(dx*dx + dy*dy + dz*dz)
+                if mind is None or d < mind:
+                    mind = d
+            if mind is not None and mind < dist_tol:
+                matches += 1
+                dsum    += mind
+
+        if matches == 0:
+            continue
+
+        frac = matches / float(len(bc_coords))
+        if frac < min_frac:
+            continue
+
+        avg = dsum / float(matches)
+
+        if (matches > best_score) or (matches == best_score and
+                                      (best_avg is None or avg < best_avg)):
+            best_score = matches
+            best_avg   = avg
+            best_wire  = w
+            best_index = idx
+
+    return best_wire, best_index, best_score, best_avg
+
+def canon_vertex(v, canonical_list):
+    """Return canonical representative for vertex v using IsSame."""
+    for u in canonical_list:
+        if v.IsSame(u):
+            return u
+    canonical_list.append(v)
+    return v
+
+def classify_wire(wire):
+    """
+    For a given WIRE, classify it based on:
+      - open/closed (vertex degree),
+      - whether any 'open' vertex lies on x = 0 (within axis_tol).
+
+    Returns: ("closed" | "axis-open" | "other-open"),
+            canonical_vertices,
+            vertex_neighbors
+    """
+    verts_raw = geompy.ExtractShapes(wire, geompy.ShapeType["VERTEX"], True)
+    if not verts_raw:
+        return "other-open", [], {}
+
+    canonical = []
+    vertex_neighbors = defaultdict(set)
+
+    # Build edges and neighbor graph on canonical vertices
+    edges = geompy.ExtractShapes(wire, geompy.ShapeType["EDGE"], True)
+    for e in edges:
+        v_raw = geompy.ExtractShapes(e, geompy.ShapeType["VERTEX"], True)
+        if len(v_raw) < 2:
+            continue
+        v1 = canon_vertex(v_raw[0], canonical)
+        v2 = canon_vertex(v_raw[1], canonical)
+        vertex_neighbors[v1].add(v2)
+        vertex_neighbors[v2].add(v1)
+
+    if not vertex_neighbors:
+        return "other-open", canonical, vertex_neighbors
+
+    # Degree per canonical vertex
+    vertex_degree = {v: len(neigh) for v, neigh in vertex_neighbors.items()}
+    open_vertices = [v for v, deg in vertex_degree.items() if deg == 1]
+
+    if not open_vertices:
+        loop_type = "closed"
+    else:
+        # Are all open vertices on the axis?
+        all_on_axis = True
+        for v in open_vertices:
+            x, y, z = geompy.PointCoordinates(v)
+            if abs(x) > axis_tol:
+                all_on_axis = False
+                break
+        loop_type = "axis-open" if all_on_axis else "other-open"
+
+    return loop_type, canonical, vertex_neighbors
+
+def build_wire_cache_with_classification(domain_shape):
+    """
+    Extract all WIREs from domain_shape and classify them.
+    Returns a list of dicts:
+        {
+          "wire": wire_obj,
+          "index": idx,
+          "type": "closed"|"axis-open"|"other-open",
+          "vertices": [(vertex_obj, (x,y,z)), ...]
+        }
+    """
+    wires = geompy.ExtractShapes(domain_shape, geompy.ShapeType["WIRE"], True)
+    cache = []
+
+    for idx, w in enumerate(wires):
+        loop_type, canon_verts, _ = classify_wire(w)
+        vlist = []
+        for v in canon_verts:
+            x, y, z = geompy.PointCoordinates(v)
+            vlist.append((v, (x, y, z)))
+        cache.append({
+            "wire": w,
+            "index": idx,
+            "type": loop_type,
+            "vertices": vlist,
+        })
+    return cache
+
+def bc_components_from_edges_with_edges(bc_edges, bc_name):
+    """
+    Split bc_edges into connected components via shared vertices.
+    Returns a list of (component_vertices_set, component_edges_list).
+    """
+    edge_vertices_map = {}
+    vertex_neighbors = defaultdict(set)
+
+    for e in bc_edges:
+        verts = geompy.ExtractShapes(e, geompy.ShapeType["VERTEX"], True)
+        if len(verts) < 2:
+            print(f"BC '{bc_name}': degenerate BC edge; skipping in component build.")
+            continue
+        v1, v2 = verts[0], verts[1]
+        edge_vertices_map[e] = (v1, v2)
+        vertex_neighbors[v1].add(v2)
+        vertex_neighbors[v2].add(v1)
+
+    components = []
+    unvisited = set(vertex_neighbors.keys())
+
+    while unvisited:
+        start = next(iter(unvisited))
+        queue = deque([start])
+        comp_vertices = {start}
+        unvisited.remove(start)
+
+        while queue:
+            v = queue.popleft()
+            for nbr in vertex_neighbors[v]:
+                if nbr in unvisited:
+                    unvisited.remove(nbr)
+                    comp_vertices.add(nbr)
+                    queue.append(nbr)
+
+        # Collect edges belonging to this component
+        comp_edges = []
+        for e, (v1, v2) in edge_vertices_map.items():
+            if v1 in comp_vertices or v2 in comp_vertices:
+                comp_edges.append(e)
+
+        components.append((comp_vertices, comp_edges))
+
+    return components
+
+def classify_bc_component(comp_vertices, comp_edges):
+    """
+    Classify a BC component (vertices + edges) as in classify_wire:
+      - "closed": no open vertices
+      - "axis-open": open vertices exist, all on x=0 (|x|<axis_tol)
+      - "other-open": open vertices not all on axis
+    """
+    if not comp_edges:
+        return "other-open"
+
+    canonical = []
+    vertex_neighbors = defaultdict(set)
+
+    for e in comp_edges:
+        verts = geompy.ExtractShapes(e, geompy.ShapeType["VERTEX"], True)
+        if len(verts) < 2:
+            continue
+        v1 = canon_vertex(verts[0], canonical)
+        v2 = canon_vertex(verts[1], canonical)
+        vertex_neighbors[v1].add(v2)
+        vertex_neighbors[v2].add(v1)
+
+    if not vertex_neighbors:
+        return "other-open"
+
+    vertex_degree = {v: len(neigh) for v, neigh in vertex_neighbors.items()}
+    open_vertices = [v for v, deg in vertex_degree.items() if deg == 1]
+
+    if not open_vertices:
+        return "closed"
+
+    all_on_axis = True
+    for v in open_vertices:
+        x, y, z = geompy.PointCoordinates(v)
+        if abs(x) > axis_tol:
+            all_on_axis = False
+            break
+
+    return "axis-open" if all_on_axis else "other-open"
+def match_component_to_wire_by_vertices(comp_vertices,
+                                        comp_type,
+                                        wire_cache,
+                                        dist_tol=1e-3,
+                                        min_frac=0.3):
+    """
+    Match a BC component to a domain wire using vertex proximity,
+    restricted to wires with the same open/closed/axis-open type.
+    """
+    if not comp_vertices:
+        return None, None, 0, None
+
+    # BC type filter: only consider wires of the same type
+    allowed_types = []
+    if comp_type == "closed":
+        allowed_types = ["closed"]
+    elif comp_type == "axis-open":
+        allowed_types = ["axis-open"]
+    else:
+        # for now: allow all, but you can choose to drop 'other-open' entirely
+        allowed_types = ["closed", "axis-open", "other-open"]
+
+    bc_coords = [geompy.PointCoordinates(v) for v in comp_vertices]
+
+    best_wire   = None
+    best_index  = None
+    best_score  = 0
+    best_avg    = None
+
+    for entry in wire_cache:
+        if entry["type"] not in allowed_types:
+            continue
+
+        w     = entry["wire"]
+        idx   = entry["index"]
+        vlist = entry["vertices"]
+
+        matches = 0
+        dsum    = 0.0
+
+        for (cx, cy, cz) in bc_coords:
+            mind = None
+            for v_wire, (wx, wy, wz) in vlist:
+                dx = cx - wx
+                dy = cy - wy
+                dz = cz - wz
+                d  = math.sqrt(dx*dx + dy*dy + dz*dz)
+                if mind is None or d < mind:
+                    mind = d
+            if mind is not None and mind < dist_tol:
+                matches += 1
+                dsum    += mind
+
+        if matches == 0:
+            continue
+
+        frac = matches / float(len(bc_coords))
+        if frac < min_frac:
+            continue
+
+        avg = dsum / float(matches)
+
+        if (matches > best_score) or (matches == best_score and
+                                      (best_avg is None or avg < best_avg)):
+            best_score = matches
+            best_avg   = avg
+            best_wire  = w
+            best_index = idx
+
+    return best_wire, best_index, best_score, best_avg
+
 
 if __name__ == '__main__':
     model.begin()
@@ -2541,18 +3013,18 @@ if __name__ == '__main__':
     # intersecting it for cutting
 
     # Electrodes
-    FieldCage      = None#build_field_cage(Cryostat_doc, p, makeface)
-    FieldCageGuard = None#build_field_cage_guard(Cryostat_doc, p, makeface)
+    FieldCage      = None if debug else build_field_cage(Cryostat_doc, p, makeface)
+    FieldCageGuard = None if debug else build_field_cage_guard(Cryostat_doc, p, makeface)
     Bell           = build_bell(Cryostat_doc, p, makeface)
-    Gate           = None#build_gate(Cryostat_doc, p, makeface)
-    Anode          = None#build_anode(Cryostat_doc, p, makeface)
+    Gate           = None if debug else build_gate(Cryostat_doc, p, makeface)
+    Anode          = None if debug else build_anode(Cryostat_doc, p, makeface)
     Cathode        = build_cathode(Cryostat_doc, p, makeface)  # TODO First wire in wrong spot i think
-    TopScreen      = None#build_topScreen(Cryostat_doc, p, makeface)
-    BottomScreen   = None#build_bottomScreen(Cryostat_doc, p, makeface)  # TODO Needs the pin
-    CopperRing     = None#build_copper_ring(Cryostat_doc, p, makeface)
+    TopScreen      = None if debug else build_topScreen(Cryostat_doc, p, makeface)
+    BottomScreen   = None if debug else build_bottomScreen(Cryostat_doc, p, makeface)  # TODO Needs the pin
+    CopperRing     = None if debug else build_copper_ring(Cryostat_doc, p, makeface)
     # Too many vertices for the kernel so had to seperate them out 
-    BottomPMTS     = None#build_bottom_pmts(Cryostat_doc, p, makeface)
-    TopPMTS        = None#build_top_pmts(Cryostat_doc, p, makeface)
+    BottomPMTS     = None if debug else build_bottom_pmts(Cryostat_doc, p, makeface)
+    TopPMTS        = None if debug else build_top_pmts(Cryostat_doc, p, makeface)
 
     ## PTFE Components
     ## TODO Missing the ptfe between copper ring and gate
@@ -2631,7 +3103,7 @@ if __name__ == '__main__':
     # Also make a union of PTFE 
     # ----------------------------------------------------------------------
     main_sel = selec_GXeCryostat + selec_LXeCryostat
-    tool_sels = all_electrode + all_ptfe
+    tool_sels = all_electrode 
 
     cutResult = model.addCut(
         Cryostat_doc,
@@ -2640,271 +3112,238 @@ if __name__ == '__main__':
         keepSubResults=True
     )
 
-    # -------------------------------     Set Material Group Names --------------------------------
-    GXe_group = model.addGroup(
+    # 1) FACE groups for GXe and LXe (2D case)
+    GXe_faces = model.addGroup(
         Cryostat_doc,
         "FACE",
         [model.selection("FACE", "Cut_1_1")]
     )
-    GXe_group.setName("GXeGroup")
-    GXe_group.result().setName("GXeGroup")
+    GXe_faces.setName("GXeFaces")
+    GXe_faces.result().setName("GXeFaces")
 
-    LXe_group = model.addGroup(
+    LXe_faces = model.addGroup(
         Cryostat_doc,
         "FACE",
         [model.selection("FACE", "Cut_1_2")]
     )
+    LXe_faces.setName("LXeFaces")
+    LXe_faces.result().setName("LXeFaces")
+
+    # 2) GroupShape (compound) from those FACE groups
+    GXe_group = model.addGroupShape(
+        Cryostat_doc,
+        [model.selection("COMPOUND", "GXeFaces")]
+    )
+    GXe_group.setName("GXeGroup")
+    GXe_group.result().setName("GXeGroup")
+
+    LXe_group = model.addGroupShape(
+        Cryostat_doc,
+        [model.selection("COMPOUND", "LXeFaces")]
+    )
     LXe_group.setName("LXeGroup")
     LXe_group.result().setName("LXeGroup")
 
-    GXeVol, LXeVol = cutResult.results()
-    cutResult.setName("VolumeCut")
-    LXeVol.setName("LXeRegion")
-    GXeVol.setName("GXeRegion")
-
-    # Create PTFE region group only if there is something in all_ptfe
+    # 3) PTFE: only if there is something in all_ptfe
     if all_ptfe:
-        PTFE_region = model.addGroup(
+        # FACE group collecting all PTFE faces
+        PTFE_faces = model.addGroup(
             Cryostat_doc,
             "FACE",
-            all_ptfe
+            all_ptfe          # list of FACE selections
         )
-        PTFE_region.setName("PTFERegion")
-        PTFE_region.result().setName("PTFERegion")
+        PTFE_faces.setName("PTFEFaces")
+        PTFE_faces.result().setName("PTFEFaces")
 
+        # GroupShape (compound) from PTFEFaces
         PTFE_group = model.addGroupShape(
-            Cryostat_doc, [model.selection("COMPOUND", "PTFERegion")]
+            Cryostat_doc,
+            [model.selection("COMPOUND", "PTFEFaces")]
         )
         PTFE_group.setName("PTFE_Group")
         PTFE_group.result().setName("PTFE_Group")
     else:
-        PTFE_region = None
+        PTFE_faces = None
         PTFE_group = None
 
-    model.do()
-
-    # ---------------------------------- Set BC group Names ------------------------------------------
-
-    def add_edge_group(doc, selections, name):
-        """Create an EDGE group only if there are selections; otherwise return None."""
-        if not selections:
-            return None
-        g = model.addGroup(doc, "EDGE", selections)
-        g.setName(name)
-        g.result().setName(name)
-        return g
-
-    BellBC         = add_edge_group(Cryostat_doc, selec_Bell,         "BC_Bell")
-    GateBC         = add_edge_group(Cryostat_doc, selec_Gate,         "BC_Gate")
-    AnodeBC        = add_edge_group(Cryostat_doc, selec_Anode,        "BC_Anode")
-    CathodeBC      = add_edge_group(Cryostat_doc, selec_Cathode,      "BC_Cathode")
-    TopScreenBC    = add_edge_group(Cryostat_doc, selec_TopScreen,    "BC_TopScreen")
-    BottomScreenBC = add_edge_group(Cryostat_doc, selec_BottomScreen, "BC_BottomScreen")
-    CopperRingBC   = add_edge_group(Cryostat_doc, selec_CopperRing,   "BC_CopperRing")
-    PMTBC          = add_edge_group(Cryostat_doc, selec_BottomPMTS + selec_TopPMTS, "BC_PMTs")
-
-    FieldCageBC = []
-    for i, sel in enumerate(selec_FieldCage, start=1):
-        name = f"BC_FieldCage_Ring_{i}"
-        grp = add_edge_group(Cryostat_doc, [sel], name)
-        if grp is not None:
-            FieldCageBC.append(grp)
-
-    FieldCageGuardBC = []
-    for i, sel in enumerate(selec_FieldCageGuard, start=1):
-        name = f"BC_FieldCageGuard_Ring_{i}"
-        grp = add_edge_group(Cryostat_doc, [sel], name)
-        if grp is not None:
-            FieldCageGuardBC.append(grp)
-
-    model.do()
-
-    ### Create Exports since apparently it has to go by file
-    # Volumes
-    Export_1 = model.exportToXAO(
+    # Create PTFE region group only if there is something in all_ptfe
+    # Build the list of objects for the partition:
+    partition = model.addPartition(
         Cryostat_doc,
-        '/tmp/shaper_6c6wg3w7.xao',
-        model.selection("COMPOUND", "GXeRegion"),
-        'XAO'
-    )
-    Export_2 = model.exportToXAO(
-        Cryostat_doc,
-        '/tmp/shaper_b_d4_v11.xao',
-        model.selection("COMPOUND", "LXeRegion"),
-        'XAO'
+        [
+          GXe_group.result(),
+          LXe_group.result(),
+          PTFE_group.result(),
+        ]
     )
 
-    if PTFE_group is not None:
-        Export_3 = model.exportToXAO(
-            Cryostat_doc,
-            '/tmp/shaper_fyn9_2he.xao',
-            model.selection("COMPOUND", "PTFE_Group"),
-            'XAO'
-        )
-    else:
-        Export_3 = None
+    # Name things 
+    partition.setName("partition_surfaces")
+    partition.result().setName("partition_surfaces")
+    partition.result().subResult(0).setName("GXeVol1")
+    partition.result().subResult(1).setName("TopPMTGuard1")
+    partition.result().subResult(2).setName("TopPMTGuard2")
+    partition.result().subResult(3).setName("TopPMTGuard3")
+    partition.result().subResult(4).setName("TopPMTGuard4")
+    partition.result().subResult(5).setName("TopPMTGuard5")
+    partition.result().subResult(6).setName("TopPMTGuard6")
+    partition.result().subResult(7).setName("TopPMTGuard7")
+    partition.result().subResult(8).setName("TopPMTGuard8")
+    partition.result().subResult(9).setName("PTFESpacerGateToAnode")
+    partition.result().subResult(10).setName("PTFESpacerAnodeToShield")
+    partition.result().subResult(11).setName("PTFEAboveShield")
+    partition.result().subResult(12).setName("GXeVol2")
+    partition.result().subResult(13).setName("GXeVol3")
+    partition.result().subResult(14).setName("TopPMTGuard9")
+    partition.result().subResult(15).setName("GXeVol4")
+    partition.result().subResult(16).setName("LXeVol1")
+    partition.result().subResult(1+16).setName("BottomPMTGuard1")
+    partition.result().subResult(2+16).setName("BottomPMTGuard2")
+    partition.result().subResult(3+16).setName("BottomPMTGuard3")
+    partition.result().subResult(4+16).setName("BottomPMTGuard4")
+    partition.result().subResult(5+16).setName("BottomPMTGuard5")
+    partition.result().subResult(6+16).setName("BottomPMTGuard6")
+    partition.result().subResult(7+16).setName("BottomPMTGuard7")
+    partition.result().subResult(8+16).setName("BottomPMTGuard8")
+    partition.result().subResult(25).setName("PTFEBesidesBottomElectrodes")
+    partition.result().subResult(26).setName("PTFEWall")
+    partition.result().subResult(27).setName("PTFESplitByInterface")
+    partition.result().subResult(28).setName("PTFEAboveCathode")
+    partition.result().subResult(29).setName("LXeVol2")
+    partition.result().subResult(30).setName("BottomPMTGuard9")
 
-    # Boundaries 
-    def tmp_xao_path(prefix="shaper"):
-        return f"/tmp/{prefix}_{uuid.uuid4().hex[:8]}.xao"
-
-    all_bc_groups = [
-        BellBC, GateBC, AnodeBC, CathodeBC, TopScreenBC, BottomScreenBC,
-        CopperRingBC, PMTBC, *FieldCageBC, *FieldCageGuardBC
+    # Make them available to SMESH
+    GXe_faces = [
+        model.selection("FACE", "GXeVol1"),
+        model.selection("FACE", "GXeVol2"),
+        model.selection("FACE", "GXeVol3"),
+        model.selection("FACE", "GXeVol4"),
     ]
-    # Drop None groups (for disabled/empty components)
-    all_bc_groups = [g for g in all_bc_groups if g is not None]
+    GXe_group = model.addGroup(Cryostat_doc, "FACE", GXe_faces)
+    GXe_group.setName("GXeGroupPostPartition")
+    GXe_group.result().setName("GXeGroupPostPartition")
 
-    bc_xao_files = []
-    for grp in all_bc_groups:
-        xao_path = tmp_xao_path(grp.name())
-        sel = model.selection("COMPOUND", grp.name())
-        model.exportToXAO(Cryostat_doc, xao_path, sel, "XAO")
-        bc_xao_files.append((grp.name(), xao_path))
+    # Example: LXe faces
+    LXe_faces = [
+        model.selection("FACE", "LXeVol1"),
+        model.selection("FACE", "LXeVol2"),
+    ]
+    LXe_group = model.addGroup(Cryostat_doc, "FACE", LXe_faces)
+    LXe_group.setName("LXeGroupPostPartition")
+    LXe_group.result().setName("LXeGroupPostPartition")
 
+    # Example: PTFE faces
+    PTFE_faces = [
+        model.selection("FACE", "PTFESpacerGateToAnode"),
+        model.selection("FACE", "PTFESpacerAnodeToShield"),
+        model.selection("FACE", "PTFEAboveShield"),
+        model.selection("FACE", "PTFEBesidesBottomElectrodes"),
+        model.selection("FACE", "PTFEWall"),
+        model.selection("FACE", "PTFESplitByInterface"),
+        model.selection("FACE", "PTFEAboveCathode"),
+        model.selection("FACE","TopPMTGuard1"),
+        model.selection("FACE","TopPMTGuard2"),
+        model.selection("FACE","TopPMTGuard3"),
+        model.selection("FACE","TopPMTGuard4"),
+        model.selection("FACE","TopPMTGuard5"),
+        model.selection("FACE","TopPMTGuard6"),
+        model.selection("FACE","TopPMTGuard7"),
+        model.selection("FACE","TopPMTGuard8"),
+        model.selection("FACE","TopPMTGuard9"),
+        model.selection("FACE","BottomPMTGuard1"),
+        model.selection("FACE","BottomPMTGuard2"),
+        model.selection("FACE","BottomPMTGuard3"),
+        model.selection("FACE","BottomPMTGuard4"),
+        model.selection("FACE","BottomPMTGuard5"),
+        model.selection("FACE","BottomPMTGuard6"),
+        model.selection("FACE","BottomPMTGuard7"),
+        model.selection("FACE","BottomPMTGuard8"),
+        model.selection("FACE","BottomPMTGuard9"),
+    ]
+    #PTFE_group = model.addGroup(Cryostat_doc, "FACE", PTFE_faces)
+    #PTFE_group.setName("PTFE_GroupPostPartition")
+    #PTFE_group.result().setName("PTFE_GroupPostPartition")
+    to_mesh = [
+      model.selection("FACE", "GXeVol1"),
+      model.selection("FACE", "GXeVol2"),
+      model.selection("FACE", "GXeVol3"),
+      model.selection("FACE", "GXeVol4"),
+      model.selection("FACE", "LXeVol1"),
+      model.selection("FACE", "LXeVol2"),
+    ]
+    Fluid_group = model.addGroup(Cryostat_doc, "FACE", to_mesh)
+    Fluid_group.setName("FluidGroupPostPartition")
+    Fluid_group.result().setName("FluidGroupPostPartition")
+    # Now name the edges so we know what to include in BC
+    model.do()
     model.end()
 
-    # ------------ We export to the old geometry module because i cant figure it out ------------
-    # First export to geom make one parent module and then make everything a subgroup so we 
-    # have volume and edge elements 
-    
-    ###
-    ### GEOM component
-    ###
+    model.publishToShaperStudy()
+    import SHAPERSTUDY
+    partition_surfaces, GXeGroupPostPartition, LXeGroupPostPartition, FluidGroupPostPartition = SHAPERSTUDY.shape(model.featureStringId(partition))
+    #PTFE_GroupPostPartition
 
-    import GEOM
-    from salome.geom import geomBuilder
-    import math
-    import SALOMEDS
-
-
-    geompy = geomBuilder.New()
-
-    O = geompy.MakeVertex(0, 0, 0)
-    OX = geompy.MakeVectorDXDYDZ(1, 0, 0)
-    OY = geompy.MakeVectorDXDYDZ(0, 1, 0)
-    OZ = geompy.MakeVectorDXDYDZ(0, 0, 1)
-    # Volumes
-    (imported, GXeRegion, [], [GXeGroup], []) = geompy.ImportXAO("/tmp/shaper_6c6wg3w7.xao")
-    (imported, LXeRegion, [], [LXeGroup], []) = geompy.ImportXAO("/tmp/shaper_b_d4_v11.xao")
-    (imported, PTFE_Group, [], [], []) = geompy.ImportXAO("/tmp/shaper_fyn9_2he.xao")
-    faces_GXe = geompy.MakeCompound(geompy.ExtractShapes(GXeRegion, geompy.ShapeType["FACE"], True))
-    faces_LXe = geompy.MakeCompound(geompy.ExtractShapes(LXeRegion, geompy.ShapeType["FACE"], True))
-    faces_PTFE = geompy.MakeCompound(geompy.ExtractShapes(PTFE_Group, geompy.ShapeType["FACE"], True))
-    # BC's 
-    bc_geom = {}
-    bc_edges = []  # Stores all extracted EDGE objects, purely for optional diagnostics
-    for bc_name, xao_file in bc_xao_files:
-        imported, bc_shape, sub_shapes, groups, fields = geompy.ImportXAO(xao_file)
-        # Extract edges associated with this BC
-        edges = geompy.ExtractShapes(bc_shape, geompy.ShapeType["EDGE"], True)
-        if not edges:
-            print(f"Warning: no edges extracted for BC '{bc_name}' from {xao_file}")
-            continue
-        # If multiple edges exist, make a compound; otherwise, use the single edge
-        bc_edge_obj = edges[0] if len(edges) == 1 else geompy.MakeCompound(edges)
-        # Add to the study with a meaningful name
-        geompy.addToStudy(bc_edge_obj, bc_name + "_Geom")
-        # Store for later: (geometry, optional XAO group)
-        bc_geom[bc_name] = (bc_edge_obj, groups)
-        # Accumulate edges for diagnostics/debug
-        bc_edges.extend(edges)
-
-    # Make parent object
-    MESHING_group = geompy.MakeShell([GXeRegion, PTFE_Group, LXeRegion])
-    #MESHING_group = geompy.MakeCompound([faces_GXe, faces_PTFE, faces_LXe])
-    geompy.addToStudy( O, 'O' )
-    geompy.addToStudy( OX, 'OX' )
-    geompy.addToStudy( OY, 'OY' )
-    geompy.addToStudy( OZ, 'OZ' )
-    # Volumes
-    geompy.addToStudy( GXeRegion, 'GXeRegion' )
-    geompy.addToStudyInFather( GXeRegion, GXeGroup, 'GXeGroup' )
-    geompy.addToStudy( LXeRegion, 'LXeRegion' )
-    geompy.addToStudyInFather( LXeRegion, LXeGroup, 'LXeGroup' )
-    geompy.addToStudy( PTFE_Group, 'PTFE_Group' )
-    # Parent Object 
-    geompy.addToStudy( MESHING_group, 'MESHING_group' )
-
-    ###
-    ### SMESH component
-    ###
-
-    import  SMESH, SALOMEDS
     from salome.smesh import smeshBuilder
+    import SMESH
 
     smesh = smeshBuilder.New()
-    #smesh.SetEnablePublish( False ) # Set to False to avoid publish in study if not needed or in some particular situations:
-                                    # multiples meshes built in parallel, complex and numerous mesh edition (performance)
-    Mesh_1 = smesh.Mesh(MESHING_group)
-    algo1d = Mesh_1.Segment() 
-    local_wire_length = min(p.TopScreenWireDiameter, p.GateWireDiameter, p.TopStackWireDiameter, p.CathodeWireDiameter, p.BottomScreenWireDiameter)
-    local_wire_length *= math.pi *2 # Want 12 edges about the wire
-    hyp1d = algo1d.LocalLength(local_wire_length)
-    NETGEN_2D = Mesh_1.Triangle(smeshBuilder.NETGEN_2D)
-    hyp2d  = NETGEN_2D.Parameters()
-    #hyp2d.SetMaxSize(5.0 * local_wire_length)           # global max element size
-    #hyp2d.SetMinSize(0.25 * local_wire_length)         # global min element size (0 disables)
-    hyp2d.SetSecondOrder(0)
-    hyp2d.SetFineness(1)  # medium granularity
-    hyp2d.SetOptimize(1)
-    hyp2d.SetUseSurfaceCurvature(1)
 
-    #hyp2d.SetSecondOrder(0)        # 0 = first order, 1 = second order
-    #hyp2d.SetOptimize(0)           # 1 = optimize, 0 = off
-    #hyp2d.SetFineness(0)           # 0..4 (VeryCoarse..VeryFine), 2–3 is typical
-    #hyp2d.SetUseSurfaceCurvature(1)  # refine near curvature
-    #hyp2d.SetGrowthRate(0.3)       # 0..1, smaller -> smoother gradation
-    #hyp2d.SetNbSegPerEdge(1)       # segments per edge (used with LocalLength)
-    #hyp2d.SetNbSegPerRadius(2)     # segments per radius for curved entities
-    #hyp2d.SetQuadAllowed(0)        # 0 = triangles only
 
-    # ---------------------------------------------------------------------
-    # Region groups: Faces
-    # ---------------------------------------------------------------------
-    GXeRegion_1 = Mesh_1.GroupOnGeom(GXeRegion, 'GXeRegion', SMESH.FACE)
-    PTFE_Group_1 = Mesh_1.GroupOnGeom(PTFE_Group, 'PTFE_Group', SMESH.FACE)
-    LXeRegion_1 = Mesh_1.GroupOnGeom(LXeRegion, 'LXeRegion', SMESH.FACE)
+    """
+    Create a Partition instead of a cut using all electrode elements (seperately)
+    Create a single partition that includes all the to be meshed elements
+    and partitions for each submesh
 
-    smesh.SetName(LXeRegion_1, 'LXeRegion')
-    smesh.SetName(PTFE_Group_1, 'PTFE_Group')
-    smesh.SetName(GXeRegion_1, 'GXeRegion')
+    Create the main partition and the subpartions on it
 
-    #GXeRegion_2 = Mesh_1.GroupOnGeom(GXeRegion, 'GXeRegion', SMESH.NODE)
-    #PTFE_Group_2 = Mesh_1.GroupOnGeom(PTFE_Group, 'PTFE_Group', SMESH.NODE)
-    #LXeRegion_2 = Mesh_1.GroupOnGeom(LXeRegion, 'LXeRegion', SMESH.NODE)
+    Select boundary elements on each electrode using
+
+    BC_edges = mesh.MakeBoundaryElements(
+        dimension=BND_1DFROM2D,
+        groupName="BC_AllEdges",
+        meshName="",          # default mesh
+        toCopyAll=False,
+        groups=[MSH_GXe_face_group, MSH_LXe_face_group, ]#MSH_PTFE_face_group
+    )
+
+    where groups is the source of the group 
     
-    #smesh.SetName(GXeRegion_2, 'GXeRegion')
-    #smesh.SetName(LXeRegion_2, 'LXeRegion')
-    #smesh.SetName(PTFE_Group_2, 'PTFE_Group')
+    
+    """
 
-    smesh.SetName(algo1d.GetAlgorithm(),  'Algo 1D')
-    smesh.SetName(hyp1d, "1D local length")
-    smesh.SetName(NETGEN_2D.GetAlgorithm(), 'NETGEN 1D-2D')
-    smesh.SetName(Mesh_1.GetMesh(), 'Mesh_1')
+    # G is the Shaper partition result, e.g. 'partition_surfaces'
+    # G_GXe, G_LXe, G_PTFE are the Shaper FACE groups we defined above
 
-    # ---------------------------------------------------------------------
-    # Boundary-condition groups: edges on the meshed surface
-    # ---------------------------------------------------------------------
-    bc_mesh_groups = {}
+    #mesh = smesh.Mesh(partition_surfaces)
+    mesh = smesh.Mesh(FluidGroupPostPartition)
+    NETGEN_1D_2D = mesh.Triangle(algo=smeshBuilder.NETGEN_1D2D)
 
-    for bc_name, (bc_shape, groups) in bc_geom.items():
-        # Change SMESH.EDGE to SMESH.FACE if your BC XAOs are faces
-        grp = Mesh_1.GroupOnGeom(bc_shape, bc_name, SMESH.EDGE)
-        #grp2 = Mesh_1.GroupOnGeom(bc_shape, bc_name, SMESH.NODE)
-        smesh.SetName(grp, bc_name)
-        #smesh.SetName(grp2, bc_name)
-        bc_mesh_groups[bc_name] = grp
+    MSH_GXe_face_group  = mesh.GroupOnGeom(GXeGroupPostPartition,  "GXeGroup",  SMESH.FACE)
+    MSH_LXe_face_group  = mesh.GroupOnGeom(LXeGroupPostPartition,  "LXeGroup",  SMESH.FACE)
+    #MSH_PTFE_face_group = mesh.GroupOnGeom(PTFE_GroupPostPartition, "PTFE_Group", SMESH.FACE)
 
 
-    #isDone = Mesh_1.Compute()
-    #Mesh_1.ExportMED("/home/felix/MFEMElectrostatics/geometries/SR3nTCOMSOLVerification/mesh.med", 
-    #                auto_groups=False, 
-    #                minor=42, # MED version 4.2
-    #                )
 
-    if salome.sg.hasDesktop():
-      salome.sg.updateObjBrowser()
+    mesh.Compute()
+
+    # Now create 1D boundary elements along those faces:
+    # This creates all 1D boundary elements of the given face groups in a single 1D group:
+    from SMESH import BND_1DFROM2D
+
+    BC_edges = mesh.MakeBoundaryElements(
+        dimension=BND_1DFROM2D,
+        groupName="BC_AllEdges",
+        meshName="",          # default mesh
+        toCopyAll=False,
+        groups=[MSH_GXe_face_group, MSH_LXe_face_group, ]#MSH_PTFE_face_group
+    )
+
+    
+    mesh.ExportMED(
+        "/home/felix/MFEMElectrostatics/geometries/SR3nTCOMSOLVerification/mesh.med",
+        auto_groups=False,   # you control groups explicitly
+        minor=42,            # MED 4.2
+    )
 
     """    Convert to gmsh 2.2 and dump conversion 
     gmsh -0 mesh.med -format msh2 -o mesh22.msh

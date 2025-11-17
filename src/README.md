@@ -25,6 +25,8 @@ From ChatGPT:
 
 ### Debugging
 
+
+##### SIGSEGV in Solver while checking boundaries 
 This
 
 ```
@@ -42,4 +44,14 @@ This
 [tower:02289] [ 8] ./SOLVER(+0xa4845)[0x55a809c91845]
 ```
 
-means you computed the BC twice, I encountered this when doing both a 1D meshing algo and NETGEN_1D2D which caused both netgen and the algo to create 1D meshes on boundaries. I do not know how to fix this gracefully while keeping boundary conditions so just drop NETGEN_1D2D to NETGEN_2D. TODO I want to make a test for this but dont know yet how this manifests in the loading function
+means you computed the BC lines seperate from the surface mesh, I encountered this when doing both a 1D meshing algo and NETGEN_1D2D which caused both netgen and the algo to create 1D meshes on boundaries while meshing the BC's as well instead of assigning them after the meshing is complete (NOTE: I am not sure this is the actual reason as I never explicitly inspected the mesh for this but it seems like the most reasonable conclusion). 
+
+Extra Context: This arrose specifically when Meshing Geom is the union of LXe GXe PTFE and BC's where all faces have their own topologically distinct faces, and BCs have topological distinct boundaries. The latter point is the problem as they need to be identical in the topology. This is diagnosed when moving the compute prior to the BC's and seeing no boundaries defined in the resulting mesh files. 
+
+
+##### Part of the geometry not meshing 
+
+I encountered this when using a custom 1D algorithm to get rid of the no 1D algo set while using NETGEN 1D 2D, I chose a very small non adaptive local line length (1e-5) and I think it did not mesh due to the size inconsistencies of NETGEN2D and my local line logic. Sizes shoulbe matched in this case. TODO Update here how matching should be done  
+
+
+
