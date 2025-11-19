@@ -8,7 +8,7 @@ mesh:
 
 
 # Processing device TODO 
-preset: none                       # serial | threads | mpi | gpu | mpi+gpu | mpi+threads
+preset: threads                       # serial | threads | mpi | gpu | mpi+gpu | mpi+threads
 
 compute:
   mpi:
@@ -17,11 +17,11 @@ compute:
     hostfile: null                    # optional path
     repartition_after_refine: true
 
-  # All options here work and tested 
+  # All options work and tested 
   threads:
-    enabled: false                     # OpenMP 
+    enabled: true                     # OpenMP 
     num: -1                           # number of threads (always applies to meshing)
-    affinity: none                 # "compact" | "scatter" | "none"
+    affinity: scatter                 # "compact" | "scatter" | "none"
 
   device: 
     type: none                        # "none" | "cuda" | "hip" | "occa" | "cpu"
@@ -29,8 +29,9 @@ compute:
     per_rank: 1                       # GPUs per MPI rank 
 
 # End processing device
+
 debug:
-  debug: false
+  debug: true
   quick_mesh: false
 
 # solver configuration
@@ -47,309 +48,586 @@ solver:
   maxiter: 100000
   printlevel: 1
   mesh_save_path: "simulation_mesh.msh"
-  # TODO Change to only use naming convention not each explicitly 
   V_solution_path: "solution_V.gf"
   Emag_solution_path: "solution_Emag.gf"
 
-
-
 materials:
-  GXeRegion:
-    attr_id: 1
+  GXeGroup:
+    attr_id: 3
     epsilon_r: 1.0
+  LXeGroup:
+    attr_id: 1
+    epsilon_r: 1.95
   PTFE_Group:
     attr_id: 2
     epsilon_r: 2.1
-  LXeRegion:
-    attr_id: 3
-    epsilon_r: 1.95
 
 boundaries:
-  BC_Bell:
+  Anode_GroupPostPartition:
     bdr_id: 4
     type: dirichlet
-    value: 10.0
-  BC_Gate:
-    bdr_id: 5
-    type: dirichlet
-    value: 5.0
-  BC_Anode:
-    bdr_id: 6
-    type: dirichlet
-    value: 0.0
-  BC_Cathode:
-    bdr_id: 7
-    type: dirichlet
-    value: -5.0
-  BC_TopScreen:
+    value: -30.0
+  BottomScreen_GroupPostPartition:
     bdr_id: 8
     type: dirichlet
-    value: 0.0
-  BC_BottomScreen:
+    value: -28.29787234042553
+  Cathode_GroupPostPartition:
+    bdr_id: 6
+    type: dirichlet
+    value: -29.148936170212767
+  CopperRing_GroupPostPartition:
     bdr_id: 9
     type: dirichlet
-    value: 0.0
-  BC_CopperRing:
-    bdr_id: 10
+    value: -27.872340425531917
+  FieldCageGuard_Subpart_10_GroupPostPartition:
+    bdr_id: 91
     type: dirichlet
-    value: 0.0
-  BC_PMTs:
-    bdr_id: 11
+    value: 7.0212765957446805
+  FieldCageGuard_Subpart_11_GroupPostPartition:
+    bdr_id: 92
     type: dirichlet
-    value: 0.0
-  BC_FieldCageGuard_Ring_1:
-    bdr_id: 12
+    value: 7.446808510638299
+  FieldCageGuard_Subpart_12_GroupPostPartition:
+    bdr_id: 93
     type: dirichlet
-    value: -30.0
-  BC_FieldCageGuard_Ring_10:
-    bdr_id: 21
+    value: 7.872340425531917
+  FieldCageGuard_Subpart_13_GroupPostPartition:
+    bdr_id: 94
     type: dirichlet
-    value: -21.42857142857143
-  BC_FieldCageGuard_Ring_11:
-    bdr_id: 22
+    value: 8.297872340425535
+  FieldCageGuard_Subpart_14_GroupPostPartition:
+    bdr_id: 95
     type: dirichlet
-    value: -20.476190476190474
-  BC_FieldCageGuard_Ring_12:
-    bdr_id: 23
+    value: 8.723404255319146
+  FieldCageGuard_Subpart_15_GroupPostPartition:
+    bdr_id: 96
     type: dirichlet
-    value: -19.523809523809526
-  BC_FieldCageGuard_Ring_13:
-    bdr_id: 24
+    value: 9.148936170212764
+  FieldCageGuard_Subpart_16_GroupPostPartition:
+    bdr_id: 97
     type: dirichlet
-    value: -18.571428571428573
-  BC_FieldCageGuard_Ring_14:
-    bdr_id: 25
-    type: dirichlet
-    value: -17.61904761904762
-  BC_FieldCageGuard_Ring_15:
-    bdr_id: 26
-    type: dirichlet
-    value: -16.666666666666668
-  BC_FieldCageGuard_Ring_16:
-    bdr_id: 27
-    type: dirichlet
-    value: -15.714285714285715
-  BC_FieldCageGuard_Ring_17:
-    bdr_id: 28
-    type: dirichlet
-    value: -14.761904761904763
-  BC_FieldCageGuard_Ring_18:
-    bdr_id: 29
-    type: dirichlet
-    value: -13.80952380952381
-  BC_FieldCageGuard_Ring_19:
-    bdr_id: 30
-    type: dirichlet
-    value: -12.857142857142858
-  BC_FieldCageGuard_Ring_2:
-    bdr_id: 13
-    type: dirichlet
-    value: -29.047619047619047
-  BC_FieldCageGuard_Ring_20:
-    bdr_id: 31
-    type: dirichlet
-    value: -11.904761904761905
-  BC_FieldCageGuard_Ring_21:
-    bdr_id: 32
-    type: dirichlet
-    value: -10.952380952380953
-  BC_FieldCageGuard_Ring_22:
-    bdr_id: 33
-    type: dirichlet
-    value: -10.0
-  BC_FieldCageGuard_Ring_23:
-    bdr_id: 34
-    type: dirichlet
-    value: -9.047619047619047
-  BC_FieldCageGuard_Ring_24:
-    bdr_id: 35
-    type: dirichlet
-    value: -8.095238095238095
-  BC_FieldCageGuard_Ring_25:
-    bdr_id: 36
-    type: dirichlet
-    value: -7.142857142857146
-  BC_FieldCageGuard_Ring_26:
-    bdr_id: 37
-    type: dirichlet
-    value: -6.190476190476193
-  BC_FieldCageGuard_Ring_27:
-    bdr_id: 38
-    type: dirichlet
-    value: -5.238095238095241
-  BC_FieldCageGuard_Ring_28:
-    bdr_id: 39
-    type: dirichlet
-    value: -4.285714285714288
-  BC_FieldCageGuard_Ring_29:
-    bdr_id: 40
-    type: dirichlet
-    value: -3.3333333333333357
-  BC_FieldCageGuard_Ring_3:
-    bdr_id: 14
-    type: dirichlet
-    value: -28.095238095238095
-  BC_FieldCageGuard_Ring_30:
-    bdr_id: 41
-    type: dirichlet
-    value: -2.380952380952383
-  BC_FieldCageGuard_Ring_31:
-    bdr_id: 42
-    type: dirichlet
-    value: -1.4285714285714306
-  BC_FieldCageGuard_Ring_32:
-    bdr_id: 43
-    type: dirichlet
-    value: -0.47619047619047805
-  BC_FieldCageGuard_Ring_33:
-    bdr_id: 44
-    type: dirichlet
-    value: 0.4761904761904745
-  BC_FieldCageGuard_Ring_34:
-    bdr_id: 45
-    type: dirichlet
-    value: 1.428571428571427
-  BC_FieldCageGuard_Ring_35:
-    bdr_id: 46
-    type: dirichlet
-    value: 2.3809523809523796
-  BC_FieldCageGuard_Ring_36:
-    bdr_id: 47
-    type: dirichlet
-    value: 3.3333333333333286
-  BC_FieldCageGuard_Ring_37:
-    bdr_id: 48
-    type: dirichlet
-    value: 4.285714285714285
-  BC_FieldCageGuard_Ring_38:
-    bdr_id: 49
-    type: dirichlet
-    value: 5.238095238095234
-  BC_FieldCageGuard_Ring_39:
-    bdr_id: 50
-    type: dirichlet
-    value: 6.19047619047619
-  BC_FieldCageGuard_Ring_4:
-    bdr_id: 15
-    type: dirichlet
-    value: -27.142857142857142
-  BC_FieldCageGuard_Ring_40:
-    bdr_id: 51
-    type: dirichlet
-    value: 7.142857142857139
-  BC_FieldCageGuard_Ring_41:
-    bdr_id: 52
-    type: dirichlet
-    value: 8.095238095238095
-  BC_FieldCageGuard_Ring_42:
-    bdr_id: 53
-    type: dirichlet
-    value: 9.047619047619044
-  BC_FieldCageGuard_Ring_43:
-    bdr_id: 54
+    value: 9.574468085106382
+  FieldCageGuard_Subpart_17_GroupPostPartition:
+    bdr_id: 98
     type: dirichlet
     value: 10.0
-  BC_FieldCageGuard_Ring_44:
-    bdr_id: 55
+  FieldCageGuard_Subpart_18_GroupPostPartition:
+    bdr_id: 99
     type: dirichlet
-    value: 10.952380952380949
-  BC_FieldCageGuard_Ring_45:
-    bdr_id: 56
+    value: 10.425531914893618
+  FieldCageGuard_Subpart_19_GroupPostPartition:
+    bdr_id: 100
     type: dirichlet
-    value: 11.904761904761905
-  BC_FieldCageGuard_Ring_46:
-    bdr_id: 57
+    value: 10.851063829787236
+  FieldCageGuard_Subpart_1_GroupPostPartition:
+    bdr_id: 82
     type: dirichlet
-    value: 12.857142857142854
-  BC_FieldCageGuard_Ring_47:
-    bdr_id: 58
+    value: 3.191489361702125
+  FieldCageGuard_Subpart_20_GroupPostPartition:
+    bdr_id: 101
     type: dirichlet
-    value: 13.80952380952381
-  BC_FieldCageGuard_Ring_48:
-    bdr_id: 59
+    value: 11.276595744680854
+  FieldCageGuard_Subpart_21_GroupPostPartition:
+    bdr_id: 102
     type: dirichlet
-    value: 14.76190476190476
-  BC_FieldCageGuard_Ring_49:
-    bdr_id: 60
+    value: 11.702127659574465
+  FieldCageGuard_Subpart_22_GroupPostPartition:
+    bdr_id: 103
     type: dirichlet
-    value: 15.714285714285708
-  BC_FieldCageGuard_Ring_5:
-    bdr_id: 16
+    value: 12.127659574468083
+  FieldCageGuard_Subpart_23_GroupPostPartition:
+    bdr_id: 104
     type: dirichlet
-    value: -26.19047619047619
-  BC_FieldCageGuard_Ring_50:
-    bdr_id: 61
+    value: 12.553191489361701
+  FieldCageGuard_Subpart_24_GroupPostPartition:
+    bdr_id: 105
     type: dirichlet
-    value: 16.666666666666664
-  BC_FieldCageGuard_Ring_51:
-    bdr_id: 62
+    value: 12.97872340425532
+  FieldCageGuard_Subpart_25_GroupPostPartition:
+    bdr_id: 106
     type: dirichlet
-    value: 17.619047619047613
-  BC_FieldCageGuard_Ring_52:
-    bdr_id: 63
+    value: 13.404255319148938
+  FieldCageGuard_Subpart_26_GroupPostPartition:
+    bdr_id: 107
     type: dirichlet
-    value: 18.57142857142857
-  BC_FieldCageGuard_Ring_53:
-    bdr_id: 64
+    value: 13.829787234042556
+  FieldCageGuard_Subpart_27_GroupPostPartition:
+    bdr_id: 108
     type: dirichlet
-    value: 19.52380952380952
-  BC_FieldCageGuard_Ring_54:
-    bdr_id: 65
+    value: 14.255319148936174
+  FieldCageGuard_Subpart_28_GroupPostPartition:
+    bdr_id: 109
     type: dirichlet
-    value: 20.476190476190474
-  BC_FieldCageGuard_Ring_55:
-    bdr_id: 66
+    value: 14.680851063829785
+  FieldCageGuard_Subpart_29_GroupPostPartition:
+    bdr_id: 110
     type: dirichlet
-    value: 21.428571428571423
-  BC_FieldCageGuard_Ring_56:
-    bdr_id: 67
+    value: 15.106382978723403
+  FieldCageGuard_Subpart_2_GroupPostPartition:
+    bdr_id: 83
     type: dirichlet
-    value: 22.38095238095238
-  BC_FieldCageGuard_Ring_57:
-    bdr_id: 68
+    value: 3.617021276595743
+  FieldCageGuard_Subpart_30_GroupPostPartition:
+    bdr_id: 111
     type: dirichlet
-    value: 23.33333333333333
-  BC_FieldCageGuard_Ring_58:
-    bdr_id: 69
+    value: 15.53191489361702
+  FieldCageGuard_Subpart_31_GroupPostPartition:
+    bdr_id: 112
     type: dirichlet
-    value: 24.285714285714285
-  BC_FieldCageGuard_Ring_59:
-    bdr_id: 70
+    value: 15.957446808510639
+  FieldCageGuard_Subpart_32_GroupPostPartition:
+    bdr_id: 113
     type: dirichlet
-    value: 25.238095238095234
-  BC_FieldCageGuard_Ring_6:
-    bdr_id: 17
+    value: 16.382978723404257
+  FieldCageGuard_Subpart_33_GroupPostPartition:
+    bdr_id: 114
     type: dirichlet
-    value: -25.238095238095237
-  BC_FieldCageGuard_Ring_60:
-    bdr_id: 71
+    value: 16.808510638297875
+  FieldCageGuard_Subpart_34_GroupPostPartition:
+    bdr_id: 115
     type: dirichlet
-    value: 26.19047619047619
-  BC_FieldCageGuard_Ring_61:
-    bdr_id: 72
+    value: 17.234042553191493
+  FieldCageGuard_Subpart_35_GroupPostPartition:
+    bdr_id: 116
     type: dirichlet
-    value: 27.14285714285714
-  BC_FieldCageGuard_Ring_62:
-    bdr_id: 73
+    value: 17.659574468085104
+  FieldCageGuard_Subpart_36_GroupPostPartition:
+    bdr_id: 117
     type: dirichlet
-    value: 28.095238095238095
-  BC_FieldCageGuard_Ring_63:
-    bdr_id: 74
+    value: 18.085106382978722
+  FieldCageGuard_Subpart_37_GroupPostPartition:
+    bdr_id: 118
     type: dirichlet
-    value: 29.047619047619044
-  BC_FieldCageGuard_Ring_64:
-    bdr_id: 75
+    value: 18.51063829787234
+  FieldCageGuard_Subpart_38_GroupPostPartition:
+    bdr_id: 119
+    type: dirichlet
+    value: 18.93617021276596
+  FieldCageGuard_Subpart_39_GroupPostPartition:
+    bdr_id: 120
+    type: dirichlet
+    value: 19.361702127659576
+  FieldCageGuard_Subpart_3_GroupPostPartition:
+    bdr_id: 84
+    type: dirichlet
+    value: 4.042553191489361
+  FieldCageGuard_Subpart_40_GroupPostPartition:
+    bdr_id: 121
+    type: dirichlet
+    value: 19.787234042553195
+  FieldCageGuard_Subpart_41_GroupPostPartition:
+    bdr_id: 122
+    type: dirichlet
+    value: 20.212765957446805
+  FieldCageGuard_Subpart_42_GroupPostPartition:
+    bdr_id: 123
+    type: dirichlet
+    value: 20.638297872340424
+  FieldCageGuard_Subpart_43_GroupPostPartition:
+    bdr_id: 124
+    type: dirichlet
+    value: 21.06382978723404
+  FieldCageGuard_Subpart_44_GroupPostPartition:
+    bdr_id: 125
+    type: dirichlet
+    value: 21.48936170212766
+  FieldCageGuard_Subpart_45_GroupPostPartition:
+    bdr_id: 126
+    type: dirichlet
+    value: 21.914893617021278
+  FieldCageGuard_Subpart_46_GroupPostPartition:
+    bdr_id: 127
+    type: dirichlet
+    value: 22.340425531914896
+  FieldCageGuard_Subpart_47_GroupPostPartition:
+    bdr_id: 128
+    type: dirichlet
+    value: 22.765957446808514
+  FieldCageGuard_Subpart_48_GroupPostPartition:
+    bdr_id: 129
+    type: dirichlet
+    value: 23.191489361702125
+  FieldCageGuard_Subpart_49_GroupPostPartition:
+    bdr_id: 130
+    type: dirichlet
+    value: 23.617021276595743
+  FieldCageGuard_Subpart_4_GroupPostPartition:
+    bdr_id: 85
+    type: dirichlet
+    value: 4.468085106382979
+  FieldCageGuard_Subpart_50_GroupPostPartition:
+    bdr_id: 131
+    type: dirichlet
+    value: 24.04255319148936
+  FieldCageGuard_Subpart_51_GroupPostPartition:
+    bdr_id: 132
+    type: dirichlet
+    value: 24.46808510638298
+  FieldCageGuard_Subpart_52_GroupPostPartition:
+    bdr_id: 133
+    type: dirichlet
+    value: 24.893617021276597
+  FieldCageGuard_Subpart_53_GroupPostPartition:
+    bdr_id: 134
+    type: dirichlet
+    value: 25.319148936170215
+  FieldCageGuard_Subpart_54_GroupPostPartition:
+    bdr_id: 135
+    type: dirichlet
+    value: 25.744680851063833
+  FieldCageGuard_Subpart_55_GroupPostPartition:
+    bdr_id: 136
+    type: dirichlet
+    value: 26.170212765957444
+  FieldCageGuard_Subpart_56_GroupPostPartition:
+    bdr_id: 137
+    type: dirichlet
+    value: 26.595744680851062
+  FieldCageGuard_Subpart_57_GroupPostPartition:
+    bdr_id: 138
+    type: dirichlet
+    value: 27.02127659574468
+  FieldCageGuard_Subpart_58_GroupPostPartition:
+    bdr_id: 139
+    type: dirichlet
+    value: 27.4468085106383
+  FieldCageGuard_Subpart_59_GroupPostPartition:
+    bdr_id: 140
+    type: dirichlet
+    value: 27.872340425531917
+  FieldCageGuard_Subpart_5_GroupPostPartition:
+    bdr_id: 86
+    type: dirichlet
+    value: 4.893617021276597
+  FieldCageGuard_Subpart_60_GroupPostPartition:
+    bdr_id: 141
+    type: dirichlet
+    value: 28.297872340425535
+  FieldCageGuard_Subpart_61_GroupPostPartition:
+    bdr_id: 142
+    type: dirichlet
+    value: 28.723404255319153
+  FieldCageGuard_Subpart_62_GroupPostPartition:
+    bdr_id: 143
+    type: dirichlet
+    value: 29.148936170212764
+  FieldCageGuard_Subpart_63_GroupPostPartition:
+    bdr_id: 144
+    type: dirichlet
+    value: 29.574468085106382
+  FieldCageGuard_Subpart_64_GroupPostPartition:
+    bdr_id: 145
     type: dirichlet
     value: 30.0
-  BC_FieldCageGuard_Ring_7:
-    bdr_id: 18
+  FieldCageGuard_Subpart_6_GroupPostPartition:
+    bdr_id: 87
     type: dirichlet
-    value: -24.285714285714285
-  BC_FieldCageGuard_Ring_8:
-    bdr_id: 19
+    value: 5.319148936170215
+  FieldCageGuard_Subpart_7_GroupPostPartition:
+    bdr_id: 88
     type: dirichlet
-    value: -23.333333333333336
-  BC_FieldCageGuard_Ring_9:
+    value: 5.744680851063833
+  FieldCageGuard_Subpart_8_GroupPostPartition:
+    bdr_id: 89
+    type: dirichlet
+    value: 6.170212765957444
+  FieldCageGuard_Subpart_9_GroupPostPartition:
+    bdr_id: 90
+    type: dirichlet
+    value: 6.5957446808510625
+  FieldCage_Subpart_10_GroupPostPartition:
     bdr_id: 20
     type: dirichlet
-    value: -22.38095238095238
+    value: -23.19148936170213
+  FieldCage_Subpart_11_GroupPostPartition:
+    bdr_id: 21
+    type: dirichlet
+    value: -22.76595744680851
+  FieldCage_Subpart_12_GroupPostPartition:
+    bdr_id: 22
+    type: dirichlet
+    value: -22.340425531914892
+  FieldCage_Subpart_13_GroupPostPartition:
+    bdr_id: 23
+    type: dirichlet
+    value: -21.914893617021278
+  FieldCage_Subpart_14_GroupPostPartition:
+    bdr_id: 24
+    type: dirichlet
+    value: -21.48936170212766
+  FieldCage_Subpart_15_GroupPostPartition:
+    bdr_id: 25
+    type: dirichlet
+    value: -21.06382978723404
+  FieldCage_Subpart_16_GroupPostPartition:
+    bdr_id: 26
+    type: dirichlet
+    value: -20.638297872340424
+  FieldCage_Subpart_17_GroupPostPartition:
+    bdr_id: 27
+    type: dirichlet
+    value: -20.21276595744681
+  FieldCage_Subpart_18_GroupPostPartition:
+    bdr_id: 28
+    type: dirichlet
+    value: -19.78723404255319
+  FieldCage_Subpart_19_GroupPostPartition:
+    bdr_id: 29
+    type: dirichlet
+    value: -19.361702127659576
+  FieldCage_Subpart_1_GroupPostPartition:
+    bdr_id: 11
+    type: dirichlet
+    value: -27.02127659574468
+  FieldCage_Subpart_20_GroupPostPartition:
+    bdr_id: 30
+    type: dirichlet
+    value: -18.93617021276596
+  FieldCage_Subpart_21_GroupPostPartition:
+    bdr_id: 31
+    type: dirichlet
+    value: -18.51063829787234
+  FieldCage_Subpart_22_GroupPostPartition:
+    bdr_id: 32
+    type: dirichlet
+    value: -18.085106382978722
+  FieldCage_Subpart_23_GroupPostPartition:
+    bdr_id: 33
+    type: dirichlet
+    value: -17.659574468085104
+  FieldCage_Subpart_24_GroupPostPartition:
+    bdr_id: 34
+    type: dirichlet
+    value: -17.23404255319149
+  FieldCage_Subpart_25_GroupPostPartition:
+    bdr_id: 35
+    type: dirichlet
+    value: -16.80851063829787
+  FieldCage_Subpart_26_GroupPostPartition:
+    bdr_id: 36
+    type: dirichlet
+    value: -16.382978723404257
+  FieldCage_Subpart_27_GroupPostPartition:
+    bdr_id: 37
+    type: dirichlet
+    value: -15.957446808510639
+  FieldCage_Subpart_28_GroupPostPartition:
+    bdr_id: 38
+    type: dirichlet
+    value: -15.53191489361702
+  FieldCage_Subpart_29_GroupPostPartition:
+    bdr_id: 39
+    type: dirichlet
+    value: -15.106382978723405
+  FieldCage_Subpart_2_GroupPostPartition:
+    bdr_id: 12
+    type: dirichlet
+    value: -26.595744680851062
+  FieldCage_Subpart_30_GroupPostPartition:
+    bdr_id: 40
+    type: dirichlet
+    value: -14.680851063829786
+  FieldCage_Subpart_31_GroupPostPartition:
+    bdr_id: 41
+    type: dirichlet
+    value: -14.25531914893617
+  FieldCage_Subpart_32_GroupPostPartition:
+    bdr_id: 42
+    type: dirichlet
+    value: -13.829787234042552
+  FieldCage_Subpart_33_GroupPostPartition:
+    bdr_id: 43
+    type: dirichlet
+    value: -13.404255319148938
+  FieldCage_Subpart_34_GroupPostPartition:
+    bdr_id: 44
+    type: dirichlet
+    value: -12.97872340425532
+  FieldCage_Subpart_35_GroupPostPartition:
+    bdr_id: 45
+    type: dirichlet
+    value: -12.553191489361701
+  FieldCage_Subpart_36_GroupPostPartition:
+    bdr_id: 46
+    type: dirichlet
+    value: -12.127659574468083
+  FieldCage_Subpart_37_GroupPostPartition:
+    bdr_id: 47
+    type: dirichlet
+    value: -11.702127659574469
+  FieldCage_Subpart_38_GroupPostPartition:
+    bdr_id: 48
+    type: dirichlet
+    value: -11.27659574468085
+  FieldCage_Subpart_39_GroupPostPartition:
+    bdr_id: 49
+    type: dirichlet
+    value: -10.851063829787233
+  FieldCage_Subpart_3_GroupPostPartition:
+    bdr_id: 13
+    type: dirichlet
+    value: -26.170212765957448
+  FieldCage_Subpart_40_GroupPostPartition:
+    bdr_id: 50
+    type: dirichlet
+    value: -10.425531914893618
+  FieldCage_Subpart_41_GroupPostPartition:
+    bdr_id: 51
+    type: dirichlet
+    value: -10.0
+  FieldCage_Subpart_42_GroupPostPartition:
+    bdr_id: 52
+    type: dirichlet
+    value: -9.574468085106382
+  FieldCage_Subpart_43_GroupPostPartition:
+    bdr_id: 53
+    type: dirichlet
+    value: -9.148936170212767
+  FieldCage_Subpart_44_GroupPostPartition:
+    bdr_id: 54
+    type: dirichlet
+    value: -8.72340425531915
+  FieldCage_Subpart_45_GroupPostPartition:
+    bdr_id: 55
+    type: dirichlet
+    value: -8.297872340425531
+  FieldCage_Subpart_46_GroupPostPartition:
+    bdr_id: 56
+    type: dirichlet
+    value: -7.872340425531913
+  FieldCage_Subpart_47_GroupPostPartition:
+    bdr_id: 57
+    type: dirichlet
+    value: -7.446808510638299
+  FieldCage_Subpart_48_GroupPostPartition:
+    bdr_id: 58
+    type: dirichlet
+    value: -7.0212765957446805
+  FieldCage_Subpart_49_GroupPostPartition:
+    bdr_id: 59
+    type: dirichlet
+    value: -6.5957446808510625
+  FieldCage_Subpart_4_GroupPostPartition:
+    bdr_id: 14
+    type: dirichlet
+    value: -25.74468085106383
+  FieldCage_Subpart_50_GroupPostPartition:
+    bdr_id: 60
+    type: dirichlet
+    value: -6.170212765957448
+  FieldCage_Subpart_51_GroupPostPartition:
+    bdr_id: 61
+    type: dirichlet
+    value: -5.74468085106383
+  FieldCage_Subpart_52_GroupPostPartition:
+    bdr_id: 62
+    type: dirichlet
+    value: -5.319148936170212
+  FieldCage_Subpart_53_GroupPostPartition:
+    bdr_id: 63
+    type: dirichlet
+    value: -4.893617021276597
+  FieldCage_Subpart_54_GroupPostPartition:
+    bdr_id: 64
+    type: dirichlet
+    value: -4.468085106382979
+  FieldCage_Subpart_55_GroupPostPartition:
+    bdr_id: 65
+    type: dirichlet
+    value: -4.042553191489361
+  FieldCage_Subpart_56_GroupPostPartition:
+    bdr_id: 66
+    type: dirichlet
+    value: -3.617021276595743
+  FieldCage_Subpart_57_GroupPostPartition:
+    bdr_id: 67
+    type: dirichlet
+    value: -3.1914893617021285
+  FieldCage_Subpart_58_GroupPostPartition:
+    bdr_id: 68
+    type: dirichlet
+    value: -2.7659574468085104
+  FieldCage_Subpart_59_GroupPostPartition:
+    bdr_id: 69
+    type: dirichlet
+    value: -2.3404255319148923
+  FieldCage_Subpart_5_GroupPostPartition:
+    bdr_id: 15
+    type: dirichlet
+    value: -25.319148936170212
+  FieldCage_Subpart_60_GroupPostPartition:
+    bdr_id: 70
+    type: dirichlet
+    value: -1.9148936170212778
+  FieldCage_Subpart_61_GroupPostPartition:
+    bdr_id: 71
+    type: dirichlet
+    value: -1.4893617021276597
+  FieldCage_Subpart_62_GroupPostPartition:
+    bdr_id: 72
+    type: dirichlet
+    value: -1.0638297872340416
+  FieldCage_Subpart_63_GroupPostPartition:
+    bdr_id: 73
+    type: dirichlet
+    value: -0.6382978723404236
+  FieldCage_Subpart_64_GroupPostPartition:
+    bdr_id: 74
+    type: dirichlet
+    value: -0.21276595744680904
+  FieldCage_Subpart_65_GroupPostPartition:
+    bdr_id: 75
+    type: dirichlet
+    value: 0.21276595744680904
+  FieldCage_Subpart_66_GroupPostPartition:
+    bdr_id: 76
+    type: dirichlet
+    value: 0.6382978723404271
+  FieldCage_Subpart_67_GroupPostPartition:
+    bdr_id: 77
+    type: dirichlet
+    value: 1.0638297872340416
+  FieldCage_Subpart_68_GroupPostPartition:
+    bdr_id: 78
+    type: dirichlet
+    value: 1.4893617021276597
+  FieldCage_Subpart_69_GroupPostPartition:
+    bdr_id: 79
+    type: dirichlet
+    value: 1.9148936170212778
+  FieldCage_Subpart_6_GroupPostPartition:
+    bdr_id: 16
+    type: dirichlet
+    value: -24.893617021276597
+  FieldCage_Subpart_70_GroupPostPartition:
+    bdr_id: 80
+    type: dirichlet
+    value: 2.340425531914896
+  FieldCage_Subpart_71_GroupPostPartition:
+    bdr_id: 81
+    type: dirichlet
+    value: 2.765957446808514
+  FieldCage_Subpart_7_GroupPostPartition:
+    bdr_id: 17
+    type: dirichlet
+    value: -24.46808510638298
+  FieldCage_Subpart_8_GroupPostPartition:
+    bdr_id: 18
+    type: dirichlet
+    value: -24.04255319148936
+  FieldCage_Subpart_9_GroupPostPartition:
+    bdr_id: 19
+    type: dirichlet
+    value: -23.617021276595743
+  Gate_GroupPostPartition:
+    bdr_id: 5
+    type: dirichlet
+    value: -29.574468085106382
+  PMT_GroupPostPartition:
+    bdr_id: 10
+    type: dirichlet
+    value: -27.4468085106383
+  TopScreen_GroupPostPartition:
+    bdr_id: 7
+    type: dirichlet
+    value: -28.72340425531915

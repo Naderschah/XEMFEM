@@ -73,9 +73,11 @@ std::unique_ptr<mfem::GridFunction> SolvePoisson(mfem::FiniteElementSpace &fespa
 {
   using namespace mfem;
 
+  if (cfg->debug.debug) {std::cout << "In Poisson Solver" << std::endl;}
+
   const Mesh &mesh = *fespace.GetMesh();
   PWConstCoefficient epsilon_pw = BuildEpsilonPWConst(mesh, cfg);
-
+  // TODO add check that epsilon and dirichlet are full and buitl 
   // common handles (filled inside the single if/else)
   std::unique_ptr<GridFunction> V;        // GridFunction or ParGridFunction
   std::unique_ptr<BilinearForm> a;        // BilinearForm or ParBilinearForm
@@ -85,10 +87,13 @@ std::unique_ptr<mfem::GridFunction> SolvePoisson(mfem::FiniteElementSpace &fespa
   std::function<std::unique_ptr<Solver>(OperatorHandle&)> make_prec;
   MPI_Comm                      comm = MPI_COMM_SELF;
 
+  // Does not work at the moment
   const bool par = (dynamic_cast<ParFiniteElementSpace*>(&fespace) != nullptr);
+  if (cfg->debug.debug) {std::cout << "par param: " << par << std::endl;}
 
   if (par) {
     // ---------- parallel concrete types ----------
+    if (cfg->debug.debug) {std::cout << "In parallel branch" << std::endl;}
     auto &pfes = static_cast<ParFiniteElementSpace&>(fespace);
     V = std::make_unique<ParGridFunction>(&pfes);
     a = std::make_unique<ParBilinearForm>(&pfes);
@@ -103,6 +108,7 @@ std::unique_ptr<mfem::GridFunction> SolvePoisson(mfem::FiniteElementSpace &fespa
     };
   } else {
     // ---------- serial concrete types ----------
+    if (cfg->debug.debug) {std::cout << "In serial branch" << std::endl;}
     V = std::make_unique<GridFunction>(&fespace);
     a = std::make_unique<BilinearForm>(&fespace);
     b = std::make_unique<LinearForm>(&fespace);
@@ -114,7 +120,6 @@ std::unique_ptr<mfem::GridFunction> SolvePoisson(mfem::FiniteElementSpace &fespa
       return std::make_unique<DSmoother>(*As);
     };
   }
-
   // ---------- shared body ----------
   *V = 0.0;
   ApplyDirichletValues(*V, dirichlet_attr, cfg);

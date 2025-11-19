@@ -19,10 +19,16 @@ fixed_boundaries = {
 
 # Lookup for materials: region name → epsilon_r
 volume_materials = {
-    "LXeRegion": 1.95,
-    "GXeRegion": 1.0,
-    "PTFE_Group": 2.1,
+    "LXe": 1.95,
+    "GXe": 1.0,
+    "PTFE": 2.1,
 }
+
+# Resistive Chain
+R1 = 1.0 # First 5
+R2 = 1.0 # Split 
+R3 = 1.0 # Middle series 
+RC = 1.0 # Last to Cathode 
 
 # -------- Parse phys_map.txt --------
 with phys_map_path.open() as f:

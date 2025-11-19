@@ -1,7 +1,580 @@
 materials:
+  GXeGroup:
+    attr_id: 3
+    epsilon_r: 1.0
+  LXeGroup:
+    attr_id: 1
+    epsilon_r: 1.95
+  PTFE_Group:
+    attr_id: 2
+    epsilon_r: 2.1
 
 boundaries:
-  BC_AllEdges:
-    bdr_id: 3
+  BC_Anode:
+    bdr_id: 4
     type: dirichlet
     value: 0.0
+  BC_Cathode:
+    bdr_id: 6
+    type: dirichlet
+    value: -5.0
+  BC_TopScreen:
+    bdr_id: 7
+    type: dirichlet
+    value: 0.0
+  BC_BottomScreen:
+    bdr_id: 8
+    type: dirichlet
+    value: 0.0
+  BC_CopperRing:
+    bdr_id: 9
+    type: dirichlet
+    value: 0.0
+  BC_PMT:
+    bdr_id: 10
+    type: dirichlet
+    value: -29.558823529411764
+  FieldCageGuard_1:
+    bdr_id: 82
+    type: dirichlet
+    value: 2.205882352941174
+  FieldCageGuard_10:
+    bdr_id: 91
+    type: dirichlet
+    value: 6.17647058823529
+  FieldCageGuard_11:
+    bdr_id: 92
+    type: dirichlet
+    value: 6.617647058823529
+  FieldCageGuard_12:
+    bdr_id: 93
+    type: dirichlet
+    value: 7.058823529411761
+  FieldCageGuard_13:
+    bdr_id: 94
+    type: dirichlet
+    value: 7.5
+  FieldCageGuard_14:
+    bdr_id: 95
+    type: dirichlet
+    value: 7.941176470588232
+  FieldCageGuard_15:
+    bdr_id: 96
+    type: dirichlet
+    value: 8.382352941176471
+  FieldCageGuard_16:
+    bdr_id: 97
+    type: dirichlet
+    value: 8.823529411764703
+  FieldCageGuard_17:
+    bdr_id: 98
+    type: dirichlet
+    value: 9.264705882352942
+  FieldCageGuard_18:
+    bdr_id: 99
+    type: dirichlet
+    value: 9.705882352941174
+  FieldCageGuard_19:
+    bdr_id: 100
+    type: dirichlet
+    value: 10.147058823529413
+  FieldCageGuard_2:
+    bdr_id: 83
+    type: dirichlet
+    value: 2.647058823529413
+  FieldCageGuard_20:
+    bdr_id: 101
+    type: dirichlet
+    value: 10.588235294117645
+  FieldCageGuard_21:
+    bdr_id: 102
+    type: dirichlet
+    value: 11.029411764705884
+  FieldCageGuard_22:
+    bdr_id: 103
+    type: dirichlet
+    value: 11.470588235294116
+  FieldCageGuard_23:
+    bdr_id: 104
+    type: dirichlet
+    value: 11.911764705882355
+  FieldCageGuard_24:
+    bdr_id: 105
+    type: dirichlet
+    value: 12.352941176470587
+  FieldCageGuard_25:
+    bdr_id: 106
+    type: dirichlet
+    value: 12.794117647058819
+  FieldCageGuard_26:
+    bdr_id: 107
+    type: dirichlet
+    value: 13.235294117647058
+  FieldCageGuard_27:
+    bdr_id: 108
+    type: dirichlet
+    value: 13.67647058823529
+  FieldCageGuard_28:
+    bdr_id: 109
+    type: dirichlet
+    value: 14.117647058823529
+  FieldCageGuard_29:
+    bdr_id: 110
+    type: dirichlet
+    value: 14.558823529411761
+  FieldCageGuard_3:
+    bdr_id: 84
+    type: dirichlet
+    value: 3.088235294117645
+  FieldCageGuard_30:
+    bdr_id: 111
+    type: dirichlet
+    value: 15.0
+  FieldCageGuard_31:
+    bdr_id: 112
+    type: dirichlet
+    value: 15.441176470588232
+  FieldCageGuard_32:
+    bdr_id: 113
+    type: dirichlet
+    value: 15.882352941176471
+  FieldCageGuard_33:
+    bdr_id: 114
+    type: dirichlet
+    value: 16.323529411764703
+  FieldCageGuard_34:
+    bdr_id: 115
+    type: dirichlet
+    value: 16.764705882352942
+  FieldCageGuard_35:
+    bdr_id: 116
+    type: dirichlet
+    value: 17.205882352941174
+  FieldCageGuard_36:
+    bdr_id: 117
+    type: dirichlet
+    value: 17.647058823529413
+  FieldCageGuard_37:
+    bdr_id: 118
+    type: dirichlet
+    value: 18.088235294117645
+  FieldCageGuard_38:
+    bdr_id: 119
+    type: dirichlet
+    value: 18.529411764705884
+  FieldCageGuard_39:
+    bdr_id: 120
+    type: dirichlet
+    value: 18.970588235294116
+  FieldCageGuard_4:
+    bdr_id: 85
+    type: dirichlet
+    value: 3.529411764705884
+  FieldCageGuard_40:
+    bdr_id: 121
+    type: dirichlet
+    value: 19.411764705882348
+  FieldCageGuard_41:
+    bdr_id: 122
+    type: dirichlet
+    value: 19.852941176470587
+  FieldCageGuard_42:
+    bdr_id: 123
+    type: dirichlet
+    value: 20.29411764705882
+  FieldCageGuard_43:
+    bdr_id: 124
+    type: dirichlet
+    value: 20.735294117647058
+  FieldCageGuard_44:
+    bdr_id: 125
+    type: dirichlet
+    value: 21.17647058823529
+  FieldCageGuard_45:
+    bdr_id: 126
+    type: dirichlet
+    value: 21.61764705882353
+  FieldCageGuard_46:
+    bdr_id: 127
+    type: dirichlet
+    value: 22.05882352941176
+  FieldCageGuard_47:
+    bdr_id: 128
+    type: dirichlet
+    value: 22.5
+  FieldCageGuard_48:
+    bdr_id: 129
+    type: dirichlet
+    value: 22.941176470588232
+  FieldCageGuard_49:
+    bdr_id: 130
+    type: dirichlet
+    value: 23.38235294117647
+  FieldCageGuard_5:
+    bdr_id: 86
+    type: dirichlet
+    value: 3.970588235294116
+  FieldCageGuard_50:
+    bdr_id: 131
+    type: dirichlet
+    value: 23.823529411764703
+  FieldCageGuard_51:
+    bdr_id: 132
+    type: dirichlet
+    value: 24.264705882352942
+  FieldCageGuard_52:
+    bdr_id: 133
+    type: dirichlet
+    value: 24.705882352941174
+  FieldCageGuard_53:
+    bdr_id: 134
+    type: dirichlet
+    value: 25.147058823529413
+  FieldCageGuard_54:
+    bdr_id: 135
+    type: dirichlet
+    value: 25.588235294117645
+  FieldCageGuard_55:
+    bdr_id: 136
+    type: dirichlet
+    value: 26.029411764705884
+  FieldCageGuard_56:
+    bdr_id: 137
+    type: dirichlet
+    value: 26.470588235294116
+  FieldCageGuard_57:
+    bdr_id: 138
+    type: dirichlet
+    value: 26.911764705882348
+  FieldCageGuard_58:
+    bdr_id: 139
+    type: dirichlet
+    value: 27.352941176470587
+  FieldCageGuard_59:
+    bdr_id: 140
+    type: dirichlet
+    value: 27.79411764705882
+  FieldCageGuard_6:
+    bdr_id: 87
+    type: dirichlet
+    value: 4.411764705882355
+  FieldCageGuard_60:
+    bdr_id: 141
+    type: dirichlet
+    value: 28.235294117647058
+  FieldCageGuard_61:
+    bdr_id: 142
+    type: dirichlet
+    value: 28.67647058823529
+  FieldCageGuard_62:
+    bdr_id: 143
+    type: dirichlet
+    value: 29.11764705882353
+  FieldCageGuard_63:
+    bdr_id: 144
+    type: dirichlet
+    value: 29.55882352941176
+  FieldCageGuard_64:
+    bdr_id: 145
+    type: dirichlet
+    value: 30.0
+  FieldCageGuard_7:
+    bdr_id: 88
+    type: dirichlet
+    value: 4.852941176470587
+  FieldCageGuard_8:
+    bdr_id: 89
+    type: dirichlet
+    value: 5.294117647058826
+  FieldCageGuard_9:
+    bdr_id: 90
+    type: dirichlet
+    value: 5.735294117647058
+  FieldCage_1:
+    bdr_id: 11
+    type: dirichlet
+    value: -29.11764705882353
+  FieldCage_10:
+    bdr_id: 20
+    type: dirichlet
+    value: -25.147058823529413
+  FieldCage_11:
+    bdr_id: 21
+    type: dirichlet
+    value: -24.705882352941178
+  FieldCage_12:
+    bdr_id: 22
+    type: dirichlet
+    value: -24.264705882352942
+  FieldCage_13:
+    bdr_id: 23
+    type: dirichlet
+    value: -23.823529411764707
+  FieldCage_14:
+    bdr_id: 24
+    type: dirichlet
+    value: -23.38235294117647
+  FieldCage_15:
+    bdr_id: 25
+    type: dirichlet
+    value: -22.941176470588236
+  FieldCage_16:
+    bdr_id: 26
+    type: dirichlet
+    value: -22.5
+  FieldCage_17:
+    bdr_id: 27
+    type: dirichlet
+    value: -22.058823529411764
+  FieldCage_18:
+    bdr_id: 28
+    type: dirichlet
+    value: -21.61764705882353
+  FieldCage_19:
+    bdr_id: 29
+    type: dirichlet
+    value: -21.176470588235293
+  FieldCage_2:
+    bdr_id: 12
+    type: dirichlet
+    value: -28.676470588235293
+  FieldCage_20:
+    bdr_id: 30
+    type: dirichlet
+    value: -20.735294117647058
+  FieldCage_21:
+    bdr_id: 31
+    type: dirichlet
+    value: -20.294117647058826
+  FieldCage_22:
+    bdr_id: 32
+    type: dirichlet
+    value: -19.852941176470587
+  FieldCage_23:
+    bdr_id: 33
+    type: dirichlet
+    value: -19.411764705882355
+  FieldCage_24:
+    bdr_id: 34
+    type: dirichlet
+    value: -18.970588235294116
+  FieldCage_25:
+    bdr_id: 35
+    type: dirichlet
+    value: -18.529411764705884
+  FieldCage_26:
+    bdr_id: 36
+    type: dirichlet
+    value: -18.088235294117645
+  FieldCage_27:
+    bdr_id: 37
+    type: dirichlet
+    value: -17.647058823529413
+  FieldCage_28:
+    bdr_id: 38
+    type: dirichlet
+    value: -17.205882352941178
+  FieldCage_29:
+    bdr_id: 39
+    type: dirichlet
+    value: -16.764705882352942
+  FieldCage_3:
+    bdr_id: 13
+    type: dirichlet
+    value: -28.235294117647058
+  FieldCage_30:
+    bdr_id: 40
+    type: dirichlet
+    value: -16.323529411764707
+  FieldCage_31:
+    bdr_id: 41
+    type: dirichlet
+    value: -15.882352941176471
+  FieldCage_32:
+    bdr_id: 42
+    type: dirichlet
+    value: -15.441176470588236
+  FieldCage_33:
+    bdr_id: 43
+    type: dirichlet
+    value: -15.0
+  FieldCage_34:
+    bdr_id: 44
+    type: dirichlet
+    value: -14.558823529411764
+  FieldCage_35:
+    bdr_id: 45
+    type: dirichlet
+    value: -14.117647058823529
+  FieldCage_36:
+    bdr_id: 46
+    type: dirichlet
+    value: -13.676470588235293
+  FieldCage_37:
+    bdr_id: 47
+    type: dirichlet
+    value: -13.235294117647058
+  FieldCage_38:
+    bdr_id: 48
+    type: dirichlet
+    value: -12.794117647058822
+  FieldCage_39:
+    bdr_id: 49
+    type: dirichlet
+    value: -12.352941176470587
+  FieldCage_4:
+    bdr_id: 14
+    type: dirichlet
+    value: -27.794117647058822
+  FieldCage_40:
+    bdr_id: 50
+    type: dirichlet
+    value: -11.911764705882355
+  FieldCage_41:
+    bdr_id: 51
+    type: dirichlet
+    value: -11.47058823529412
+  FieldCage_42:
+    bdr_id: 52
+    type: dirichlet
+    value: -11.029411764705884
+  FieldCage_43:
+    bdr_id: 53
+    type: dirichlet
+    value: -10.588235294117649
+  FieldCage_44:
+    bdr_id: 54
+    type: dirichlet
+    value: -10.147058823529413
+  FieldCage_45:
+    bdr_id: 55
+    type: dirichlet
+    value: -9.705882352941178
+  FieldCage_46:
+    bdr_id: 56
+    type: dirichlet
+    value: -9.264705882352942
+  FieldCage_47:
+    bdr_id: 57
+    type: dirichlet
+    value: -8.823529411764707
+  FieldCage_48:
+    bdr_id: 58
+    type: dirichlet
+    value: -8.382352941176471
+  FieldCage_49:
+    bdr_id: 59
+    type: dirichlet
+    value: -7.9411764705882355
+  FieldCage_5:
+    bdr_id: 15
+    type: dirichlet
+    value: -27.352941176470587
+  FieldCage_50:
+    bdr_id: 60
+    type: dirichlet
+    value: -7.5
+  FieldCage_51:
+    bdr_id: 61
+    type: dirichlet
+    value: -7.0588235294117645
+  FieldCage_52:
+    bdr_id: 62
+    type: dirichlet
+    value: -6.617647058823529
+  FieldCage_53:
+    bdr_id: 63
+    type: dirichlet
+    value: -6.1764705882352935
+  FieldCage_54:
+    bdr_id: 64
+    type: dirichlet
+    value: -5.735294117647058
+  FieldCage_55:
+    bdr_id: 65
+    type: dirichlet
+    value: -5.294117647058826
+  FieldCage_56:
+    bdr_id: 66
+    type: dirichlet
+    value: -4.8529411764705905
+  FieldCage_57:
+    bdr_id: 67
+    type: dirichlet
+    value: -4.411764705882355
+  FieldCage_58:
+    bdr_id: 68
+    type: dirichlet
+    value: -3.9705882352941195
+  FieldCage_59:
+    bdr_id: 69
+    type: dirichlet
+    value: -3.529411764705884
+  FieldCage_6:
+    bdr_id: 16
+    type: dirichlet
+    value: -26.911764705882355
+  FieldCage_60:
+    bdr_id: 70
+    type: dirichlet
+    value: -3.0882352941176485
+  FieldCage_61:
+    bdr_id: 71
+    type: dirichlet
+    value: -2.647058823529413
+  FieldCage_62:
+    bdr_id: 72
+    type: dirichlet
+    value: -2.2058823529411775
+  FieldCage_63:
+    bdr_id: 73
+    type: dirichlet
+    value: -1.764705882352942
+  FieldCage_64:
+    bdr_id: 74
+    type: dirichlet
+    value: -1.3235294117647065
+  FieldCage_65:
+    bdr_id: 75
+    type: dirichlet
+    value: -0.882352941176471
+  FieldCage_66:
+    bdr_id: 76
+    type: dirichlet
+    value: -0.4411764705882355
+  FieldCage_67:
+    bdr_id: 77
+    type: dirichlet
+    value: 0.0
+  FieldCage_68:
+    bdr_id: 78
+    type: dirichlet
+    value: 0.4411764705882355
+  FieldCage_69:
+    bdr_id: 79
+    type: dirichlet
+    value: 0.882352941176471
+  FieldCage_7:
+    bdr_id: 17
+    type: dirichlet
+    value: -26.470588235294116
+  FieldCage_70:
+    bdr_id: 80
+    type: dirichlet
+    value: 1.3235294117647065
+  FieldCage_71:
+    bdr_id: 81
+    type: dirichlet
+    value: 1.764705882352942
+  FieldCage_8:
+    bdr_id: 18
+    type: dirichlet
+    value: -26.029411764705884
+  FieldCage_9:
+    bdr_id: 19
+    type: dirichlet
+    value: -25.588235294117645
+  Gate_GroupPostPartition:
+    bdr_id: 5
+    type: dirichlet
+    value: -30.0

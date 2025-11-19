@@ -3070,6 +3070,8 @@ if __name__ == '__main__':
     selec_GXeCryostat = safe_face_selections(GXeCryostat)
     selec_LXeCryostat = safe_face_selections(LXeCryostat)
 
+
+    
     # ----------------------------------------------------------------------
     # Generate tools lists 
     # ----------------------------------------------------------------------
@@ -3099,72 +3101,80 @@ if __name__ == '__main__':
     )
 
     # ----------------------------------------------------------------------
-    # Cut objects out of background using only selections
-    # Also make a union of PTFE 
+    # We create our base face and compound groups for partitioning 
     # ----------------------------------------------------------------------
-    main_sel = selec_GXeCryostat + selec_LXeCryostat
-    tool_sels = all_electrode 
-
-    cutResult = model.addCut(
-        Cryostat_doc,
-        main_sel,   # list[ModelHighAPI_Selection]
-        tool_sels,  # list[ModelHighAPI_Selection]
-        keepSubResults=True
-    )
-
     # 1) FACE groups for GXe and LXe (2D case)
-    GXe_faces = model.addGroup(
-        Cryostat_doc,
-        "FACE",
-        [model.selection("FACE", "Cut_1_1")]
-    )
+    GXe_faces = model.addGroup(Cryostat_doc,selec_GXeCryostat)
     GXe_faces.setName("GXeFaces")
     GXe_faces.result().setName("GXeFaces")
-
-    LXe_faces = model.addGroup(
-        Cryostat_doc,
-        "FACE",
-        [model.selection("FACE", "Cut_1_2")]
-    )
-    LXe_faces.setName("LXeFaces")
-    LXe_faces.result().setName("LXeFaces")
-
-    # 2) GroupShape (compound) from those FACE groups
-    GXe_group = model.addGroupShape(
-        Cryostat_doc,
-        [model.selection("COMPOUND", "GXeFaces")]
-    )
+    GXe_group = model.addGroupShape(Cryostat_doc,[model.selection("COMPOUND", "GXeFaces")])
     GXe_group.setName("GXeGroup")
     GXe_group.result().setName("GXeGroup")
 
-    LXe_group = model.addGroupShape(
-        Cryostat_doc,
-        [model.selection("COMPOUND", "LXeFaces")]
-    )
+    LXeFaces = model.addGroup(Cryostat_doc,selec_LXeCryostat)
+    LXeFaces.setName("LXeFaces")
+    LXeFaces.result().setName("LXeFaces")
+    LXe_group = model.addGroupShape(Cryostat_doc,[model.selection("COMPOUND", "LXeFaces")])
     LXe_group.setName("LXeGroup")
     LXe_group.result().setName("LXeGroup")
 
-    # 3) PTFE: only if there is something in all_ptfe
-    if all_ptfe:
-        # FACE group collecting all PTFE faces
-        PTFE_faces = model.addGroup(
-            Cryostat_doc,
-            "FACE",
-            all_ptfe          # list of FACE selections
-        )
-        PTFE_faces.setName("PTFEFaces")
-        PTFE_faces.result().setName("PTFEFaces")
+    PTFEFaces = model.addGroup(Cryostat_doc,all_ptfe)
+    PTFEFaces.setName("PTFEFaces")
+    PTFEFaces.result().setName("PTFEFaces")
+    PTFE_group = model.addGroupShape(Cryostat_doc,[model.selection("COMPOUND", "PTFEFaces")])
+    PTFE_group.setName("PTFEGroup")
+    PTFE_group.result().setName("PTFEGroup")
 
-        # GroupShape (compound) from PTFEFaces
-        PTFE_group = model.addGroupShape(
-            Cryostat_doc,
-            [model.selection("COMPOUND", "PTFEFaces")]
-        )
-        PTFE_group.setName("PTFE_Group")
-        PTFE_group.result().setName("PTFE_Group")
-    else:
-        PTFE_faces = None
-        PTFE_group = None
+    ElectrodeFaces = model.addGroup(Cryostat_doc,all_electrode)
+    ElectrodeFaces.setName("ElectrodeFaces")
+    ElectrodeFaces.result().setName("ElectrodeFaces")
+    Electrode_group = model.addGroupShape(Cryostat_doc,[model.selection("COMPOUND", "ElectrodeFaces")])
+    Electrode_group.setName("ElectrodeGroup")
+    Electrode_group.result().setName("ElectrodeGroup")
+
+    # --------------------------------------------------------------------
+    # GUI Quality of Life (Dont do this before the grouping it will break the current logic)
+    # --------------------------------------------------------------------
+    def name_feature_and_faces(feature, base_name):
+        """
+        Rename a Shaper feature and each of its FACE sub-results.
+
+        Args:
+            feature: A Shaper feature object (with .setName(), .result(), .results()).
+            base_name: Base string for the naming (e.g. "AnodeFaceGroup").
+        """
+        # Name the feature and its main result
+        feature.setName(base_name)
+        feature.result().setName(base_name)
+
+        # Name each sub-result (e.g., individual faces for a multi-face geometry)
+        for idx, sub in enumerate(feature.results(), start=1):
+            sub.setName(f"{base_name}_Face{idx}")
+
+    name_feature_and_faces(Anode, "AnodeFaceOGGroup")
+    name_feature_and_faces(Bell, "BellFaceOGGroup")
+    name_feature_and_faces(Gate, "GateFaceOGGroup")
+    name_feature_and_faces(Cathode, "CathodeFaceOGGroup")
+    name_feature_and_faces(TopScreen, "TopScreenFaceOGGroup")
+    name_feature_and_faces(BottomScreen, "BottomScreenFaceOGGroup")
+    name_feature_and_faces(CopperRing, "CopperRingFaceOGGroup")
+    name_feature_and_faces(FieldCage, "FieldCageFaceOGGroup")
+    name_feature_and_faces(FieldCageGuard, "FieldCageGuardFaceOGGroup")
+    name_feature_and_faces(BottomPMTS, "BottomPMTSFaceOGGroup")
+    name_feature_and_faces(TopPMTS, "TopPMTSFaceOGGroup")
+
+    # PTFE-related
+    name_feature_and_faces(GateInsulatingFrame, "GateInsulatingFrameOGGroup")
+    name_feature_and_faces(AnodeInsulatingFrame, "AnodeInsulatingFrameOGGroup")
+    name_feature_and_faces(CathodeInsulatingFrame, "CathodeInsulatingFrameOGGroup")
+    name_feature_and_faces(TopScreenInsulatingFrame, "TopScreenInsulatingFrameOGGroup")
+    name_feature_and_faces(BottomStackInsulation, "BottomStackInsulationOGGroup")
+    name_feature_and_faces(BottomPMTReflectors, "BottomPMTReflectorsOGGroup")
+    name_feature_and_faces(TopPMTReflectors, "TopPMTReflectorsOGGroup")
+    name_feature_and_faces(wallPTFE, "WallPTFEOGGroup")
+
+    name_feature_and_faces(GXeCryostat, "GXeCryostatOGGroup")
+    name_feature_and_faces(LXeCryostat, "LXeCryostatOGGroup")
 
     # Create PTFE region group only if there is something in all_ptfe
     # Build the list of objects for the partition:
@@ -3174,45 +3184,99 @@ if __name__ == '__main__':
           GXe_group.result(),
           LXe_group.result(),
           PTFE_group.result(),
+          Electrode_group.result()
         ]
     )
-
     # Name things 
     partition.setName("partition_surfaces")
     partition.result().setName("partition_surfaces")
-    partition.result().subResult(0).setName("GXeVol1")
-    partition.result().subResult(1).setName("TopPMTGuard1")
-    partition.result().subResult(2).setName("TopPMTGuard2")
-    partition.result().subResult(3).setName("TopPMTGuard3")
-    partition.result().subResult(4).setName("TopPMTGuard4")
-    partition.result().subResult(5).setName("TopPMTGuard5")
-    partition.result().subResult(6).setName("TopPMTGuard6")
-    partition.result().subResult(7).setName("TopPMTGuard7")
-    partition.result().subResult(8).setName("TopPMTGuard8")
-    partition.result().subResult(9).setName("PTFESpacerGateToAnode")
-    partition.result().subResult(10).setName("PTFESpacerAnodeToShield")
-    partition.result().subResult(11).setName("PTFEAboveShield")
-    partition.result().subResult(12).setName("GXeVol2")
-    partition.result().subResult(13).setName("GXeVol3")
-    partition.result().subResult(14).setName("TopPMTGuard9")
-    partition.result().subResult(15).setName("GXeVol4")
-    partition.result().subResult(16).setName("LXeVol1")
-    partition.result().subResult(1+16).setName("BottomPMTGuard1")
-    partition.result().subResult(2+16).setName("BottomPMTGuard2")
-    partition.result().subResult(3+16).setName("BottomPMTGuard3")
-    partition.result().subResult(4+16).setName("BottomPMTGuard4")
-    partition.result().subResult(5+16).setName("BottomPMTGuard5")
-    partition.result().subResult(6+16).setName("BottomPMTGuard6")
-    partition.result().subResult(7+16).setName("BottomPMTGuard7")
-    partition.result().subResult(8+16).setName("BottomPMTGuard8")
-    partition.result().subResult(25).setName("PTFEBesidesBottomElectrodes")
-    partition.result().subResult(26).setName("PTFEWall")
-    partition.result().subResult(27).setName("PTFESplitByInterface")
-    partition.result().subResult(28).setName("PTFEAboveCathode")
-    partition.result().subResult(29).setName("LXeVol2")
-    partition.result().subResult(30).setName("BottomPMTGuard9")
+    # To make life easier we associate by center of mass coordinate and total area 
+    def get_area(FaceSelection):
+      name   = FaceSelection.name() 
+      sel = model.selection("SOLID", name)
+      _, area, _ = model.getGeometryCalculation(Cryostat_doc, sel)
+      return area 
+    def center_of_weight(part_doc, face_selection):
+        # Somehow this creates the center of mass point - I do not get why it works but it does 
+        point = model.addPoint(part_doc, face_selection)
+        coords = model.getPointCoordinates(
+            part_doc,
+            model.selection("VERTEX", point.name())
+        )
+        return coords[0], coords[1] # coords is a list [x, y, z]
 
-    # Make them available to SMESH
+    objects = all_ptfe + all_electrode
+    # Want to use OG groups
+    pre_partition_faces = []
+    [pre_partition_faces.extend(i.results()) for i in (Anode,Bell,Gate,Cathode,TopScreen,BottomScreen,CopperRing,FieldCage,FieldCageGuard,BottomPMTS,TopPMTS,GateInsulatingFrame,AnodeInsulatingFrame,CathodeInsulatingFrame,TopScreenInsulatingFrame,BottomStackInsulation,BottomPMTReflectors,TopPMTReflectors,wallPTFE)]
+    pre_partition = {
+      i.name(): [get_area(i), *center_of_weight(Cryostat_doc,i)] for i in pre_partition_faces
+    }
+    post_partition = {
+      partition.result().subResult(i).name(): [get_area(partition.result().subResult(i)), *center_of_weight(Cryostat_doc,partition.result().subResult(i))] for i in range(partition.result().numberOfSubs())
+    }
+    def match_and_rename_partition_faces(partition, pre_partition, post_partition,
+                                     dist_tol=1e-4):
+      """
+      For each post-partition face, find the pre-partition face whose center of
+      weight is closest (within dist_tol) and rename the post face to
+      pre_name + "_part".
+
+      partition: the Partition feature
+      pre_partition: dict {pre_name: [area, cx, cy, cz]}
+      post_partition: dict {post_name: [area, cx, cy, cz]}
+      dist_tol: maximum allowed distance between centers (in model units)
+      """
+      # Map current post face names to their indices
+      n_post = partition.result().numberOfSubs()
+      post_index_by_name = {
+          partition.result().subResult(i).name(): i
+          for i in range(n_post)
+      }
+      renamed_count = 0
+      names = []
+      for post_name, (area_p, px, py) in post_partition.items():
+          best_pre_name = None
+          best_dist = None
+          for pre_name, (area_pre, cx, cy) in pre_partition.items():
+              dx = px - cx
+              dy = py - cy
+              d = math.sqrt(dx*dx + dy*dy)
+              if best_dist is None or d < best_dist:
+                  best_dist = d
+                  best_pre_name = pre_name
+          # If closest pre-face is within tolerance, rename post-face
+          if best_pre_name is not None and best_dist is not None and best_dist <= dist_tol:
+              idx = post_index_by_name[post_name]
+              partition.result().subResult(idx).setName(best_pre_name + "_part")
+              renamed_count += 1
+              names.append(best_pre_name + "_part")
+
+      print("Successfully renamed {} of {} post-partition faces".format(
+          renamed_count, len(post_partition)
+      ))
+      return names
+    names_in_partition = match_and_rename_partition_faces(partition, pre_partition, post_partition)
+    # partition.result().subResult(idx).setName(name)
+
+    #   Manually naming: 
+    partition.result().subResult(162-1).setName("LXeVol1") # Main Vol
+    partition.result().subResult(480-1).setName("LXeVol2") # Above Cathode
+
+    partition.result().subResult(1-1).setName("GXeVol1") # Main Vol
+    partition.result().subResult(3-1).setName("GXeVol2") # Above Bell
+    partition.result().subResult(158-1).setName("GXeVol3")# below some electrode volume 
+    partition.result().subResult(159-1).setName("GXeVol4")# electrode volume
+
+
+    partition.result().subResult(154-1).setName("PTFECutByInterface1")
+    partition.result().subResult(404-1).setName("PTFECutByInterface2")
+
+    partition.result().subResult(2-1).setName("Bell1") # Bell in GXe
+    partition.result().subResult(547-1).setName("Bell2") # Bell in LXe
+
+    ### --------------------------   Make Meshing Groups -----------------------------
+    # Make GXe submesh group
     GXe_faces = [
         model.selection("FACE", "GXeVol1"),
         model.selection("FACE", "GXeVol2"),
@@ -3220,123 +3284,187 @@ if __name__ == '__main__':
         model.selection("FACE", "GXeVol4"),
     ]
     GXe_group = model.addGroup(Cryostat_doc, "FACE", GXe_faces)
-    GXe_group.setName("GXeGroupPostPartition")
-    GXe_group.result().setName("GXeGroupPostPartition")
+    GXe_group.setName("GXe")
+    GXe_group.result().setName("GXe")
 
-    # Example: LXe faces
+    # Make LXe submesh group
     LXe_faces = [
         model.selection("FACE", "LXeVol1"),
         model.selection("FACE", "LXeVol2"),
     ]
     LXe_group = model.addGroup(Cryostat_doc, "FACE", LXe_faces)
-    LXe_group.setName("LXeGroupPostPartition")
-    LXe_group.result().setName("LXeGroupPostPartition")
+    LXe_group.setName("LXe")
+    LXe_group.result().setName("LXe")
 
-    # Example: PTFE faces
+    # Make PTFE submesh group
+    ptfe_names = ["GateInsulatingFrameOGGroup","AnodeInsulatingFrameOGGroup","CathodeInsulatingFrameOGGroup","TopScreenInsulatingFrameOGGroup","BottomStackInsulationOGGroup","BottomPMTReflectorsOGGroup","TopPMTReflectorsOGGroup","WallPTFEOGGroup",]
+    # Select PTFE based item names in the generated names in partitions
+    ptfe_selec_names = [i for i in names_in_partition if any(j for j in ptfe_names if j in i)]
     PTFE_faces = [
-        model.selection("FACE", "PTFESpacerGateToAnode"),
-        model.selection("FACE", "PTFESpacerAnodeToShield"),
-        model.selection("FACE", "PTFEAboveShield"),
-        model.selection("FACE", "PTFEBesidesBottomElectrodes"),
-        model.selection("FACE", "PTFEWall"),
-        model.selection("FACE", "PTFESplitByInterface"),
-        model.selection("FACE", "PTFEAboveCathode"),
-        model.selection("FACE","TopPMTGuard1"),
-        model.selection("FACE","TopPMTGuard2"),
-        model.selection("FACE","TopPMTGuard3"),
-        model.selection("FACE","TopPMTGuard4"),
-        model.selection("FACE","TopPMTGuard5"),
-        model.selection("FACE","TopPMTGuard6"),
-        model.selection("FACE","TopPMTGuard7"),
-        model.selection("FACE","TopPMTGuard8"),
-        model.selection("FACE","TopPMTGuard9"),
-        model.selection("FACE","BottomPMTGuard1"),
-        model.selection("FACE","BottomPMTGuard2"),
-        model.selection("FACE","BottomPMTGuard3"),
-        model.selection("FACE","BottomPMTGuard4"),
-        model.selection("FACE","BottomPMTGuard5"),
-        model.selection("FACE","BottomPMTGuard6"),
-        model.selection("FACE","BottomPMTGuard7"),
-        model.selection("FACE","BottomPMTGuard8"),
-        model.selection("FACE","BottomPMTGuard9"),
+        model.selection("FACE", "PTFECutByInterface1"),
+        model.selection("FACE", "PTFECutByInterface2"),
+    ] + [ 
+      model.selection("FACE", i) for i in ptfe_selec_names
     ]
-    #PTFE_group = model.addGroup(Cryostat_doc, "FACE", PTFE_faces)
-    #PTFE_group.setName("PTFE_GroupPostPartition")
-    #PTFE_group.result().setName("PTFE_GroupPostPartition")
-    to_mesh = [
-      model.selection("FACE", "GXeVol1"),
-      model.selection("FACE", "GXeVol2"),
-      model.selection("FACE", "GXeVol3"),
-      model.selection("FACE", "GXeVol4"),
-      model.selection("FACE", "LXeVol1"),
-      model.selection("FACE", "LXeVol2"),
-    ]
+    PTFE_group = model.addGroup(Cryostat_doc, "FACE", PTFE_faces)
+    PTFE_group.setName("PTFE")
+    PTFE_group.result().setName("PTFE")
+
+    # Make a full supergroup of mesh surfaces
+    to_mesh = GXe_faces + LXe_faces + PTFE_faces
     Fluid_group = model.addGroup(Cryostat_doc, "FACE", to_mesh)
-    Fluid_group.setName("FluidGroupPostPartition")
-    Fluid_group.result().setName("FluidGroupPostPartition")
-    # Now name the edges so we know what to include in BC
+    Fluid_group.setName("MeshGroupPostPartition")
+    Fluid_group.result().setName("MeshGroupPostPartition")
+
+    ### -------------------- BC Condition Groups ------------------------
+    """This is just a bunch of name filtering"""
+    # We make residual faces which must include all electrode name based faces
+    already_used = set(ptfe_selec_names) | {
+        "LXeVol1", "LXeVol2", "GXeVol1", "GXeVol2", "GXeVol3", "GXeVol4",
+        "PTFECutByInterface1", "PTFECutByInterface2", "Bell1", "Bell2"
+    }
+    residual_faces = [i for i in names_in_partition if i not in already_used]
+    
+    # Initialize a list to track all generated group names (for BC assignment)
+    all_group_names = []
+
+    # Make Anode BC 
+    anode_selec_names = [i for i in residual_faces if "AnodeFaceOGGroup" in i]
+    Anode_group = model.addGroup(Cryostat_doc, "FACE", [
+      model.selection("FACE", i) for i in anode_selec_names
+    ])
+    Anode_group.setName("BC_Anode")
+    Anode_group.result().setName("BC_Anode")
+    all_group_names.append("BC_Anode")
+    already_used = set(already_used) | set(anode_selec_names)
+    residual_faces = [i for i in residual_faces if i not in already_used]
+
+    # Make Bell BC 
+    bell_selec_names = [i for i in residual_faces if "BellFaceOGGroup" in i]
+    Bell_group = model.addGroup(Cryostat_doc, "FACE", [
+      model.selection("FACE", i) for i in bell_selec_names
+    ])
+    Bell_group.setName("Bell_GroupPostPartition")
+    Bell_group.result().setName("Bell_GroupPostPartition")
+    all_group_names.append("Bell_GroupPostPartition")
+    already_used = set(already_used) | set(bell_selec_names)
+    residual_faces = [i for i in residual_faces if i not in already_used]
+
+    # Make Gate BC 
+    gate_selec_names = [i for i in residual_faces if "GateFaceOGGroup" in i]
+    Gate_group = model.addGroup(Cryostat_doc, "FACE", [
+      model.selection("FACE", i) for i in gate_selec_names
+    ])
+    Gate_group.setName("Gate_GroupPostPartition")
+    Gate_group.result().setName("Gate_GroupPostPartition")
+    all_group_names.append("Gate_GroupPostPartition")
+    already_used = set(already_used) | set(gate_selec_names)
+    residual_faces = [i for i in residual_faces if i not in already_used]
+
+    # Make Cathode BC 
+    cathode_selec_names = [i for i in residual_faces if "CathodeFaceOGGroup" in i]
+    Cathode_group = model.addGroup(Cryostat_doc, "FACE", [
+      model.selection("FACE", i) for i in cathode_selec_names
+    ])
+    Cathode_group.setName("BC_Cathode")
+    Cathode_group.result().setName("BC_Cathode")
+    all_group_names.append("BC_Cathode")
+    already_used = set(already_used) | set(cathode_selec_names)
+    residual_faces = [i for i in residual_faces if i not in already_used]
+
+    # Make TopScreen BC 
+    topscreen_selec_names = [i for i in residual_faces if "TopScreenFaceOGGroup" in i]
+    TopScreen_group = model.addGroup(Cryostat_doc, "FACE", [
+      model.selection("FACE", i) for i in topscreen_selec_names
+    ])
+    TopScreen_group.setName("BC_TopScreen")
+    TopScreen_group.result().setName("BC_TopScreen")
+    all_group_names.append("BC_TopScreen")
+    already_used = set(already_used) | set(topscreen_selec_names)
+    residual_faces = [i for i in residual_faces if i not in already_used]
+
+    # Make BottomScreen BC 
+    bottomscreen_selec_names = [i for i in residual_faces if "BottomScreenFaceOGGroup" in i]
+    BottomScreen_group = model.addGroup(Cryostat_doc, "FACE", [
+      model.selection("FACE", i) for i in bottomscreen_selec_names
+    ])
+    BottomScreen_group.setName("BC_BottomScreen")
+    BottomScreen_group.result().setName("BC_BottomScreen")
+    all_group_names.append("BC_BottomScreen")
+    already_used = set(already_used) | set(bottomscreen_selec_names)
+    residual_faces = [i for i in residual_faces if i not in already_used]
+
+    # Make CopperRing BC 
+    copperring_selec_names = [i for i in residual_faces if "CopperRingFaceOGGroup" in i]
+    CopperRing_group = model.addGroup(Cryostat_doc, "FACE", [
+      model.selection("FACE", i) for i in copperring_selec_names
+    ])
+    CopperRing_group.setName("BC_CopperRing")
+    CopperRing_group.result().setName("BC_CopperRing")
+    all_group_names.append("BC_CopperRing")
+    already_used = set(already_used) | set(copperring_selec_names)
+    residual_faces = [i for i in residual_faces if i not in already_used]
+
+    # Make PMT BC
+    pmt_selec_names = [i for i in residual_faces if "BottomPMTSFaceOGGroup" in i or "TopPMTSFaceOGGroup" in i]
+    PMT_group = model.addGroup(Cryostat_doc, "FACE", [
+      model.selection("FACE", i) for i in pmt_selec_names
+    ])
+    PMT_group.setName("BC_PMT")
+    PMT_group.result().setName("BC_PMT")
+    all_group_names.append("BC_PMT")
+    already_used = set(already_used) | set(pmt_selec_names)
+    residual_faces = [i for i in residual_faces if i not in already_used]
+
+    # Field Cage Groups
+    electrode_names_per_item_BC = ["FieldCageFaceOGGroup", "FieldCageGuardFaceOGGroup"]
+
+    # One group per subpart/face for each electrode item
+    for base_name in electrode_names_per_item_BC:
+        # All residual faces belonging to this electrode item
+        subpart_names = [i for i in residual_faces if base_name in i]
+
+        # Strip the common suffix to get a shorter prefix for group names
+        group_prefix = base_name.replace("FaceOGGroup", "")
+
+        for idx, face_name in enumerate(subpart_names, 1):
+            # Create a group for this single subpart
+            subpart_group = model.addGroup(
+                Cryostat_doc,
+                "FACE",
+                [model.selection("FACE", face_name)]
+            )
+            subpart_group_name = f"{group_prefix}_{idx}"
+            subpart_group.setName(subpart_group_name)
+            subpart_group.result().setName(subpart_group_name)
+
+            # Track group name
+            all_group_names.append(subpart_group_name)
+
+            # Mark this face as used and remove from residual_faces
+            already_used = set(already_used) | {face_name}
+            residual_faces = [i for i in residual_faces if i not in already_used]
+
     model.do()
-    model.end()
 
     model.publishToShaperStudy()
     import SHAPERSTUDY
-    partition_surfaces, GXeGroupPostPartition, LXeGroupPostPartition, FluidGroupPostPartition = SHAPERSTUDY.shape(model.featureStringId(partition))
-    #PTFE_GroupPostPartition
+    partition_surfaces, GXeGroupPostPartition, LXeGroupPostPartition, PTFE_GroupPostPartition, MeshGroupPostPartition, *BC_Groups = SHAPERSTUDY.shape(model.featureStringId(partition))
 
     from salome.smesh import smeshBuilder
     import SMESH
+    model.end()
 
     smesh = smeshBuilder.New()
 
-
-    """
-    Create a Partition instead of a cut using all electrode elements (seperately)
-    Create a single partition that includes all the to be meshed elements
-    and partitions for each submesh
-
-    Create the main partition and the subpartions on it
-
-    Select boundary elements on each electrode using
-
-    BC_edges = mesh.MakeBoundaryElements(
-        dimension=BND_1DFROM2D,
-        groupName="BC_AllEdges",
-        meshName="",          # default mesh
-        toCopyAll=False,
-        groups=[MSH_GXe_face_group, MSH_LXe_face_group, ]#MSH_PTFE_face_group
-    )
-
-    where groups is the source of the group 
-    
-    
-    """
-
-    # G is the Shaper partition result, e.g. 'partition_surfaces'
-    # G_GXe, G_LXe, G_PTFE are the Shaper FACE groups we defined above
-
-    #mesh = smesh.Mesh(partition_surfaces)
-    mesh = smesh.Mesh(FluidGroupPostPartition)
+    mesh = smesh.Mesh(MeshGroupPostPartition)
     NETGEN_1D_2D = mesh.Triangle(algo=smeshBuilder.NETGEN_1D2D)
 
     MSH_GXe_face_group  = mesh.GroupOnGeom(GXeGroupPostPartition,  "GXeGroup",  SMESH.FACE)
     MSH_LXe_face_group  = mesh.GroupOnGeom(LXeGroupPostPartition,  "LXeGroup",  SMESH.FACE)
-    #MSH_PTFE_face_group = mesh.GroupOnGeom(PTFE_GroupPostPartition, "PTFE_Group", SMESH.FACE)
-
-
-
+    MSH_PTFE_face_group = mesh.GroupOnGeom(PTFE_GroupPostPartition, "PTFE_Group", SMESH.FACE)
+    BCs = [mesh.GroupOnGeom(msh_grp, msh_grp.GetName(), SMESH.EDGE) for msh_grp in BC_Groups]
     mesh.Compute()
-
-    # Now create 1D boundary elements along those faces:
-    # This creates all 1D boundary elements of the given face groups in a single 1D group:
-    from SMESH import BND_1DFROM2D
-
-    BC_edges = mesh.MakeBoundaryElements(
-        dimension=BND_1DFROM2D,
-        groupName="BC_AllEdges",
-        meshName="",          # default mesh
-        toCopyAll=False,
-        groups=[MSH_GXe_face_group, MSH_LXe_face_group, ]#MSH_PTFE_face_group
-    )
 
     
     mesh.ExportMED(
