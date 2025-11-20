@@ -28,7 +28,8 @@ find_library(HYPRE_LIBRARY NAMES HYPRE REQUIRED)
 # ---------------------------------------------------------
 # --- Config (YAML loader) --------------------------------
 # ---------------------------------------------------------
-add_subdirectory(config)
+add_subdirectory(../config)
+add_subdirectory(../cmdLineParser)
 
 # ---------------------------------------------------------
 # --- Solver executable (no geometry coupling) ------------
@@ -53,6 +54,7 @@ target_link_libraries(SOLVER PRIVATE
   ${HYPRE_LIBRARY}
   mfem
   config
+  cmdLineParser
   yaml-cpp
   MPI::MPI_CXX
   OpenMP::OpenMP_CXX

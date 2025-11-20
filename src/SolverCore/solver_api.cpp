@@ -1,4 +1,4 @@
-#define MFEM_DEBUG
+
 #include "mfem.hpp"
 #include "load_mesh.h"
 #include "boundary_conditions.h"
@@ -6,67 +6,19 @@
 #include "ComputeElectricField.h"
 #include "config/Config.h"
 #include "cmdLineParser.h"
+#include "solver_api.h"
 
-// Standard Libararies 
-#include <iostream>
-#include <memory>
-#include <cstdlib> 
-#include <thread> 
 
-// For Multithreading 
 #ifdef MFEM_USE_OPENMP
   #include <omp.h>
 #endif
 
+
 using namespace mfem;
 
-int main(int argc, char *argv[])
+SimulationResult run_simulation()
 {
-  // Extract cmd line options 
-  cli::InputParser args(argc, argv);
-  if (args.has("-h") || args.has("--help")) {
-      cli::print_usage(argv[0]);
-      return 0;
-  }
-
-  //----------------------   Read options ---------------------------
-  // config path 
-  auto config_str_opt = args.get("-c");
-  if (!config_str_opt) config_str_opt = args.get("--config");
-  if (!config_str_opt) {
-      std::cerr << "Error: missing required argument -c/--config\n";
-      cli::print_usage(argv[0]);
-      return 1;
-  }
-  auto config_path = cli::to_absolute(*config_str_opt);
-  if (!std::filesystem::exists(config_path)) {
-      std::cerr << "Error: config file not found: " << config_path << "\n";
-      return 1;
-  }
-  // mesh path 
-  auto model_str_opt = args.get("-m");
-  if (!model_str_opt) model_str_opt = args.get("--model");
-  if (!model_str_opt) {
-      std::cerr << "Error: missing required argument -m/--model\n";
-      cli::print_usage(argv[0]);
-      return 1;
-  }
-  auto model_path  = cli::to_absolute(*model_str_opt);
-  if (!std::filesystem::exists(model_path)) {
-      std::cerr << "Error: model/mesh file not found: " << model_path << "\n";
-      return 1;
-  }
-
-  // Log and continue 
-  std::cout << "[Config] " << config_path << "\n";
-  std::cout << "[Mesh]   " << model_path  << "\n";
-
-  // Load yaml config containing geometry and solver parameters
-  auto cfg = std::make_shared<const Config>(
-      Config::Load(config_path)
-  );
-
-  // -------------------------------- Parallelization ----------------------------------------------
+// -------------------------------- Parallelization ----------------------------------------------
   bool use_distributed = cfg->compute.mpi.enabled;
   bool use_threads = cfg->compute.threads.enabled;  
   bool use_device  = (cfg->compute.device.type != "none" && cfg->compute.device.type != "cpu");
@@ -165,14 +117,15 @@ int main(int argc, char *argv[])
   // 3) Compute E and |E|
   ComputeElectricField(*V, *E, /*scale=*/-1.0); // or -0.01 for V/cm
   ComputeFieldMagnitude(*E, *Emag);
-  // TODO Paths 
-  // 4) Save components and magnitude
-  SaveEComponents(*E, "field");          // field_ex.gf, field_ey.gf, (field_ez.gf)
-  { std::ofstream ofs("field_mag.gf"); Emag->Save(ofs); }
 
-  // 5. Save Data
-  mesh->Save(cfg->solver.mesh_save_path.c_str());
-  V->Save(cfg->solver.V_solution_path.c_str());
+  // Make return struct 
+  SimulationResult result;
+  result.mesh = std::move(mesh);
+  result.V    = std::move(V);
+  result.E    = std::move(E);
+  result.Emag = std::move(Emag);
 
+  result.success = true;
+
+  return result;
 }
-

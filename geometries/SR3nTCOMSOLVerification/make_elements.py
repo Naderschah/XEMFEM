@@ -1,99 +1,362 @@
 import numpy as np
 from pathlib import Path
+import re
 
-# -------- Files --------
+# ============================================================
+# 0. USER CONFIGURATION
+# ============================================================
+
 phys_map_path = Path("phys_map.txt")
-output_path = Path("config_autogen.yaml")
+output_path   = Path("config_autogen.yaml")
 
-# -------- Fixed definitions --------
-fixed_boundaries = {
-    "BC_Bell":         {"type": "dirichlet", "value": 10.0},
-    "BC_Gate":         {"type": "dirichlet", "value": 5.0},
-    "BC_Anode":        {"type": "dirichlet", "value": 0.0},
-    "BC_Cathode":      {"type": "dirichlet", "value": -5.0},
-    "BC_TopScreen":    {"type": "dirichlet", "value": 0.0},
-    "BC_BottomScreen": {"type": "dirichlet", "value": 0.0},
-    "BC_CopperRing":   {"type": "dirichlet", "value": 0.0},
-    "BC_PMTs":         {"type": "dirichlet", "value": 0.0},
-}
-
-# Lookup for materials: region name → epsilon_r
+# Volumes in phys_map → epsilon_r
 volume_materials = {
-    "LXe": 1.95,
-    "GXe": 1.0,
-    "PTFE": 2.1,
+    "LXeGroup":   1.95,
+    "GXeGroup":   1.0,
+    "PTFE_Group": 2.1,
 }
 
-# Resistive Chain
-R1 = 1.0 # First 5
-R2 = 1.0 # Split 
-R3 = 1.0 # Middle series 
-RC = 1.0 # Last to Cathode 
+# Fixed boundary conditions (explicit Dirichlet values)
+# Names MUST match phys_map.txt
+fixed_boundaries = {
+    "BC_TopScreen":            {"type": "dirichlet", "value": -1500},
+    "BC_Anode":                {"type": "dirichlet", "value": 4900},
+    "BC_Gate":                 {"type": "dirichlet", "value": -2000},
+    "BC_Cathode":              {"type": "dirichlet", "value": -30000},  # top of chain
+    "BC_BottomScreen":         {"type": "dirichlet", "value": -1500},     # bottom of chain
+    "BC_PMT":                  {"type": "dirichlet", "value": -1500},
+}
 
-# -------- Parse phys_map.txt --------
-with phys_map_path.open() as f:
-    lines = [l.strip() for l in f if l.strip()]
-entries = lines[1:]  # skip number row
+# Resistor values (only ratios matter for voltages)
+R1 = 1.0   # between first 5 FieldCage_ and also last 3 after merge
+R2 = 1.0   # split / merge resistors
+R3 = 1.0   # middle region resistors in both branches
+R_C = 1.0  # from last FieldCage_ to Cathode
 
-materials = {}
-boundaries_fixed = {}
-rings = []  # (name, tag)
 
-for line in entries:
-    dim_s, tag_s, name_s = line.split(maxsplit=2)
-    dim = int(dim_s)
-    tag = int(tag_s)
-    name = name_s.strip('"')
+# ============================================================
+# 1. PARSE phys_map.txt
+# ============================================================
 
-    if dim == 2:
-        if name in volume_materials:
-            materials[name] = {"attr_id": tag, "epsilon_r": volume_materials[name]}
+_idx_re = re.compile(r".*_(\d+)$")
 
-    elif dim == 1:
-        if name in fixed_boundaries:
-            boundaries_fixed[name] = {
-                "bdr_id": tag,
-                "type": fixed_boundaries[name]["type"],
-                "value": fixed_boundaries[name]["value"],
-            }
+def extract_index(name: str, prefix: str):
+    """Extract integer index from names like 'FieldCage_12'."""
+    if not name.startswith(prefix):
+        return None
+    m = _idx_re.match(name)
+    if not m:
+        return None
+    return int(m.group(1))
+
+
+def parse_phys_map(path: Path):
+    with path.open() as f:
+        lines = [l.strip() for l in f if l.strip()]
+
+    n_total = int(lines[0])
+    entries = lines[1:]
+
+    regions = {}    # dim==2
+    boundaries = {} # dim==1
+
+    for line in entries:
+        dim_s, tag_s, name_s = line.split(maxsplit=2)
+        dim = int(dim_s)
+        tag = int(tag_s)
+        name = name_s.strip('"')
+
+        if dim == 1:
+            boundaries[name] = {"bdr_id": tag}
+        elif dim == 2:
+            regions[name] = {"attr_id": tag}
         else:
-            rings.append((name, tag))
+            raise ValueError(f"Unexpected dim {dim} in phys_map line: {line}")
 
-# -------- Assign voltages to rings --------
-N = len(rings)
-if N > 1:
-    voltages = np.linspace(-30, 30, N)
-else:
-    voltages = np.array([0.0])
+    print(f"[parse] total entries in phys_map: {n_total}")
+    print(f"[parse] boundaries: {len(boundaries)}, regions: {len(regions)}")
+
+    return regions, boundaries
+
+
+regions_raw, boundaries_raw = parse_phys_map(phys_map_path)
+
+
+# ============================================================
+# 2. COMPUTE VOLTAGES FOR FieldCage_* AND FieldCageGuard_*
+# ============================================================
+
+def solve_fieldcage_network(fieldcage_names, guard_names, V_top, V_cathode):
+    """
+    Build and solve the resistor network described in your text:
+
+      - First 5 FieldCage_ in series with R1
+      - At FieldCage_5, split via R2:
+          * to next FieldCage_ (main chain)
+          * to FieldCageGuard_1 (guard chain)
+      - Both chains continue in series with R3
+      - At the bottom, guard chain re-merges to main chain via R2
+      - Last 3 FieldCage_ after merge use R1
+      - Last FieldCage_ connects to Cathode via R_C
+
+    V_top:     potential at FieldCage_1 (taken from Gate_GroupPostPartition)
+    V_cathode: potential at Cathode (from BC_Cathode)
+
+    Returns dict: name -> voltage for all FieldCage_* and FieldCageGuard_*.
+    """
+
+    if not fieldcage_names:
+        return {}
+
+    # Sort by index
+    fieldcage_names = sorted(fieldcage_names, key=lambda n: extract_index(n, "FieldCage_"))
+    guard_names     = sorted(guard_names,     key=lambda n: extract_index(n, "FieldCageGuard_"))
+
+    fc     = fieldcage_names
+    guards = guard_names
+    n_fc   = len(fc)
+    n_guard = len(guards)
+
+    # Fixed potentials in the network
+    fixed_V = {
+        fc[0]:      V_top,     # first field cage
+        "Cathode":  V_cathode,
+    }
+
+    # Unknown nodes: all other FieldCage_* and all FieldCageGuard_*
+    unknown_nodes = list(fc[1:]) + list(guards)
+    N = len(unknown_nodes)
+
+    if N == 0:
+        return {fc[0]: V_top}
+
+    node_index = {name: i for i, name in enumerate(unknown_nodes)}
+    G = np.zeros((N, N), dtype=float)
+    b = np.zeros(N, dtype=float)
+
+    edges = []  # for consistency checks
+
+    def add_resistor(a, bnode, R):
+        g = 1.0 / R
+        edges.append((a, bnode, R))
+
+        a_unknown = a in node_index
+        b_unknown = bnode in node_index
+        a_fixed   = a in fixed_V
+        b_fixed   = bnode in fixed_V
+
+        if a_unknown and b_unknown:
+            ia = node_index[a]
+            ib = node_index[bnode]
+            G[ia, ia] += g
+            G[ib, ib] += g
+            G[ia, ib] -= g
+            G[ib, ia] -= g
+        elif a_unknown and b_fixed:
+            ia = node_index[a]
+            G[ia, ia] += g
+            b[ia] += g * fixed_V[bnode]
+        elif b_unknown and a_fixed:
+            ib = node_index[bnode]
+            G[ib, ib] += g
+            b[ib] += g * fixed_V[a]
+        else:
+            # both fixed or both unknown-without-equation: nothing to add to G,b
+            pass
+
+    # If there are not enough rings or no guards, fall back to simple series chain
+    if n_fc < 8 or n_guard == 0:
+        for i in range(n_fc - 1):
+            add_resistor(fc[i], fc[i + 1], R1)
+        add_resistor(fc[-1], "Cathode", R_C)
+    else:
+        # First 5 FieldCage_ with R1: FC1-2-3-4-5
+        for i in range(0, 4):
+            add_resistor(fc[i], fc[i + 1], R1)
+
+        # Split at FC_5 (index 4) via R2:
+        #   FC_5 --R2--> FC_6
+        #   FC_5 --R2--> Guard_1
+        if n_fc > 5:
+            add_resistor(fc[4], fc[5], R2)
+        if n_guard > 0:
+            add_resistor(fc[4], guards[0], R2)
+
+        # Middle sections with R3
+        merge_index = n_fc - 4  # 4th-from-last fieldcage is merge node
+
+        # Main branch: FC_6 ... FC_merge
+        for i in range(5, merge_index):
+            add_resistor(fc[i], fc[i + 1], R3)
+
+        # Guard branch: Guard_1 ... Guard_last
+        for j in range(0, n_guard - 1):
+            add_resistor(guards[j], guards[j + 1], R3)
+
+        # Merge: Guard_last --R2--> FC_merge
+        if n_guard > 0:
+            add_resistor(guards[-1], fc[merge_index], R2)
+
+        # Last FieldCage_ (including merge node) up to last ring with R1
+        for i in range(merge_index, n_fc - 1):
+            add_resistor(fc[i], fc[i + 1], R1)
+
+        # Last FieldCage_ to Cathode via R_C
+        add_resistor(fc[-1], "Cathode", R_C)
+
+    # Solve the linear system G * V_unknown = b
+    V_unknown = np.linalg.solve(G, b)
+
+    voltages = {}
+    voltages.update(fixed_V)
+    for name, idx in node_index.items():
+        voltages[name] = float(V_unknown[idx])
+
+    # -------- Self-consistency checks --------
+    V1 = voltages[fc[0]]
+    Vc = fixed_boundaries["BC_Cathode"]["value"]
+    drop_direct = V1 - Vc
+
+    # Path 1: straight FieldCage chain FC1 → ... → FC_last → Cathode
+    drop_fc_chain = 0.0
+    for a, bnode in zip(fc, fc[1:]):
+        drop_fc_chain += voltages[a] - voltages[bnode]
+    drop_fc_chain += voltages[fc[-1]] - Vc
+
+    print(f"[check] ΔV(FC1→Cathode) (direct) = {drop_direct:.6g}")
+    print(f"[check] ΔV via FieldCage chain    = {drop_fc_chain:.6g} "
+          f"(Δ = {drop_fc_chain - drop_direct:+.3e})")
+
+    # Path 2: use guard branch (if present)
+    if n_guard > 0 and n_fc >= 8:
+        merge_index = n_fc - 4
+        merge_name = fc[merge_index]
+        path_guard = (
+            [fc[0], fc[1], fc[2], fc[3], fc[4]] +
+            guards +
+            [merge_name] +
+            fc[merge_index + 1:] +
+            ["Cathode"]
+        )
+        drop_guard = 0.0
+        for a, bnode in zip(path_guard, path_guard[1:]):
+            Va = voltages[a] if a in voltages else Vc
+            Vb = voltages[bnode] if bnode in voltages else Vc
+            drop_guard += Va - Vb
+        print(f"[check] ΔV via guard branch      = {drop_guard:.6g} "
+              f"(Δ = {drop_guard - drop_direct:+.3e})")
+
+    return voltages
+
+
+# Collect FieldCage_*/FieldCageGuard_* names from phys_map
+fieldcage_names = [name for name in boundaries_raw if name.startswith("FieldCage_")]
+guard_names     = [name for name in boundaries_raw if name.startswith("FieldCageGuard_")]
+
+print(f"[network] FieldCage_*: {len(fieldcage_names)}, FieldCageGuard_*: {len(guard_names)}")
+
+fc_voltages = solve_fieldcage_network(
+    fieldcage_names,
+    guard_names,
+    V_top=fixed_boundaries["BC_Gate"]["value"],
+    V_cathode=fixed_boundaries["BC_Cathode"]["value"],
+)
+
+
+# ============================================================
+# 3. PRINT ANY BOUNDARIES WITH NO VOLTAGE
+# ============================================================
+
+# 3a. Materials: find any region without epsilon_r
+materials = {}
+missing_material_eps = []
+for name, meta in regions_raw.items():
+    if name in volume_materials:
+        materials[name] = {
+            "attr_id": meta["attr_id"],
+            "epsilon_r": volume_materials[name],
+        }
+    else:
+        missing_material_eps.append(name)
+
+if missing_material_eps:
+    print("[warning] No epsilon_r specified for materials:")
+    for name in sorted(missing_material_eps):
+        print(f"  - {name}")
+
+# 3b. Boundaries: fixed + rings
+boundaries_fixed_out = {}
+for name, bc in fixed_boundaries.items():
+    if name not in boundaries_raw:
+        print(f"[warning] Fixed boundary '{name}' not found in phys_map; skipping.")
+        continue
+    tag = boundaries_raw[name]["bdr_id"]
+    boundaries_fixed_out[name] = {
+        "bdr_id": tag,
+        "type": bc["type"],
+        "value": bc["value"],
+    }
 
 boundaries_rings = {}
-
-for (name, tag), V in zip(rings, voltages):
+for name in fieldcage_names:
+    tag = boundaries_raw[name]["bdr_id"]
     boundaries_rings[name] = {
         "bdr_id": tag,
         "type": "dirichlet",
-        "value": float(V),
+        "value": float(fc_voltages[name]),
+    }
+for name in guard_names:
+    tag = boundaries_raw[name]["bdr_id"]
+    boundaries_rings[name] = {
+        "bdr_id": tag,
+        "type": "dirichlet",
+        "value": float(fc_voltages[name]),
     }
 
-# -------- Write to config_autogen.yaml --------
+assigned_boundary_names = set(boundaries_fixed_out) | set(boundaries_rings)
+unassigned_boundaries = sorted(
+    name for name in boundaries_raw if name not in assigned_boundary_names
+)
+
+if unassigned_boundaries:
+    print("[warning] The following boundaries have no assigned voltage:")
+    for name in unassigned_boundaries:
+        tag = boundaries_raw[name]["bdr_id"]
+        print(f"  - {name} (bdr_id={tag})")
+else:
+    print("[info] All boundaries in phys_map have an assigned voltage.")
+
+
+# ============================================================
+# 4. WRITE config_autogen.yaml
+# ============================================================
+
 with output_path.open("w") as out:
+    # materials
     out.write("materials:\n")
-    for m, v in materials.items():
+    for m in sorted(materials):
+        v = materials[m]
         out.write(f"  {m}:\n")
         out.write(f"    attr_id: {v['attr_id']}\n")
         out.write(f"    epsilon_r: {v['epsilon_r']}\n")
 
+    # boundaries
     out.write("\nboundaries:\n")
-    for name, v in boundaries_fixed.items():
+
+    # fixed boundaries first (Anode, Gate, Cathode, etc.)
+    for name in sorted(boundaries_fixed_out):
+        v = boundaries_fixed_out[name]
         out.write(f"  {name}:\n")
         out.write(f"    bdr_id: {v['bdr_id']}\n")
         out.write(f"    type: {v['type']}\n")
         out.write(f"    value: {v['value']}\n")
 
-    for name, v in sorted(boundaries_rings.items()):
+    # then all FieldCage_*/FieldCageGuard_* rings
+    for name in sorted(boundaries_rings, key=lambda n: (n.startswith("FieldCageGuard_"), extract_index(n, "FieldCage_") or extract_index(n, "FieldCageGuard_"))):
+        v = boundaries_rings[name]
         out.write(f"  {name}:\n")
         out.write(f"    bdr_id: {v['bdr_id']}\n")
         out.write(f"    type: {v['type']}\n")
         out.write(f"    value: {v['value']}\n")
 
-print(f"✔ Wrote {output_path} with {len(boundaries_rings)} ring boundaries.")
+print(f"[done] Wrote {output_path} with {len(boundaries_rings)} FieldCage/guard boundaries.")

@@ -9,6 +9,7 @@ struct Boundary {
     int bdr_id = -1;        // bdr_id
     std::string type;       // "dirichlet" | "neumann" | "robin"
     double value = 0.0;
+
 };
 
 struct Material {
@@ -57,6 +58,27 @@ struct MeshSettings {
     std::string path = "geometry.msh";
 };
 
+// -------------------- Sweep description ----------------------------
+// Pure metadata: the sweep module consumes this; Config itself is still
+// “one concrete run”.
+struct SweepEntry { // TODO What was the algorithm called again?
+    enum class Kind { Discrete, Range, GenericOptimize };
+
+    std::string name;   // optional label
+    std::string path;   // dot-path into YAML, e.g. "solver.order"
+
+    Kind kind = Kind::Discrete;
+
+    // Discrete values: stored as strings so you can sweep anything
+    // (int, double, string, bool). The sweep engine decides how to
+    // interpret / inject them back into YAML.
+    std::vector<std::string> values;
+
+    // Range (continuous) sweep: to be turned into discrete points later.
+    double start = 0.0;
+    double end   = 0.0;
+    int    steps = 0;   // number of points (inclusive endpoints)
+};
 
 // -------------------- Compute / Runtime Settings ----------------------------
 struct SolverSettings {
@@ -90,6 +112,8 @@ struct Config {
 
     std::unordered_map<std::string, Boundary> boundaries;
     std::unordered_map<std::string, Material> materials;
+
+    std::vector<SweepEntry> sweeps;
 
     // Load from path
     static Config Load(const std::string& path);

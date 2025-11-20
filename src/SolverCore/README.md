@@ -1,4 +1,7 @@
-## Electrostatics Solver
+## Electrostatics Solver Core
+
+
+Implements the main simulation suite, everything else is just wrappers
 
 
 
