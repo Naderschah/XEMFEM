@@ -5,4 +5,4 @@
 using namespace mfem;
 
 struct Config; // forward declaration - still used?
-std::unique_ptr<mfem::GridFunction> SolvePoisson(mfem::FiniteElementSpace &fespace, const mfem::Array<int> &dirichlet_attr, const std::shared_ptr<const Config>& cfg);
+std::unique_ptr<mfem::ParGridFunction> SolvePoisson(ParFiniteElementSpace &pfes, const mfem::Array<int> &dirichlet_attr, const std::shared_ptr<const Config>& cfg);

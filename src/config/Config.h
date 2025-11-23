@@ -1,10 +1,11 @@
 #pragma once
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 // FIXME REMOVE THE DEFAULTS
 // TODO Remove defaults - fix documentation  
-// -------------------- Core Physics ----------------------------
+// -------------------- Mesh Specific ----------------------------
 struct Boundary {
     int bdr_id = -1;        // bdr_id
     std::string type;       // "dirichlet" | "neumann" | "robin"
@@ -14,7 +15,14 @@ struct Boundary {
 
 struct Material {
     int id = -1;            // attr_id
-    double epsilon_r = 1.0; // Epsilon
+    double epsilon_r = 1.0;
+};
+
+struct MeshSettings {
+    std::string path = "geometry.msh"; // TODO Does mesh need more settings?
+    double tpc_r;
+    double z_cathode;
+    double z_liquidgas;
 };
 
 // -------------------- Compute / Runtime Settings ----------------------------
@@ -22,14 +30,12 @@ struct MPISettings {
     bool enabled = false;
     bool ranks_auto = true;     // true if "auto" was given
     int  ranks = 1;             // ignored if ranks_auto=true
-    std::string hostfile;       // optional
     bool repartition_after_refine = true;
 };
 
-
 struct ThreadsSettings {
     bool enabled = true;
-    bool num_auto = true;       // true if "auto" was given
+    bool num_auto = true;       // true if "auto" was given TODO is this used
     int  num = 0;               // 0 means "auto" when num_auto=true
     std::string affinity = "compact"; // "compact" | "scatter" | "none"
 };
@@ -42,7 +48,6 @@ struct DeviceRuntime {
 };
 
 struct ComputeSettings {
-    std::string preset;         // "", "serial", "threads", "mpi", "gpu", "mpi+gpu", "mpi+threads"
     MPISettings     mpi;
     ThreadsSettings threads;
     DeviceRuntime   device;
@@ -51,35 +56,81 @@ struct ComputeSettings {
 
 struct DebugSettings {
     bool debug = false;
-    bool quick_mesh = false;
+    bool dry_run = false; // TODO Remove ? Originally included for debugging likely not needed anymore
 };
 
-struct MeshSettings {
-    std::string path = "geometry.msh";
+// -------------------- Circuit Computation --------------------------
+struct FieldCageNode {
+    std::string name;      // Name to reference by 
+    std::string boundary;  // Associated Boundary condition
+    bool fixed = false;    // true if potential is fixed by the boundary condition (ie cathode & top field shaping)
 };
+
+struct FieldCageEdge { 
+    std::string n1;      // node name from
+    std::string n2;      // node name to
+    std::string R_name;  // resistance from n1 to n2 
+};
+
+struct FieldCageNetworkSettings {
+    bool enabled = false;
+    std::vector<FieldCageNode> nodes; // BC 
+    std::vector<FieldCageEdge> edges; // Resistors between two nodes
+    std::unordered_map<std::string, double> R_values; // Named resistors 
+};
+
 
 // -------------------- Sweep description ----------------------------
-// Pure metadata: the sweep module consumes this; Config itself is still
-// “one concrete run”.
-struct SweepEntry { // TODO What was the algorithm called again?
-    enum class Kind { Discrete, Range, GenericOptimize };
+struct SweepEntry { 
+    enum class Kind { Discrete, Range };
 
     std::string name;   // optional label
-    std::string path;   // dot-path into YAML, e.g. "solver.order"
+    std::string path;   // dot-path into YAML, e.g. "boundaries.name.value"
 
     Kind kind = Kind::Discrete;
 
-    // Discrete values: stored as strings so you can sweep anything
-    // (int, double, string, bool). The sweep engine decides how to
-    // interpret / inject them back into YAML.
-    std::vector<std::string> values;
+    std::vector<std::string> values; // Discrete interface
 
-    // Range (continuous) sweep: to be turned into discrete points later.
+    // Range interface
     double start = 0.0;
     double end   = 0.0;
-    int    steps = 0;   // number of points (inclusive endpoints)
+    int    steps = 0;   // inclusive
 };
 
+// ----------------- Optimization description ------------------------
+// Currently no support for discrete variables implemented
+struct OptimizeVar {
+    std::string name;   // label
+    std::string path;   // dot path into Config, like "solver.order" or "boundaries.BC_Anode.value"
+
+    // For continuous (bounded) variables:
+    double lower = 0.0;
+    double upper = 0.0;
+    double initial = 0.0;       // starting guess; if 0, you can derive from lower/upper
+
+    // For discrete variables:
+    std::vector<std::string> values;  // a small, finite set of allowed values
+};
+struct OptimizationSettings {
+    bool enabled = false;
+
+    bool print_results = false;
+
+    // Optimization target
+    std::string objective;
+    // Weights if objective = weighted
+    double w_CIV         = 1.0;
+
+    // Variables to tune:
+    std::vector<OptimizeVar> variables;
+
+    // Nelder-Mead Settings
+    int    max_iters      = 200;
+    int    max_fun_evals  = 200;
+    double tol_fun        = 1e-3;
+    double tol_x          = 1e-3;
+    bool   adaptive       = true;
+};
 // -------------------- Compute / Runtime Settings ----------------------------
 struct SolverSettings {
     // MFEM / solve controls
@@ -101,9 +152,12 @@ struct SolverSettings {
     std::string Emag_solution_path = "solution_Emag.gf";
 };
 
+// ------------------------- Actual Config Struct -------------------------------
 struct Config {
     int schema_version = 1;
     std::string geometry_id;
+
+    std::string save_path; 
 
     MeshSettings mesh;
     ComputeSettings compute;
@@ -113,7 +167,14 @@ struct Config {
     std::unordered_map<std::string, Boundary> boundaries;
     std::unordered_map<std::string, Material> materials;
 
+    // Sweep Config options
     std::vector<SweepEntry> sweeps;
+
+    // Optimization Config Values
+    OptimizationSettings optimize;
+
+    // Configuration to solve circuits
+    FieldCageNetworkSettings fieldcage_network;
 
     // Load from path
     static Config Load(const std::string& path);
@@ -121,3 +182,6 @@ struct Config {
     static Config LoadFromString(const std::string& yaml_str);
 };
 
+
+
+void apply_fieldcage_network(Config &cfg);

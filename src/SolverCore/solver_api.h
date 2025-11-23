@@ -12,16 +12,18 @@ struct SimulationResult
     bool success = false;
     std::string error_message;
 
-    // Numerical outputs you want to reuse in Sweep
-    std::unique_ptr<mfem::Mesh> mesh;
-    std::unique_ptr<mfem::GridFunction> V;     // potential
-    std::unique_ptr<mfem::GridFunction> E;     // electric field (vector GridFunction)
-    std::unique_ptr<mfem::GridFunction> Emag;  // |E| as scalar GridFunction
+    std::unique_ptr<mfem::ParMesh>                 mesh;
+    std::unique_ptr<mfem::FiniteElementCollection> fec;
+    std::unique_ptr<mfem::ParFiniteElementSpace>   pfes;
+
+    std::unique_ptr<mfem::ParGridFunction> V;
+    std::unique_ptr<mfem::GridFunction> E;
+    std::unique_ptr<mfem::GridFunction> Emag;
 
 };
 
 // Core solver entry point (no CLI, no file I/O)
 SimulationResult run_simulation(
-    const Config& cfg,
+    std::shared_ptr<Config> cfg,
     const std::filesystem::path& model_path
 );

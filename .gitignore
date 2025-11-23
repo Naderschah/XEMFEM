@@ -2,9 +2,12 @@
 *.msh
 *.mesh
 *.gf
+*.med
 # Ignore all builds anywhere in the tree
 **/build/
 **/build*/
+# Ignore simulation results
+sim_results/
 # Ignore dotfiles
 .*
 !.gitignore

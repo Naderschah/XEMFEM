@@ -23,14 +23,6 @@ inline bool IsDistributed(const mfem::FiniteElementSpace &fes)
   return dynamic_cast<const mfem::ParFiniteElementSpace*>(&fes) != nullptr;
 }
 
-inline MPI_Comm GetComm(const mfem::FiniteElementSpace &fes)
-{
-#ifdef MFEM_USE_MPI
-  if (auto pfes = dynamic_cast<const mfem::ParFiniteElementSpace*>(&fes))
-    return pfes->GetParMesh()->GetComm();
-#endif
-  return MPI_COMM_SELF; // safe fallback for serial path
-}
 
 // Build ε(x) that is piecewise-constant over element attributes (volume tags)
 static PWConstCoefficient BuildEpsilonPWConst(const Mesh &mesh, const std::shared_ptr<const Config>& cfg)
@@ -67,7 +59,7 @@ static PWConstCoefficient BuildEpsilonPWConst(const Mesh &mesh, const std::share
     return PWConstCoefficient(eps_by_attr);
 }
 
-std::unique_ptr<mfem::GridFunction> SolvePoisson(mfem::FiniteElementSpace &fespace,
+std::unique_ptr<mfem::ParGridFunction> SolvePoisson(ParFiniteElementSpace &pfes,
                                                 const mfem::Array<int> &dirichlet_attr,
                                                 const std::shared_ptr<const Config>& cfg)
 {
@@ -75,51 +67,30 @@ std::unique_ptr<mfem::GridFunction> SolvePoisson(mfem::FiniteElementSpace &fespa
 
   if (cfg->debug.debug) {std::cout << "In Poisson Solver" << std::endl;}
 
-  const Mesh &mesh = *fespace.GetMesh();
+  const Mesh &mesh = *pfes.GetMesh();
   PWConstCoefficient epsilon_pw = BuildEpsilonPWConst(mesh, cfg);
   // TODO add check that epsilon and dirichlet are full and buitl 
   // common handles (filled inside the single if/else)
-  std::unique_ptr<GridFunction> V;        // GridFunction or ParGridFunction
-  std::unique_ptr<BilinearForm> a;        // BilinearForm or ParBilinearForm
-  std::unique_ptr<LinearForm>   b;        // LinearForm   or ParLinearForm
+  std::unique_ptr<ParGridFunction> V;     // GridFunction or ParGridFunction
+  std::unique_ptr<ParBilinearForm> a;        // BilinearForm or ParBilinearForm
+  std::unique_ptr<ParLinearForm>   b;        // LinearForm   or ParLinearForm
   OperatorHandle                A;        // SparseMatrix or HypreParMatrix
   Vector                        X, B;     // works for both
   std::function<std::unique_ptr<Solver>(OperatorHandle&)> make_prec;
-  MPI_Comm                      comm = MPI_COMM_SELF;
 
-  // Does not work at the moment
-  const bool par = (dynamic_cast<ParFiniteElementSpace*>(&fespace) != nullptr);
-  if (cfg->debug.debug) {std::cout << "par param: " << par << std::endl;}
+  V = std::make_unique<ParGridFunction>(&pfes);
+  a = std::make_unique<ParBilinearForm>(&pfes);
+  b = std::make_unique<ParLinearForm>(&pfes);
 
-  if (par) {
-    // ---------- parallel concrete types ----------
-    if (cfg->debug.debug) {std::cout << "In parallel branch" << std::endl;}
-    auto &pfes = static_cast<ParFiniteElementSpace&>(fespace);
-    V = std::make_unique<ParGridFunction>(&pfes);
-    a = std::make_unique<ParBilinearForm>(&pfes);
-    b = std::make_unique<ParLinearForm>(&pfes);
-    comm = pfes.GetParMesh()->GetComm();
+  MPI_Comm comm = pfes.GetParMesh()->GetComm();
 
-    // build the proper preconditioner later, after A exists
-    make_prec = [=](OperatorHandle &Ah) -> std::unique_ptr<Solver>
-    {
-      auto *Ap = Ah.As<HypreParMatrix>();
-      return std::make_unique<HypreBoomerAMG>(*Ap);
-    };
-  } else {
-    // ---------- serial concrete types ----------
-    if (cfg->debug.debug) {std::cout << "In serial branch" << std::endl;}
-    V = std::make_unique<GridFunction>(&fespace);
-    a = std::make_unique<BilinearForm>(&fespace);
-    b = std::make_unique<LinearForm>(&fespace);
-    comm = MPI_COMM_SELF;
+  // build the proper preconditioner later, after A exists
+  make_prec = [=](OperatorHandle &Ah) -> std::unique_ptr<Solver>
+  {
+    auto *Ap = Ah.As<HypreParMatrix>();
+    return std::make_unique<HypreBoomerAMG>(*Ap);
+  };
 
-    make_prec = [=](OperatorHandle &Ah) -> std::unique_ptr<Solver>
-    {
-      auto *As = Ah.As<SparseMatrix>();
-      return std::make_unique<DSmoother>(*As);
-    };
-  }
   // ---------- shared body ----------
   *V = 0.0;
   ApplyDirichletValues(*V, dirichlet_attr, cfg);
@@ -127,19 +98,27 @@ std::unique_ptr<mfem::GridFunction> SolvePoisson(mfem::FiniteElementSpace &fespa
   auto w = MakeAxisymWeightCoeff(cfg->solver.axisymmetric, 0);
   mfem::ProductCoefficient weps(*w, epsilon_pw);
   a->AddDomainIntegrator(new DiffusionIntegrator(weps));
-  a->Assemble();                 // Finalize() not needed with OperatorHandle path
+  a->Assemble();                
 
   b->Assemble();
 
   Array<int> ess_tdof;
-  fespace.GetEssentialTrueDofs(dirichlet_attr, ess_tdof);
+  pfes.GetEssentialTrueDofs(dirichlet_attr, ess_tdof);
 
   a->FormLinearSystem(ess_tdof, *V, *b, A, X, B);   // fills A, X, B for both modes
 
-  auto P = make_prec(A);          // DSmoother or HypreBoomerAMG, already decided
+  auto P = make_prec(A);
+  // It will error on setup, for ADS/AMS this happens in l1 row norm producing singular coarse-grid matrices causing the errors
+  // but this is handled fine in those cases, so I am hoping it is here as well TODO Really should figure out the origin of this 
+  // Future debug note: This only started happening when I compiled hypre inside the Dockerfile, up until that point this didnt 
+  // happen, but OpenMP didnt work either (ie always 1 thread never more)  
+  if (auto *hypre_prec = dynamic_cast<mfem::HypreSolver*>(P.get()))
+  {
+      hypre_prec->SetErrorMode(mfem::HypreSolver::WARN_HYPRE_ERRORS);
+  }
 
   CGSolver cg(comm);
-  cg.SetOperator(*A.Ptr());       // OperatorHandle -> Operator&
+  cg.SetOperator(*A.Ptr());     
   cg.SetPreconditioner(*P);
   cg.SetRelTol(cfg->solver.rtol);
   cg.SetAbsTol(cfg->solver.atol);
@@ -148,6 +127,7 @@ std::unique_ptr<mfem::GridFunction> SolvePoisson(mfem::FiniteElementSpace &fespa
   cg.Mult(B, X);
 
   a->RecoverFEMSolution(X, *b, *V);
+
 
   return V;
 }

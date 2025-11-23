@@ -52,6 +52,7 @@ Array<int> GetDirichletAttributes(mfem::Mesh *mesh,
 void ApplyDirichletValues(GridFunction &V, const Array<int> &dirichlet_attr, const std::shared_ptr<const Config>& cfg)
 {
     Mesh *mesh = V.FESpace()->GetMesh();
+    if (cfg->debug.debug) std::cout << "[DEBUG:DirichletBC] \n";
     // Iterate config elements with dirichlet attributes
     for (const auto& [name, bc] :cfg->boundaries)
     {
@@ -63,7 +64,7 @@ void ApplyDirichletValues(GridFunction &V, const Array<int> &dirichlet_attr, con
         ConstantCoefficient Vcoef(bc.value);
         V.ProjectBdrCoefficient(Vcoef, marker);
         if (cfg->debug.debug) {
-          std::cout << "Applied Dirichlet BC " << name << " '(bdr_id = " << bc.bdr_id << ")'\n";
+          std::cout << "\t\t" << name << " '(bdr_id = " << bc.bdr_id << ")'\n";
         }
       }
       else 

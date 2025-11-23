@@ -3274,6 +3274,7 @@ if __name__ == '__main__':
 
     partition.result().subResult(2-1).setName("Bell1") # Bell in GXe
     partition.result().subResult(547-1).setName("Bell2") # Bell in LXe
+    print("Manually renamed 10")
 
     ### --------------------------   Make Meshing Groups -----------------------------
     # Make GXe submesh group
@@ -3321,7 +3322,7 @@ if __name__ == '__main__':
     # We make residual faces which must include all electrode name based faces
     already_used = set(ptfe_selec_names) | {
         "LXeVol1", "LXeVol2", "GXeVol1", "GXeVol2", "GXeVol3", "GXeVol4",
-        "PTFECutByInterface1", "PTFECutByInterface2", "Bell1", "Bell2"
+        "PTFECutByInterface1", "PTFECutByInterface2",# "Bell1", "Bell2"
     }
     residual_faces = [i for i in names_in_partition if i not in already_used]
     
@@ -3340,13 +3341,13 @@ if __name__ == '__main__':
     residual_faces = [i for i in residual_faces if i not in already_used]
 
     # Make Bell BC 
-    bell_selec_names = [i for i in residual_faces if "BellFaceOGGroup" in i]
+    bell_selec_names = ["Bell1", "Bell2"]
     Bell_group = model.addGroup(Cryostat_doc, "FACE", [
       model.selection("FACE", i) for i in bell_selec_names
     ])
-    Bell_group.setName("Bell_GroupPostPartition")
-    Bell_group.result().setName("Bell_GroupPostPartition")
-    all_group_names.append("Bell_GroupPostPartition")
+    Bell_group.setName("BC_Bell")
+    Bell_group.result().setName("BC_Bell")
+    all_group_names.append("BC_Bell")
     already_used = set(already_used) | set(bell_selec_names)
     residual_faces = [i for i in residual_faces if i not in already_used]
 
@@ -3355,9 +3356,9 @@ if __name__ == '__main__':
     Gate_group = model.addGroup(Cryostat_doc, "FACE", [
       model.selection("FACE", i) for i in gate_selec_names
     ])
-    Gate_group.setName("Gate_GroupPostPartition")
-    Gate_group.result().setName("Gate_GroupPostPartition")
-    all_group_names.append("Gate_GroupPostPartition")
+    Gate_group.setName("BC_Gate")
+    Gate_group.result().setName("BC_Gate")
+    all_group_names.append("BC_Gate")
     already_used = set(already_used) | set(gate_selec_names)
     residual_faces = [i for i in residual_faces if i not in already_used]
 

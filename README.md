@@ -16,6 +16,25 @@ Generate Geometry:
 
 
 
+## Software Stack
+
+
+MFEM: 
+- Version 4.8.0 
+- Highest currently available
+
+Hypre:
+- version 2.33.0 
+- version geq 3.0.0 does not work with MFEM 
+- Previous versions 
+  - tried with 2.32.0 : HypreBoomer AMG reports 1 OpenMP thread regardless of set number. Either checks in a funny way, or bugged  
+
+cuda_toolkit:
+- Not yet implemented, will be required for GPU (cuda)
+- Versions unknown 
+
+
+
 # TODO
 
 ## Geometry and config files 
@@ -27,7 +46,6 @@ Need to implement neumann Robin and periodic boundary conditions
 Should think about axisymmetric
 
 Also really need to fix Electric Field 
-- Rather fix it up a little its pure GPT at the moment  
 
 
 ## General
@@ -40,7 +58,7 @@ Also implement misc boundary conditions
 
 Need to fix indentation 
 
-Gotta stop doing auto 
+Gotta stop doing auto - I dont think this one will happen 
 
 
 Geometry 

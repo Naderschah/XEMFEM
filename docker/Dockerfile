@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     swig \
     \
     # --- MPI + parallel math stacks ---
-    openmpi-bin libopenmpi-dev libhypre-dev libmetis-dev \
+    openmpi-bin libopenmpi-dev libmetis-dev \
     libparmetis-dev libsuperlu-dist-dev \
     \
     # --- BLAS/LAPACK (keep one optimized stack; OpenBLAS is fine) ---
@@ -25,7 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     \
     # --- Linear algebra / scientific libs ---
     libblas-dev liblapack-dev libopenblas-dev libatlas-base-dev \
-    libhypre-dev libmetis-dev libsuperlu-dev zlib1g-dev \
+    libmetis-dev libsuperlu-dev zlib1g-dev \
     \
     # --- Graphics & visualization stack ---
     gmsh libgmsh-dev paraview netgen \
@@ -39,6 +39,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && locale-gen en_US.UTF-8 \
     && rm -rf /var/lib/apt/lists/*
 
+
+
+    
 # Create user
 ARG USER_ID=1000
 ARG GROUP_ID=100
@@ -63,6 +66,29 @@ RUN python3 -m pip install --upgrade pip setuptools wheel && \
     pip install --user -r requirements.txt
 ENV PATH=/home/felix/.local/bin:${PATH}
 
+# ===== hypre build with OpenMP =====
+ENV HYPRE_TAG=v2.33.0
+ENV HYPRE_DIR=/home/felix/hypre_src
+RUN git clone --depth 1 https://github.com/hypre-space/hypre.git --branch ${HYPRE_TAG} ${HYPRE_DIR} && \
+    mkdir -p /home/felix/hypre && cd /home/felix/hypre && \
+    cmake ${HYPRE_DIR}/src \
+      -DCMAKE_BUILD_TYPE=Debug \
+      -DHYPRE_ENABLE_PRINT_ERRORS=ON \
+      -DHYPRE_ENABLE_MPI=ON \
+      -DHYPRE_ENABLE_OPENMP=ON \
+      -DBUILD_SHARED_LIBS=ON \
+      -DCMAKE_C_COMPILER=mpicc \
+      -DCMAKE_CXX_COMPILER=mpicxx \
+      -DCMAKE_INSTALL_PREFIX=${HYPRE_DIR}/install && \
+    cmake --build . -j"$(nproc)" && \
+    cmake --install .
+
+ENV HYPRE_ROOT=${HYPRE_DIR}/install
+ENV LD_LIBRARY_PATH=${HYPRE_ROOT}/lib:${LD_LIBRARY_PATH}
+ENV LIBRARY_PATH=${HYPRE_ROOT}/lib:${LIBRARY_PATH}
+ENV C_INCLUDE_PATH=${HYPRE_ROOT}/include:${C_INCLUDE_PATH}
+ENV CPLUS_INCLUDE_PATH=${HYPRE_ROOT}/include:${CPLUS_INCLUDE_PATH}
+
 
 # ===== MFEM C++ build (now with MPI + OpenMP + ParMETIS + SuperLU_DIST) =====
 # FInd SuperLU libararies and turn on 
@@ -71,19 +97,14 @@ ENV CC=mpicc CXX=mpicxx
 RUN git clone --depth 1 --branch ${MFEM_TAG} https://github.com/mfem/mfem.git /home/felix/mfem && \
     mkdir /home/felix/mfem/build && cd /home/felix/mfem/build && \
     cmake -S .. -B . \
+      -DCMAKE_BUILD_TYPE=Debug \
       -DMFEM_USE_MPI=ON \
       -DMFEM_USE_OPENMP=ON \
       -DMFEM_USE_METIS=ON \
-      -DHYPRE_INCLUDE_DIRS=/usr/include/hypre \
-      -DHYPRE_LIBRARIES=/usr/lib/x86_64-linux-gnu/libHYPRE.so \
-      -DCMAKE_BUILD_TYPE=Release \
       -DMFEM_USE_SUPERLU=OFF \
-      -DSuperLUDist_INCLUDE_DIRS=/usr/include/superlu_dist \
-      -DSuperLUDist_LIBRARIES=/usr/lib/x86_64-linux-gnu/libsuperlu_dist.so \
       -DMFEM_USE_PETSC=OFF \
       -DMFEM_USE_GZSTREAM=ON \
       -DMFEM_USE_SUNDIALS=OFF \
-      -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_INSTALL_PREFIX=/home/felix/mfem-install && \
     cmake --build . --target install -j$(nproc)
 
@@ -101,13 +122,6 @@ RUN git clone --depth 1 https://github.com/glvis/glvis.git /home/felix/glvis && 
     mkdir -p /home/felix/.local/bin && \
     cp glvis /home/felix/.local/bin/
 
-
-# Install MESH converter
-RUN git clone https://github.com/victorsndvg/FEconv.git /home/felix/FEconv && \
-    cd /home/felix/FEconv && \
-    make -f Makefile.gfortran.linux
-
-ENV PATH="/home/felix/FEconv:${PATH}"
 
 WORKDIR /home/felix/work
 EXPOSE 8888

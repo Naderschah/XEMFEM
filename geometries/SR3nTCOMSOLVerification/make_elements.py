@@ -19,19 +19,25 @@ volume_materials = {
 # Fixed boundary conditions (explicit Dirichlet values)
 # Names MUST match phys_map.txt
 fixed_boundaries = {
-    "BC_TopScreen":            {"type": "dirichlet", "value": -1500},
-    "BC_Anode":                {"type": "dirichlet", "value": 4900},
-    "BC_Gate":                 {"type": "dirichlet", "value": -2000},
-    "BC_Cathode":              {"type": "dirichlet", "value": -30000},  # top of chain
-    "BC_BottomScreen":         {"type": "dirichlet", "value": -1500},     # bottom of chain
-    "BC_PMT":                  {"type": "dirichlet", "value": -1500},
+    # SR2 config https://xe1t-wiki.lngs.infn.it/doku.php?id=xenon:xenonnt:analysis:available_data_for_sr2#dates
+    "BC_TopScreen":    {"type": "dirichlet", "value": -100},
+    "BC_Anode":        {"type": "dirichlet", "value": 4850},
+    "BC_Gate":         {"type": "dirichlet", "value": +300},
+    "FieldCage_1":     {"type": "dirichlet", "value": +650},
+    "BC_Cathode":      {"type": "dirichlet", "value": -2750},
+    "BC_BottomScreen": {"type": "dirichlet", "value": -2750},
+
+    "BC_PMT":          {"type": "dirichlet", "value": -1500},
+    "BC_Bell":          {"type": "dirichlet", "value": 0},
+    "BC_CopperRing":   {"type": "dirichlet", "value": 0},
 }
 
 # Resistor values (only ratios matter for voltages)
-R1 = 1.0   # between first 5 FieldCage_ and also last 3 after merge
-R2 = 1.0   # split / merge resistors
-R3 = 1.0   # middle region resistors in both branches
-R_C = 1.0  # from last FieldCage_ to Cathode
+# These will be written into fieldcage_network.resistors
+R1 = 1.25e9   # between first 5 FieldCage_ and also last 3 after merge
+R2 = 2.5e9  # split / merge resistors
+R3 = 5e9    # middle region resistors in both branches
+R_C = 7.e9  # from last FieldCage_ to Cathode
 
 
 # ============================================================
@@ -41,7 +47,7 @@ R_C = 1.0  # from last FieldCage_ to Cathode
 _idx_re = re.compile(r".*_(\d+)$")
 
 def extract_index(name: str, prefix: str):
-    """Extract integer index from names like 'FieldCage_12'."""
+    """Extract integer index from names like 'FieldCage_12' or 'FieldCageGuard_3'."""
     if not name.startswith(prefix):
         return None
     m = _idx_re.match(name)
@@ -88,7 +94,7 @@ regions_raw, boundaries_raw = parse_phys_map(phys_map_path)
 
 def solve_fieldcage_network(fieldcage_names, guard_names, V_top, V_cathode):
     """
-    Build and solve the resistor network described in your text:
+    Build and solve the resistor network:
 
       - First 5 FieldCage_ in series with R1
       - At FieldCage_5, split via R2:
@@ -99,7 +105,7 @@ def solve_fieldcage_network(fieldcage_names, guard_names, V_top, V_cathode):
       - Last 3 FieldCage_ after merge use R1
       - Last FieldCage_ connects to Cathode via R_C
 
-    V_top:     potential at FieldCage_1 (taken from Gate_GroupPostPartition)
+    V_top:     potential at FieldCage_1
     V_cathode: potential at Cathode (from BC_Cathode)
 
     Returns dict: name -> voltage for all FieldCage_* and FieldCageGuard_*.
@@ -258,13 +264,13 @@ print(f"[network] FieldCage_*: {len(fieldcage_names)}, FieldCageGuard_*: {len(gu
 fc_voltages = solve_fieldcage_network(
     fieldcage_names,
     guard_names,
-    V_top=fixed_boundaries["BC_Gate"]["value"],
+    V_top=fixed_boundaries["FieldCage_1"]["value"],
     V_cathode=fixed_boundaries["BC_Cathode"]["value"],
 )
 
 
 # ============================================================
-# 3. PRINT ANY BOUNDARIES WITH NO VOLTAGE
+# 3. BUILD MATERIALS + BOUNDARIES DATA
 # ============================================================
 
 # 3a. Materials: find any region without epsilon_r
@@ -328,7 +334,90 @@ else:
 
 
 # ============================================================
-# 4. WRITE config_autogen.yaml
+# 4. BUILD FIELDCAGE NETWORK DESCRIPTION FOR CONFIG
+# ============================================================
+
+# Sort fieldcage / guard names by index
+fieldcage_names_sorted = sorted(fieldcage_names, key=lambda n: extract_index(n, "FieldCage_"))
+guard_names_sorted     = sorted(guard_names,     key=lambda n: extract_index(n, "FieldCageGuard_"))
+
+n_fc   = len(fieldcage_names_sorted)
+n_guard = len(guard_names_sorted)
+
+nodes_desc = []
+edges_desc = []
+
+if n_fc > 0:
+    # FieldCage_1: fixed node, boundary "FieldCage_1"
+    nodes_desc.append({
+        "name": "FieldCage_1",
+        "boundary": "FieldCage_1",
+        "fixed": True,
+    })
+    # Remaining FieldCage_i: unknown
+    for name in fieldcage_names_sorted[1:]:
+        nodes_desc.append({
+            "name": name,
+            "boundary": name,
+            "fixed": False,
+        })
+
+# Guard rings: all unknown
+for name in guard_names_sorted:
+    nodes_desc.append({
+        "name": name,
+        "boundary": name,
+        "fixed": False,
+    })
+
+# Cathode node: fixed from BC_Cathode
+nodes_desc.append({
+    "name": "Cathode",
+    "boundary": "BC_Cathode",
+    "fixed": True,
+})
+
+# Build edges according to the same topology as solve_fieldcage_network
+if n_fc > 0:
+    fc = fieldcage_names_sorted
+    guards = guard_names_sorted
+
+    if n_fc < 8 or n_guard == 0:
+        # Simple series chain: all R1, last to Cathode via R_C
+        for i in range(n_fc - 1):
+            edges_desc.append({"n1": fc[i], "n2": fc[i+1], "R": "R1"})
+        edges_desc.append({"n1": fc[-1], "n2": "Cathode", "R": "R_C"})
+    else:
+        # First 5 with R1: FC1–2–3–4–5
+        for i in range(0, 4):
+            edges_desc.append({"n1": fc[i], "n2": fc[i+1], "R": "R1"})
+
+        # Split at FC_5 via R2 for guard R3 for ring
+        if n_fc > 5:
+            edges_desc.append({"n1": fc[4], "n2": fc[5], "R": "R3"})
+        if n_guard > 0:
+            edges_desc.append({"n1": fc[4], "n2": guards[0], "R": "R2"})
+
+        # Middle with R3
+        merge_index = n_fc - 4  # 4th from last
+        # Main branch: FC_6 ... FC_merge with R3
+        for i in range(5, merge_index):
+            edges_desc.append({"n1": fc[i], "n2": fc[i+1], "R": "R3"})
+        # Guard branch: Guard_1 ... Guard_last with R3
+        for j in range(0, n_guard - 1):
+            edges_desc.append({"n1": guards[j], "n2": guards[j+1], "R": "R3"})
+        # Merge: Guard_last --R2--> FC_merge
+        if n_guard > 0:
+            edges_desc.append({"n1": guards[-1], "n2": fc[merge_index], "R": "R2"})
+        # Last 3 with R1: FC_merge..FC_last
+        for i in range(merge_index, n_fc - 1):
+            edges_desc.append({"n1": fc[i], "n2": fc[i+1], "R": "R1"})
+        # Last FC to Cathode via R_C
+        edges_desc.append({"n1": fc[-1], "n2": "Cathode", "R": "R_C"})
+
+
+# ============================================================
+# 5. WRITE config_autogen.yaml
 # ============================================================
 
 with output_path.open("w") as out:
@@ -352,11 +441,43 @@ with output_path.open("w") as out:
         out.write(f"    value: {v['value']}\n")
 
     # then all FieldCage_*/FieldCageGuard_* rings
-    for name in sorted(boundaries_rings, key=lambda n: (n.startswith("FieldCageGuard_"), extract_index(n, "FieldCage_") or extract_index(n, "FieldCageGuard_"))):
+    def sort_key_ring(n):
+        # sort FieldCage_1..N, then FieldCageGuard_1..N in index order
+        if n.startswith("FieldCageGuard_"):
+            return (1, extract_index(n, "FieldCageGuard_") or 0)
+        return (0, extract_index(n, "FieldCage_") or 0)
+
+    for name in sorted(boundaries_rings, key=sort_key_ring):
         v = boundaries_rings[name]
         out.write(f"  {name}:\n")
         out.write(f"    bdr_id: {v['bdr_id']}\n")
         out.write(f"    type: {v['type']}\n")
         out.write(f"    value: {v['value']}\n")
 
-print(f"[done] Wrote {output_path} with {len(boundaries_rings)} FieldCage/guard boundaries.")
+    # fieldcage_network section
+    out.write("\nfieldcage_network:\n")
+    out.write("  enabled: true\n")
+
+    # nodes
+    out.write("  nodes:\n")
+    for nd in nodes_desc:
+        out.write(f"    - name: \"{nd['name']}\"\n")
+        out.write(f"      boundary: \"{nd['boundary']}\"\n")
+        out.write(f"      fixed: {str(nd['fixed']).lower()}\n")
+
+    # resistor values
+    out.write("  resistors:\n")
+    out.write(f"    R1: {R1}\n")
+    out.write(f"    R2: {R2}\n")
+    out.write(f"    R3: {R3}\n")
+    out.write(f"    R_C: {R_C}\n")
+
+    # edges
+    out.write("  edges:\n")
+    for e in edges_desc:
+        out.write(f"    - n1: \"{e['n1']}\"\n")
+        out.write(f"      n2: \"{e['n2']}\"\n")
+        out.write(f"      R: \"{e['R']}\"\n")
+
+print(f"[done] Wrote {output_path} with {len(boundaries_rings)} FieldCage/guard boundaries "
+      f"and {len(nodes_desc)} nodes / {len(edges_desc)} edges in fieldcage_network.")

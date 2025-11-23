@@ -1,44 +1,81 @@
 schema_version: 1
 geometry_id: SR3XENONnT
 
-# Where the mesh is/should be produced
-# FIXME Unused at the moment 
+# TODO Relative path resolution (relative to config?)
+
 mesh:
-  path: geometry.msh 
+  path: "/home/felix/work/geometries/SR3nTCOMSOLVerification/mesh22.msh"
+  # Variables required for the optimization
+  # CIV Computation
+  tpc_r: 0.664       # PanelRadialPosition
+  z_cathode: -1.5028 # CathodeVerticalPosition
+  z_liquidgas: 0.004 # LiquidLevel
 
+save_path: "/home/felix/work/sim_results"
 
-# Processing device TODO 
-preset: threads                       # serial | threads | mpi | gpu | mpi+gpu | mpi+threads
+debug:
+  debug: false 
+  dry_run: false
 
 compute:
   mpi:
-    enabled: false                    # true => use Par* classes, MPI_Init, etc.
+    enabled: false                    # Not planning to respect this flag - Its always on as conditional Par vs normal types was starting to get annoying
     ranks: auto                       # integer or "auto"
-    hostfile: null                    # optional path
     repartition_after_refine: true
 
-  # All options work and tested 
   threads:
     enabled: true                     # OpenMP 
-    num: -1                           # number of threads (always applies to meshing)
-    affinity: scatter                 # "compact" | "scatter" | "none"
+    num: 24                           # number of threads 
+    affinity: scatter                 # "compact" | "scatter"
 
   device: 
-    type: none                        # "none" | "cuda" | "hip" | "occa" | "cpu"
-    id: auto                          # int / auto 
-    per_rank: 1                       # GPUs per MPI rank 
+    type: none                        # Currently not respected - no testing on other than omp or cpu (which should be the same thing)
+    id: auto                          # int / auto - Which device ID to use : Logic will need adjusting for MPI and is currenly not used 
+    per_rank: 1 
 
-# End processing device
+sweeps:
+#  - name: "AnodeSweep"
+#    path: "boundaries.BC_Anode.value"
+#    kind: "range"
+#    start: 1900.0
+#    end:   4900.0
+#    steps: 4
+#  - name: "order_sweep"
+#    path: "solver.order"
+#    kind: "discrete"
+#    values: [1, 2, 3]
 
-debug:
-  debug: true
-  quick_mesh: false
+optimize:
+  enabled: false
+  print_results: true
+
+  objective: "CIV" 
+
+  max_evals: 2
+  max_iters: 10
+  rel_tol_f: 1.0e-3
+  rel_tol_x: 1.0e-3
+  adaptive:  true
+
+  # TODO Implement in config.h & cpp & add to trace_fieldlines
+  # Also migrate detector constants
+  fieldline_tracing_parameters:
+    - subsample: 
+
+
+  variables:
+    - name: "AnodeVoltage"
+      path: "boundaries.BC_Anode.value"
+      kind: "continuous"
+      lower: 1900.0
+      upper: 4900.0
+      initial: 3000.0
 
 # solver configuration
 solver:
   axisymmetric: true                  # Maybe this should be a string but 2D and 3D are done by default
   order: 3
-  # TODO 
+  # TODO  https://mfem.org/howto/assembly_levels/
   assembly_mode: partial              # full | partial | matrix_free
   solver: pcg                         # pcg | gmres | fmgres | direct
   precond: boomerang                  # boomerang | jacobi | ilu | none | petsc_gamg
@@ -48,8 +85,11 @@ solver:
   maxiter: 100000
   printlevel: 1
   mesh_save_path: "simulation_mesh.msh"
-  V_solution_path: "solution_V.gf"
+  V_solution_path:    "solution_V.gf"
   Emag_solution_path: "solution_Emag.gf"
+
+
+
 materials:
   GXeGroup:
     attr_id: 1
@@ -65,560 +105,1402 @@ boundaries:
   BC_Anode:
     bdr_id: 4
     type: dirichlet
-    value: 4900
-  BC_BottomScreen:
-    bdr_id: 8
+    value: 4850
+  BC_Bell:
+    bdr_id: 5
     type: dirichlet
-    value: -1500
+    value: 0
+  BC_BottomScreen:
+    bdr_id: 9
+    type: dirichlet
+    value: -2750
   BC_Cathode:
+    bdr_id: 7
+    type: dirichlet
+    value: -2750
+  BC_CopperRing:
+    bdr_id: 10
+    type: dirichlet
+    value: 0
+  BC_Gate:
     bdr_id: 6
     type: dirichlet
-    value: -30000
+    value: 300
   BC_PMT:
-    bdr_id: 10
+    bdr_id: 11
     type: dirichlet
     value: -1500
   BC_TopScreen:
-    bdr_id: 7
+    bdr_id: 8
     type: dirichlet
-    value: -1500
+    value: -100
   FieldCage_1:
-    bdr_id: 11
-    type: dirichlet
-    value: -2000.0
-  FieldCage_2:
     bdr_id: 12
     type: dirichlet
-    value: -2700.136745458103
-  FieldCage_3:
+    value: 650
+  FieldCage_1:
+    bdr_id: 12
+    type: dirichlet
+    value: 650.0
+  FieldCage_2:
     bdr_id: 13
     type: dirichlet
-    value: -3400.2734909162064
-  FieldCage_4:
+    value: 625.5540272480802
+  FieldCage_3:
     bdr_id: 14
     type: dirichlet
-    value: -4100.4102363743095
-  FieldCage_5:
+    value: 601.1080544961604
+  FieldCage_4:
     bdr_id: 15
     type: dirichlet
-    value: -4800.546981832414
-  FieldCage_6:
+    value: 576.6620817442407
+  FieldCage_5:
     bdr_id: 16
     type: dirichlet
-    value: -5156.085172885357
-  FieldCage_7:
+    value: 552.2161089923209
+  FieldCage_6:
     bdr_id: 17
     type: dirichlet
-    value: -5511.6233639383
-  FieldCage_8:
+    value: 527.4802630457142
+  FieldCage_7:
     bdr_id: 18
     type: dirichlet
-    value: -5867.161554991244
-  FieldCage_9:
+    value: 478.0085711525009
+  FieldCage_8:
     bdr_id: 19
     type: dirichlet
-    value: -6222.699746044188
-  FieldCage_10:
+    value: 428.5368792592877
+  FieldCage_9:
     bdr_id: 20
     type: dirichlet
-    value: -6578.237937097132
-  FieldCage_11:
+    value: 379.0651873660746
+  FieldCage_10:
     bdr_id: 21
     type: dirichlet
-    value: -6933.776128150075
-  FieldCage_12:
+    value: 329.5934954728615
+  FieldCage_11:
     bdr_id: 22
     type: dirichlet
-    value: -7289.314319203018
-  FieldCage_13:
+    value: 280.1218035796483
+  FieldCage_12:
     bdr_id: 23
     type: dirichlet
-    value: -7644.8525102559615
-  FieldCage_14:
+    value: 230.6501116864352
+  FieldCage_13:
     bdr_id: 24
     type: dirichlet
-    value: -8000.3907013089065
-  FieldCage_15:
+    value: 181.17841979322208
+  FieldCage_14:
     bdr_id: 25
     type: dirichlet
-    value: -8355.928892361851
-  FieldCage_16:
+    value: 131.70672790000893
+  FieldCage_15:
     bdr_id: 26
     type: dirichlet
-    value: -8711.467083414796
-  FieldCage_17:
+    value: 82.23503600679575
+  FieldCage_16:
     bdr_id: 27
     type: dirichlet
-    value: -9067.005274467741
-  FieldCage_18:
+    value: 32.76334411358257
+  FieldCage_17:
     bdr_id: 28
     type: dirichlet
-    value: -9422.543465520686
-  FieldCage_19:
+    value: -16.708347779630618
+  FieldCage_18:
     bdr_id: 29
     type: dirichlet
-    value: -9778.08165657363
-  FieldCage_20:
+    value: -66.18003967284382
+  FieldCage_19:
     bdr_id: 30
     type: dirichlet
-    value: -10133.619847626573
-  FieldCage_21:
+    value: -115.65173156605701
+  FieldCage_20:
     bdr_id: 31
     type: dirichlet
-    value: -10489.158038679516
-  FieldCage_22:
+    value: -165.1234234592702
+  FieldCage_21:
     bdr_id: 32
     type: dirichlet
-    value: -10844.696229732457
-  FieldCage_23:
+    value: -214.5951153524834
+  FieldCage_22:
     bdr_id: 33
     type: dirichlet
-    value: -11200.2344207854
-  FieldCage_24:
+    value: -264.0668072456966
+  FieldCage_23:
     bdr_id: 34
     type: dirichlet
-    value: -11555.772611838343
-  FieldCage_25:
+    value: -313.53849913890986
+  FieldCage_24:
     bdr_id: 35
     type: dirichlet
-    value: -11911.310802891287
-  FieldCage_26:
+    value: -363.01019103212303
+  FieldCage_25:
     bdr_id: 36
     type: dirichlet
-    value: -12266.848993944228
-  FieldCage_27:
+    value: -412.48188292533615
+  FieldCage_26:
     bdr_id: 37
     type: dirichlet
-    value: -12622.387184997171
-  FieldCage_28:
+    value: -461.95357481854927
+  FieldCage_27:
     bdr_id: 38
     type: dirichlet
-    value: -12977.925376050114
-  FieldCage_29:
+    value: -511.42526671176245
+  FieldCage_28:
     bdr_id: 39
     type: dirichlet
-    value: -13333.463567103056
-  FieldCage_30:
+    value: -560.8969586049757
+  FieldCage_29:
     bdr_id: 40
     type: dirichlet
-    value: -13689.001758155997
-  FieldCage_31:
+    value: -610.3686504981888
+  FieldCage_30:
     bdr_id: 41
     type: dirichlet
-    value: -14044.539949208935
-  FieldCage_32:
+    value: -659.8403423914019
+  FieldCage_31:
     bdr_id: 42
     type: dirichlet
-    value: -14400.078140261876
-  FieldCage_33:
+    value: -709.312034284615
+  FieldCage_32:
     bdr_id: 43
     type: dirichlet
-    value: -14755.616331314815
-  FieldCage_34:
+    value: -758.7837261778283
+  FieldCage_33:
     bdr_id: 44
     type: dirichlet
-    value: -15111.154522367753
-  FieldCage_35:
+    value: -808.2554180710415
+  FieldCage_34:
     bdr_id: 45
     type: dirichlet
-    value: -15466.69271342069
-  FieldCage_36:
+    value: -857.7271099642549
+  FieldCage_35:
     bdr_id: 46
     type: dirichlet
-    value: -15822.230904473627
-  FieldCage_37:
+    value: -907.1988018574681
+  FieldCage_36:
     bdr_id: 47
     type: dirichlet
-    value: -16177.769095526566
-  FieldCage_38:
+    value: -956.6704937506813
+  FieldCage_37:
     bdr_id: 48
     type: dirichlet
-    value: -16533.307286579504
-  FieldCage_39:
+    value: -1006.1421856438945
+  FieldCage_38:
     bdr_id: 49
     type: dirichlet
-    value: -16888.845477632443
-  FieldCage_40:
+    value: -1055.6138775371076
+  FieldCage_39:
     bdr_id: 50
     type: dirichlet
-    value: -17244.383668685387
-  FieldCage_41:
+    value: -1105.0855694303207
+  FieldCage_40:
     bdr_id: 51
     type: dirichlet
-    value: -17599.92185973833
-  FieldCage_42:
+    value: -1154.5572613235338
+  FieldCage_41:
     bdr_id: 52
     type: dirichlet
-    value: -17955.460050791273
-  FieldCage_43:
+    value: -1204.0289532167467
+  FieldCage_42:
     bdr_id: 53
     type: dirichlet
-    value: -18310.998241844212
-  FieldCage_44:
+    value: -1253.5006451099594
+  FieldCage_43:
     bdr_id: 54
     type: dirichlet
-    value: -18666.536432897152
-  FieldCage_45:
+    value: -1302.972337003172
+  FieldCage_44:
     bdr_id: 55
     type: dirichlet
-    value: -19022.07462395009
-  FieldCage_46:
+    value: -1352.444028896385
+  FieldCage_45:
     bdr_id: 56
     type: dirichlet
-    value: -19377.61281500303
-  FieldCage_47:
+    value: -1401.9157207895978
+  FieldCage_46:
     bdr_id: 57
     type: dirichlet
-    value: -19733.15100605597
-  FieldCage_48:
+    value: -1451.3874126828102
+  FieldCage_47:
     bdr_id: 58
     type: dirichlet
-    value: -20088.68919710891
-  FieldCage_49:
+    value: -1500.859104576023
+  FieldCage_48:
     bdr_id: 59
     type: dirichlet
-    value: -20444.22738816185
-  FieldCage_50:
+    value: -1550.3307964692356
+  FieldCage_49:
     bdr_id: 60
     type: dirichlet
-    value: -20799.765579214785
-  FieldCage_51:
+    value: -1599.8024883624482
+  FieldCage_50:
     bdr_id: 61
     type: dirichlet
-    value: -21155.30377026773
-  FieldCage_52:
+    value: -1649.274180255661
+  FieldCage_51:
     bdr_id: 62
     type: dirichlet
-    value: -21510.841961320668
-  FieldCage_53:
+    value: -1698.7458721488736
+  FieldCage_52:
     bdr_id: 63
     type: dirichlet
-    value: -21866.380152373607
-  FieldCage_54:
+    value: -1748.2175640420865
+  FieldCage_53:
     bdr_id: 64
     type: dirichlet
-    value: -22221.918343426543
-  FieldCage_55:
+    value: -1797.6892559352993
+  FieldCage_54:
     bdr_id: 65
     type: dirichlet
-    value: -22577.45653447948
-  FieldCage_56:
+    value: -1847.1609478285125
+  FieldCage_55:
     bdr_id: 66
     type: dirichlet
-    value: -22932.99472553242
-  FieldCage_57:
+    value: -1896.6326397217254
+  FieldCage_56:
     bdr_id: 67
     type: dirichlet
-    value: -23288.53291658536
-  FieldCage_58:
+    value: -1946.1043316149382
+  FieldCage_57:
     bdr_id: 68
     type: dirichlet
-    value: -23644.071107638305
-  FieldCage_59:
+    value: -1995.5760235081511
+  FieldCage_58:
     bdr_id: 69
     type: dirichlet
-    value: -23999.609298691244
-  FieldCage_60:
+    value: -2045.0477154013643
+  FieldCage_59:
     bdr_id: 70
     type: dirichlet
-    value: -24355.14748974418
-  FieldCage_61:
+    value: -2094.5194072945774
+  FieldCage_60:
     bdr_id: 71
     type: dirichlet
-    value: -24710.685680797116
-  FieldCage_62:
+    value: -2143.9910991877905
+  FieldCage_61:
     bdr_id: 72
     type: dirichlet
-    value: -25066.223871850052
-  FieldCage_63:
+    value: -2193.4627910810036
+  FieldCage_62:
     bdr_id: 73
     type: dirichlet
-    value: -25421.762062902988
-  FieldCage_64:
+    value: -2242.9344829742167
+  FieldCage_63:
     bdr_id: 74
     type: dirichlet
-    value: -25777.30025395592
-  FieldCage_65:
+    value: -2292.4061748674294
+  FieldCage_64:
     bdr_id: 75
     type: dirichlet
-    value: -26132.838445008852
-  FieldCage_66:
+    value: -2341.877866760642
+  FieldCage_65:
     bdr_id: 76
     type: dirichlet
-    value: -26488.37663606179
-  FieldCage_67:
+    value: -2391.3495586538547
+  FieldCage_66:
     bdr_id: 77
     type: dirichlet
-    value: -26843.91482711472
-  FieldCage_68:
+    value: -2440.821250547067
+  FieldCage_67:
     bdr_id: 78
     type: dirichlet
-    value: -27199.453018167653
-  FieldCage_69:
+    value: -2490.2929424402796
+  FieldCage_68:
     bdr_id: 79
     type: dirichlet
-    value: -27899.58976362574
-  FieldCage_70:
+    value: -2539.764634333492
+  FieldCage_69:
     bdr_id: 80
     type: dirichlet
-    value: -28599.726509083823
-  FieldCage_71:
+    value: -2564.2106070854115
+  FieldCage_70:
     bdr_id: 81
     type: dirichlet
-    value: -29299.863254541913
-  FieldCageGuard_1:
+    value: -2588.656579837331
+  FieldCage_71:
     bdr_id: 82
     type: dirichlet
-    value: -5145.145536237573
-  FieldCageGuard_2:
+    value: -2613.10255258925
+  FieldCageGuard_1:
     bdr_id: 83
     type: dirichlet
-    value: -5489.744090642733
-  FieldCageGuard_3:
+    value: 528.0600094350879
+  FieldCageGuard_2:
     bdr_id: 84
     type: dirichlet
-    value: -5834.342645047892
-  FieldCageGuard_4:
+    value: 479.7478103206216
+  FieldCageGuard_3:
     bdr_id: 85
     type: dirichlet
-    value: -6178.941199453051
-  FieldCageGuard_5:
+    value: 431.4356112061555
+  FieldCageGuard_4:
     bdr_id: 86
     type: dirichlet
-    value: -6523.53975385821
-  FieldCageGuard_6:
+    value: 383.12341209168943
+  FieldCageGuard_5:
     bdr_id: 87
     type: dirichlet
-    value: -6868.138308263367
-  FieldCageGuard_7:
+    value: 334.81121297722336
+  FieldCageGuard_6:
     bdr_id: 88
     type: dirichlet
-    value: -7212.736862668526
-  FieldCageGuard_8:
+    value: 286.49901386275735
+  FieldCageGuard_7:
     bdr_id: 89
     type: dirichlet
-    value: -7557.335417073685
-  FieldCageGuard_9:
+    value: 238.18681474829137
+  FieldCageGuard_8:
     bdr_id: 90
     type: dirichlet
-    value: -7901.933971478843
-  FieldCageGuard_10:
+    value: 189.87461563382536
+  FieldCageGuard_9:
     bdr_id: 91
     type: dirichlet
-    value: -8246.532525884002
-  FieldCageGuard_11:
+    value: 141.56241651935937
+  FieldCageGuard_10:
     bdr_id: 92
     type: dirichlet
-    value: -8591.131080289162
-  FieldCageGuard_12:
+    value: 93.2502174048934
+  FieldCageGuard_11:
     bdr_id: 93
     type: dirichlet
-    value: -8935.729634694322
-  FieldCageGuard_13:
+    value: 44.93801829042744
+  FieldCageGuard_12:
     bdr_id: 94
     type: dirichlet
-    value: -9280.328189099482
-  FieldCageGuard_14:
+    value: -3.3741808240385236
+  FieldCageGuard_13:
     bdr_id: 95
     type: dirichlet
-    value: -9624.926743504642
-  FieldCageGuard_15:
+    value: -51.686379938504494
+  FieldCageGuard_14:
     bdr_id: 96
     type: dirichlet
-    value: -9969.525297909804
-  FieldCageGuard_16:
+    value: -99.99857905297047
+  FieldCageGuard_15:
     bdr_id: 97
     type: dirichlet
-    value: -10314.123852314966
-  FieldCageGuard_17:
+    value: -148.31077816743644
+  FieldCageGuard_16:
     bdr_id: 98
     type: dirichlet
-    value: -10658.722406720126
-  FieldCageGuard_18:
+    value: -196.62297728190242
+  FieldCageGuard_17:
     bdr_id: 99
     type: dirichlet
-    value: -11003.320961125288
-  FieldCageGuard_19:
+    value: -244.93517639636838
+  FieldCageGuard_18:
     bdr_id: 100
     type: dirichlet
-    value: -11347.91951553045
-  FieldCageGuard_20:
+    value: -293.2473755108344
+  FieldCageGuard_19:
     bdr_id: 101
     type: dirichlet
-    value: -11692.518069935611
-  FieldCageGuard_21:
+    value: -341.55957462530046
+  FieldCageGuard_20:
     bdr_id: 102
     type: dirichlet
-    value: -12037.116624340772
-  FieldCageGuard_22:
+    value: -389.87177373976647
+  FieldCageGuard_21:
     bdr_id: 103
     type: dirichlet
-    value: -12381.715178745932
-  FieldCageGuard_23:
+    value: -438.1839728542325
+  FieldCageGuard_22:
     bdr_id: 104
     type: dirichlet
-    value: -12726.313733151093
-  FieldCageGuard_24:
+    value: -486.49617196869855
+  FieldCageGuard_23:
     bdr_id: 105
     type: dirichlet
-    value: -13070.912287556252
-  FieldCageGuard_25:
+    value: -534.8083710831646
+  FieldCageGuard_24:
     bdr_id: 106
     type: dirichlet
-    value: -13415.51084196141
-  FieldCageGuard_26:
+    value: -583.1205701976306
+  FieldCageGuard_25:
     bdr_id: 107
     type: dirichlet
-    value: -13760.10939636657
-  FieldCageGuard_27:
+    value: -631.4327693120968
+  FieldCageGuard_26:
     bdr_id: 108
     type: dirichlet
-    value: -14104.707950771728
-  FieldCageGuard_28:
+    value: -679.7449684265628
+  FieldCageGuard_27:
     bdr_id: 109
     type: dirichlet
-    value: -14449.306505176886
-  FieldCageGuard_29:
+    value: -728.0571675410289
+  FieldCageGuard_28:
     bdr_id: 110
     type: dirichlet
-    value: -14793.90505958204
-  FieldCageGuard_30:
+    value: -776.3693666554951
+  FieldCageGuard_29:
     bdr_id: 111
     type: dirichlet
-    value: -15138.503613987195
-  FieldCageGuard_31:
+    value: -824.6815657699613
+  FieldCageGuard_30:
     bdr_id: 112
     type: dirichlet
-    value: -15483.10216839235
-  FieldCageGuard_32:
+    value: -872.9937648844275
+  FieldCageGuard_31:
     bdr_id: 113
     type: dirichlet
-    value: -15827.700722797503
-  FieldCageGuard_33:
+    value: -921.3059639988936
+  FieldCageGuard_32:
     bdr_id: 114
     type: dirichlet
-    value: -16172.299277202657
-  FieldCageGuard_34:
+    value: -969.6181631133597
+  FieldCageGuard_33:
     bdr_id: 115
     type: dirichlet
-    value: -16516.897831607814
-  FieldCageGuard_35:
+    value: -1017.9303622278256
+  FieldCageGuard_34:
     bdr_id: 116
     type: dirichlet
-    value: -16861.49638601297
-  FieldCageGuard_36:
+    value: -1066.2425613422915
+  FieldCageGuard_35:
     bdr_id: 117
     type: dirichlet
-    value: -17206.094940418123
-  FieldCageGuard_37:
+    value: -1114.5547604567573
+  FieldCageGuard_36:
     bdr_id: 118
     type: dirichlet
-    value: -17550.69349482328
-  FieldCageGuard_38:
+    value: -1162.8669595712229
+  FieldCageGuard_37:
     bdr_id: 119
     type: dirichlet
-    value: -17895.29204922844
-  FieldCageGuard_39:
+    value: -1211.1791586856882
+  FieldCageGuard_38:
     bdr_id: 120
     type: dirichlet
-    value: -18239.890603633597
-  FieldCageGuard_40:
+    value: -1259.4913578001538
+  FieldCageGuard_39:
     bdr_id: 121
     type: dirichlet
-    value: -18584.489158038752
-  FieldCageGuard_41:
+    value: -1307.8035569146193
+  FieldCageGuard_40:
     bdr_id: 122
     type: dirichlet
-    value: -18929.087712443907
-  FieldCageGuard_42:
+    value: -1356.1157560290849
+  FieldCageGuard_41:
     bdr_id: 123
     type: dirichlet
-    value: -19273.68626684906
-  FieldCageGuard_43:
+    value: -1404.4279551435504
+  FieldCageGuard_42:
     bdr_id: 124
     type: dirichlet
-    value: -19618.284821254212
-  FieldCageGuard_44:
+    value: -1452.7401542580158
+  FieldCageGuard_43:
     bdr_id: 125
     type: dirichlet
-    value: -19962.883375659363
-  FieldCageGuard_45:
+    value: -1501.052353372481
+  FieldCageGuard_44:
     bdr_id: 126
     type: dirichlet
-    value: -20307.481930064514
-  FieldCageGuard_46:
+    value: -1549.3645524869466
+  FieldCageGuard_45:
     bdr_id: 127
     type: dirichlet
-    value: -20652.080484469665
-  FieldCageGuard_47:
+    value: -1597.6767516014122
+  FieldCageGuard_46:
     bdr_id: 128
     type: dirichlet
-    value: -20996.679038874816
-  FieldCageGuard_48:
+    value: -1645.9889507158778
+  FieldCageGuard_47:
     bdr_id: 129
     type: dirichlet
-    value: -21341.277593279967
-  FieldCageGuard_49:
+    value: -1694.3011498303433
+  FieldCageGuard_48:
     bdr_id: 130
     type: dirichlet
-    value: -21685.87614768512
-  FieldCageGuard_50:
+    value: -1742.6133489448089
+  FieldCageGuard_49:
     bdr_id: 131
     type: dirichlet
-    value: -22030.474702090276
-  FieldCageGuard_51:
+    value: -1790.9255480592744
+  FieldCageGuard_50:
     bdr_id: 132
     type: dirichlet
-    value: -22375.073256495427
-  FieldCageGuard_52:
+    value: -1839.2377471737398
+  FieldCageGuard_51:
     bdr_id: 133
     type: dirichlet
-    value: -22719.671810900578
-  FieldCageGuard_53:
+    value: -1887.549946288205
+  FieldCageGuard_52:
     bdr_id: 134
     type: dirichlet
-    value: -23064.270365305732
-  FieldCageGuard_54:
+    value: -1935.8621454026706
+  FieldCageGuard_53:
     bdr_id: 135
     type: dirichlet
-    value: -23408.868919710887
-  FieldCageGuard_55:
+    value: -1984.1743445171362
+  FieldCageGuard_54:
     bdr_id: 136
     type: dirichlet
-    value: -23753.467474116045
-  FieldCageGuard_56:
+    value: -2032.4865436316015
+  FieldCageGuard_55:
     bdr_id: 137
     type: dirichlet
-    value: -24098.066028521203
-  FieldCageGuard_57:
+    value: -2080.798742746067
+  FieldCageGuard_56:
     bdr_id: 138
     type: dirichlet
-    value: -24442.664582926358
-  FieldCageGuard_58:
+    value: -2129.110941860533
+  FieldCageGuard_57:
     bdr_id: 139
     type: dirichlet
-    value: -24787.26313733152
-  FieldCageGuard_59:
+    value: -2177.4231409749987
+  FieldCageGuard_58:
     bdr_id: 140
     type: dirichlet
-    value: -25131.861691736685
-  FieldCageGuard_60:
+    value: -2225.7353400894644
+  FieldCageGuard_59:
     bdr_id: 141
     type: dirichlet
-    value: -25476.460246141847
-  FieldCageGuard_61:
+    value: -2274.0475392039302
+  FieldCageGuard_60:
     bdr_id: 142
     type: dirichlet
-    value: -25821.058800547013
-  FieldCageGuard_62:
+    value: -2322.359738318396
+  FieldCageGuard_61:
     bdr_id: 143
     type: dirichlet
-    value: -26165.657354952175
-  FieldCageGuard_63:
+    value: -2370.671937432862
+  FieldCageGuard_62:
     bdr_id: 144
     type: dirichlet
-    value: -26510.255909357336
-  FieldCageGuard_64:
+    value: -2418.9841365473276
+  FieldCageGuard_63:
     bdr_id: 145
     type: dirichlet
-    value: -26854.854463762495
+    value: -2467.2963356617934
+  FieldCageGuard_64:
+    bdr_id: 146
+    type: dirichlet
+    value: -2515.6085347762596
+
+fieldcage_network:
+  enabled: true
+  nodes:
+    - name: "FieldCage_1"
+      boundary: "FieldCage_1"
+      fixed: true
+    - name: "FieldCage_2"
+      boundary: "FieldCage_2"
+      fixed: false
+    - name: "FieldCage_3"
+      boundary: "FieldCage_3"
+      fixed: false
+    - name: "FieldCage_4"
+      boundary: "FieldCage_4"
+      fixed: false
+    - name: "FieldCage_5"
+      boundary: "FieldCage_5"
+      fixed: false
+    - name: "FieldCage_6"
+      boundary: "FieldCage_6"
+      fixed: false
+    - name: "FieldCage_7"
+      boundary: "FieldCage_7"
+      fixed: false
+    - name: "FieldCage_8"
+      boundary: "FieldCage_8"
+      fixed: false
+    - name: "FieldCage_9"
+      boundary: "FieldCage_9"
+      fixed: false
+    - name: "FieldCage_10"
+      boundary: "FieldCage_10"
+      fixed: false
+    - name: "FieldCage_11"
+      boundary: "FieldCage_11"
+      fixed: false
+    - name: "FieldCage_12"
+      boundary: "FieldCage_12"
+      fixed: false
+    - name: "FieldCage_13"
+      boundary: "FieldCage_13"
+      fixed: false
+    - name: "FieldCage_14"
+      boundary: "FieldCage_14"
+      fixed: false
+    - name: "FieldCage_15"
+      boundary: "FieldCage_15"
+      fixed: false
+    - name: "FieldCage_16"
+      boundary: "FieldCage_16"
+      fixed: false
+    - name: "FieldCage_17"
+      boundary: "FieldCage_17"
+      fixed: false
+    - name: "FieldCage_18"
+      boundary: "FieldCage_18"
+      fixed: false
+    - name: "FieldCage_19"
+      boundary: "FieldCage_19"
+      fixed: false
+    - name: "FieldCage_20"
+      boundary: "FieldCage_20"
+      fixed: false
+    - name: "FieldCage_21"
+      boundary: "FieldCage_21"
+      fixed: false
+    - name: "FieldCage_22"
+      boundary: "FieldCage_22"
+      fixed: false
+    - name: "FieldCage_23"
+      boundary: "FieldCage_23"
+      fixed: false
+    - name: "FieldCage_24"
+      boundary: "FieldCage_24"
+      fixed: false
+    - name: "FieldCage_25"
+      boundary: "FieldCage_25"
+      fixed: false
+    - name: "FieldCage_26"
+      boundary: "FieldCage_26"
+      fixed: false
+    - name: "FieldCage_27"
+      boundary: "FieldCage_27"
+      fixed: false
+    - name: "FieldCage_28"
+      boundary: "FieldCage_28"
+      fixed: false
+    - name: "FieldCage_29"
+      boundary: "FieldCage_29"
+      fixed: false
+    - name: "FieldCage_30"
+      boundary: "FieldCage_30"
+      fixed: false
+    - name: "FieldCage_31"
+      boundary: "FieldCage_31"
+      fixed: false
+    - name: "FieldCage_32"
+      boundary: "FieldCage_32"
+      fixed: false
+    - name: "FieldCage_33"
+      boundary: "FieldCage_33"
+      fixed: false
+    - name: "FieldCage_34"
+      boundary: "FieldCage_34"
+      fixed: false
+    - name: "FieldCage_35"
+      boundary: "FieldCage_35"
+      fixed: false
+    - name: "FieldCage_36"
+      boundary: "FieldCage_36"
+      fixed: false
+    - name: "FieldCage_37"
+      boundary: "FieldCage_37"
+      fixed: false
+    - name: "FieldCage_38"
+      boundary: "FieldCage_38"
+      fixed: false
+    - name: "FieldCage_39"
+      boundary: "FieldCage_39"
+      fixed: false
+    - name: "FieldCage_40"
+      boundary: "FieldCage_40"
+      fixed: false
+    - name: "FieldCage_41"
+      boundary: "FieldCage_41"
+      fixed: false
+    - name: "FieldCage_42"
+      boundary: "FieldCage_42"
+      fixed: false
+    - name: "FieldCage_43"
+      boundary: "FieldCage_43"
+      fixed: false
+    - name: "FieldCage_44"
+      boundary: "FieldCage_44"
+      fixed: false
+    - name: "FieldCage_45"
+      boundary: "FieldCage_45"
+      fixed: false
+    - name: "FieldCage_46"
+      boundary: "FieldCage_46"
+      fixed: false
+    - name: "FieldCage_47"
+      boundary: "FieldCage_47"
+      fixed: false
+    - name: "FieldCage_48"
+      boundary: "FieldCage_48"
+      fixed: false
+    - name: "FieldCage_49"
+      boundary: "FieldCage_49"
+      fixed: false
+    - name: "FieldCage_50"
+      boundary: "FieldCage_50"
+      fixed: false
+    - name: "FieldCage_51"
+      boundary: "FieldCage_51"
+      fixed: false
+    - name: "FieldCage_52"
+      boundary: "FieldCage_52"
+      fixed: false
+    - name: "FieldCage_53"
+      boundary: "FieldCage_53"
+      fixed: false
+    - name: "FieldCage_54"
+      boundary: "FieldCage_54"
+      fixed: false
+    - name: "FieldCage_55"
+      boundary: "FieldCage_55"
+      fixed: false
+    - name: "FieldCage_56"
+      boundary: "FieldCage_56"
+      fixed: false
+    - name: "FieldCage_57"
+      boundary: "FieldCage_57"
+      fixed: false
+    - name: "FieldCage_58"
+      boundary: "FieldCage_58"
+      fixed: false
+    - name: "FieldCage_59"
+      boundary: "FieldCage_59"
+      fixed: false
+    - name: "FieldCage_60"
+      boundary: "FieldCage_60"
+      fixed: false
+    - name: "FieldCage_61"
+      boundary: "FieldCage_61"
+      fixed: false
+    - name: "FieldCage_62"
+      boundary: "FieldCage_62"
+      fixed: false
+    - name: "FieldCage_63"
+      boundary: "FieldCage_63"
+      fixed: false
+    - name: "FieldCage_64"
+      boundary: "FieldCage_64"
+      fixed: false
+    - name: "FieldCage_65"
+      boundary: "FieldCage_65"
+      fixed: false
+    - name: "FieldCage_66"
+      boundary: "FieldCage_66"
+      fixed: false
+    - name: "FieldCage_67"
+      boundary: "FieldCage_67"
+      fixed: false
+    - name: "FieldCage_68"
+      boundary: "FieldCage_68"
+      fixed: false
+    - name: "FieldCage_69"
+      boundary: "FieldCage_69"
+      fixed: false
+    - name: "FieldCage_70"
+      boundary: "FieldCage_70"
+      fixed: false
+    - name: "FieldCage_71"
+      boundary: "FieldCage_71"
+      fixed: false
+    - name: "FieldCageGuard_1"
+      boundary: "FieldCageGuard_1"
+      fixed: false
+    - name: "FieldCageGuard_2"
+      boundary: "FieldCageGuard_2"
+      fixed: false
+    - name: "FieldCageGuard_3"
+      boundary: "FieldCageGuard_3"
+      fixed: false
+    - name: "FieldCageGuard_4"
+      boundary: "FieldCageGuard_4"
+      fixed: false
+    - name: "FieldCageGuard_5"
+      boundary: "FieldCageGuard_5"
+      fixed: false
+    - name: "FieldCageGuard_6"
+      boundary: "FieldCageGuard_6"
+      fixed: false
+    - name: "FieldCageGuard_7"
+      boundary: "FieldCageGuard_7"
+      fixed: false
+    - name: "FieldCageGuard_8"
+      boundary: "FieldCageGuard_8"
+      fixed: false
+    - name: "FieldCageGuard_9"
+      boundary: "FieldCageGuard_9"
+      fixed: false
+    - name: "FieldCageGuard_10"
+      boundary: "FieldCageGuard_10"
+      fixed: false
+    - name: "FieldCageGuard_11"
+      boundary: "FieldCageGuard_11"
+      fixed: false
+    - name: "FieldCageGuard_12"
+      boundary: "FieldCageGuard_12"
+      fixed: false
+    - name: "FieldCageGuard_13"
+      boundary: "FieldCageGuard_13"
+      fixed: false
+    - name: "FieldCageGuard_14"
+      boundary: "FieldCageGuard_14"
+      fixed: false
+    - name: "FieldCageGuard_15"
+      boundary: "FieldCageGuard_15"
+      fixed: false
+    - name: "FieldCageGuard_16"
+      boundary: "FieldCageGuard_16"
+      fixed: false
+    - name: "FieldCageGuard_17"
+      boundary: "FieldCageGuard_17"
+      fixed: false
+    - name: "FieldCageGuard_18"
+      boundary: "FieldCageGuard_18"
+      fixed: false
+    - name: "FieldCageGuard_19"
+      boundary: "FieldCageGuard_19"
+      fixed: false
+    - name: "FieldCageGuard_20"
+      boundary: "FieldCageGuard_20"
+      fixed: false
+    - name: "FieldCageGuard_21"
+      boundary: "FieldCageGuard_21"
+      fixed: false
+    - name: "FieldCageGuard_22"
+      boundary: "FieldCageGuard_22"
+      fixed: false
+    - name: "FieldCageGuard_23"
+      boundary: "FieldCageGuard_23"
+      fixed: false
+    - name: "FieldCageGuard_24"
+      boundary: "FieldCageGuard_24"
+      fixed: false
+    - name: "FieldCageGuard_25"
+      boundary: "FieldCageGuard_25"
+      fixed: false
+    - name: "FieldCageGuard_26"
+      boundary: "FieldCageGuard_26"
+      fixed: false
+    - name: "FieldCageGuard_27"
+      boundary: "FieldCageGuard_27"
+      fixed: false
+    - name: "FieldCageGuard_28"
+      boundary: "FieldCageGuard_28"
+      fixed: false
+    - name: "FieldCageGuard_29"
+      boundary: "FieldCageGuard_29"
+      fixed: false
+    - name: "FieldCageGuard_30"
+      boundary: "FieldCageGuard_30"
+      fixed: false
+    - name: "FieldCageGuard_31"
+      boundary: "FieldCageGuard_31"
+      fixed: false
+    - name: "FieldCageGuard_32"
+      boundary: "FieldCageGuard_32"
+      fixed: false
+    - name: "FieldCageGuard_33"
+      boundary: "FieldCageGuard_33"
+      fixed: false
+    - name: "FieldCageGuard_34"
+      boundary: "FieldCageGuard_34"
+      fixed: false
+    - name: "FieldCageGuard_35"
+      boundary: "FieldCageGuard_35"
+      fixed: false
+    - name: "FieldCageGuard_36"
+      boundary: "FieldCageGuard_36"
+      fixed: false
+    - name: "FieldCageGuard_37"
+      boundary: "FieldCageGuard_37"
+      fixed: false
+    - name: "FieldCageGuard_38"
+      boundary: "FieldCageGuard_38"
+      fixed: false
+    - name: "FieldCageGuard_39"
+      boundary: "FieldCageGuard_39"
+      fixed: false
+    - name: "FieldCageGuard_40"
+      boundary: "FieldCageGuard_40"
+      fixed: false
+    - name: "FieldCageGuard_41"
+      boundary: "FieldCageGuard_41"
+      fixed: false
+    - name: "FieldCageGuard_42"
+      boundary: "FieldCageGuard_42"
+      fixed: false
+    - name: "FieldCageGuard_43"
+      boundary: "FieldCageGuard_43"
+      fixed: false
+    - name: "FieldCageGuard_44"
+      boundary: "FieldCageGuard_44"
+      fixed: false
+    - name: "FieldCageGuard_45"
+      boundary: "FieldCageGuard_45"
+      fixed: false
+    - name: "FieldCageGuard_46"
+      boundary: "FieldCageGuard_46"
+      fixed: false
+    - name: "FieldCageGuard_47"
+      boundary: "FieldCageGuard_47"
+      fixed: false
+    - name: "FieldCageGuard_48"
+      boundary: "FieldCageGuard_48"
+      fixed: false
+    - name: "FieldCageGuard_49"
+      boundary: "FieldCageGuard_49"
+      fixed: false
+    - name: "FieldCageGuard_50"
+      boundary: "FieldCageGuard_50"
+      fixed: false
+    - name: "FieldCageGuard_51"
+      boundary: "FieldCageGuard_51"
+      fixed: false
+    - name: "FieldCageGuard_52"
+      boundary: "FieldCageGuard_52"
+      fixed: false
+    - name: "FieldCageGuard_53"
+      boundary: "FieldCageGuard_53"
+      fixed: false
+    - name: "FieldCageGuard_54"
+      boundary: "FieldCageGuard_54"
+      fixed: false
+    - name: "FieldCageGuard_55"
+      boundary: "FieldCageGuard_55"
+      fixed: false
+    - name: "FieldCageGuard_56"
+      boundary: "FieldCageGuard_56"
+      fixed: false
+    - name: "FieldCageGuard_57"
+      boundary: "FieldCageGuard_57"
+      fixed: false
+    - name: "FieldCageGuard_58"
+      boundary: "FieldCageGuard_58"
+      fixed: false
+    - name: "FieldCageGuard_59"
+      boundary: "FieldCageGuard_59"
+      fixed: false
+    - name: "FieldCageGuard_60"
+      boundary: "FieldCageGuard_60"
+      fixed: false
+    - name: "FieldCageGuard_61"
+      boundary: "FieldCageGuard_61"
+      fixed: false
+    - name: "FieldCageGuard_62"
+      boundary: "FieldCageGuard_62"
+      fixed: false
+    - name: "FieldCageGuard_63"
+      boundary: "FieldCageGuard_63"
+      fixed: false
+    - name: "FieldCageGuard_64"
+      boundary: "FieldCageGuard_64"
+      fixed: false
+    - name: "Cathode"
+      boundary: "BC_Cathode"
+      fixed: true
+  resistors:
+    R1: 1250000000.0
+    R2: 2500000000.0
+    R3: 5000000000.0
+    R_C: 7000000000.0
+  edges:
+    - n1: "FieldCage_1"
+      n2: "FieldCage_2"
+      R: "R1"
+    - n1: "FieldCage_2"
+      n2: "FieldCage_3"
+      R: "R1"
+    - n1: "FieldCage_3"
+      n2: "FieldCage_4"
+      R: "R1"
+    - n1: "FieldCage_4"
+      n2: "FieldCage_5"
+      R: "R1"
+    - n1: "FieldCage_5"
+      n2: "FieldCage_6"
+      R: "R3"
+    - n1: "FieldCage_5"
+      n2: "FieldCageGuard_1"
+      R: "R2"
+    - n1: "FieldCage_6"
+      n2: "FieldCage_7"
+      R: "R3"
+    - n1: "FieldCage_7"
+      n2: "FieldCage_8"
+      R: "R3"
+    - n1: "FieldCage_8"
+      n2: "FieldCage_9"
+      R: "R3"
+    - n1: "FieldCage_9"
+      n2: "FieldCage_10"
+      R: "R3"
+    - n1: "FieldCage_10"
+      n2: "FieldCage_11"
+      R: "R3"
+    - n1: "FieldCage_11"
+      n2: "FieldCage_12"
+      R: "R3"
+    - n1: "FieldCage_12"
+      n2: "FieldCage_13"
+      R: "R3"
+    - n1: "FieldCage_13"
+      n2: "FieldCage_14"
+      R: "R3"
+    - n1: "FieldCage_14"
+      n2: "FieldCage_15"
+      R: "R3"
+    - n1: "FieldCage_15"
+      n2: "FieldCage_16"
+      R: "R3"
+    - n1: "FieldCage_16"
+      n2: "FieldCage_17"
+      R: "R3"
+    - n1: "FieldCage_17"
+      n2: "FieldCage_18"
+      R: "R3"
+    - n1: "FieldCage_18"
+      n2: "FieldCage_19"
+      R: "R3"
+    - n1: "FieldCage_19"
+      n2: "FieldCage_20"
+      R: "R3"
+    - n1: "FieldCage_20"
+      n2: "FieldCage_21"
+      R: "R3"
+    - n1: "FieldCage_21"
+      n2: "FieldCage_22"
+      R: "R3"
+    - n1: "FieldCage_22"
+      n2: "FieldCage_23"
+      R: "R3"
+    - n1: "FieldCage_23"
+      n2: "FieldCage_24"
+      R: "R3"
+    - n1: "FieldCage_24"
+      n2: "FieldCage_25"
+      R: "R3"
+    - n1: "FieldCage_25"
+      n2: "FieldCage_26"
+      R: "R3"
+    - n1: "FieldCage_26"
+      n2: "FieldCage_27"
+      R: "R3"
+    - n1: "FieldCage_27"
+      n2: "FieldCage_28"
+      R: "R3"
+    - n1: "FieldCage_28"
+      n2: "FieldCage_29"
+      R: "R3"
+    - n1: "FieldCage_29"
+      n2: "FieldCage_30"
+      R: "R3"
+    - n1: "FieldCage_30"
+      n2: "FieldCage_31"
+      R: "R3"
+    - n1: "FieldCage_31"
+      n2: "FieldCage_32"
+      R: "R3"
+    - n1: "FieldCage_32"
+      n2: "FieldCage_33"
+      R: "R3"
+    - n1: "FieldCage_33"
+      n2: "FieldCage_34"
+      R: "R3"
+    - n1: "FieldCage_34"
+      n2: "FieldCage_35"
+      R: "R3"
+    - n1: "FieldCage_35"
+      n2: "FieldCage_36"
+      R: "R3"
+    - n1: "FieldCage_36"
+      n2: "FieldCage_37"
+      R: "R3"
+    - n1: "FieldCage_37"
+      n2: "FieldCage_38"
+      R: "R3"
+    - n1: "FieldCage_38"
+      n2: "FieldCage_39"
+      R: "R3"
+    - n1: "FieldCage_39"
+      n2: "FieldCage_40"
+      R: "R3"
+    - n1: "FieldCage_40"
+      n2: "FieldCage_41"
+      R: "R3"
+    - n1: "FieldCage_41"
+      n2: "FieldCage_42"
+      R: "R3"
+    - n1: "FieldCage_42"
+      n2: "FieldCage_43"
+      R: "R3"
+    - n1: "FieldCage_43"
+      n2: "FieldCage_44"
+      R: "R3"
+    - n1: "FieldCage_44"
+      n2: "FieldCage_45"
+      R: "R3"
+    - n1: "FieldCage_45"
+      n2: "FieldCage_46"
+      R: "R3"
+    - n1: "FieldCage_46"
+      n2: "FieldCage_47"
+      R: "R3"
+    - n1: "FieldCage_47"
+      n2: "FieldCage_48"
+      R: "R3"
+    - n1: "FieldCage_48"
+      n2: "FieldCage_49"
+      R: "R3"
+    - n1: "FieldCage_49"
+      n2: "FieldCage_50"
+      R: "R3"
+    - n1: "FieldCage_50"
+      n2: "FieldCage_51"
+      R: "R3"
+    - n1: "FieldCage_51"
+      n2: "FieldCage_52"
+      R: "R3"
+    - n1: "FieldCage_52"
+      n2: "FieldCage_53"
+      R: "R3"
+    - n1: "FieldCage_53"
+      n2: "FieldCage_54"
+      R: "R3"
+    - n1: "FieldCage_54"
+      n2: "FieldCage_55"
+      R: "R3"
+    - n1: "FieldCage_55"
+      n2: "FieldCage_56"
+      R: "R3"
+    - n1: "FieldCage_56"
+      n2: "FieldCage_57"
+      R: "R3"
+    - n1: "FieldCage_57"
+      n2: "FieldCage_58"
+      R: "R3"
+    - n1: "FieldCage_58"
+      n2: "FieldCage_59"
+      R: "R3"
+    - n1: "FieldCage_59"
+      n2: "FieldCage_60"
+      R: "R3"
+    - n1: "FieldCage_60"
+      n2: "FieldCage_61"
+      R: "R3"
+    - n1: "FieldCage_61"
+      n2: "FieldCage_62"
+      R: "R3"
+    - n1: "FieldCage_62"
+      n2: "FieldCage_63"
+      R: "R3"
+    - n1: "FieldCage_63"
+      n2: "FieldCage_64"
+      R: "R3"
+    - n1: "FieldCage_64"
+      n2: "FieldCage_65"
+      R: "R3"
+    - n1: "FieldCage_65"
+      n2: "FieldCage_66"
+      R: "R3"
+    - n1: "FieldCage_66"
+      n2: "FieldCage_67"
+      R: "R3"
+    - n1: "FieldCage_67"
+      n2: "FieldCage_68"
+      R: "R3"
+    - n1: "FieldCageGuard_1"
+      n2: "FieldCageGuard_2"
+      R: "R3"
+    - n1: "FieldCageGuard_2"
+      n2: "FieldCageGuard_3"
+      R: "R3"
+    - n1: "FieldCageGuard_3"
+      n2: "FieldCageGuard_4"
+      R: "R3"
+    - n1: "FieldCageGuard_4"
+      n2: "FieldCageGuard_5"
+      R: "R3"
+    - n1: "FieldCageGuard_5"
+      n2: "FieldCageGuard_6"
+      R: "R3"
+    - n1: "FieldCageGuard_6"
+      n2: "FieldCageGuard_7"
+      R: "R3"
+    - n1: "FieldCageGuard_7"
+      n2: "FieldCageGuard_8"
+      R: "R3"
+    - n1: "FieldCageGuard_8"
+      n2: "FieldCageGuard_9"
+      R: "R3"
+    - n1: "FieldCageGuard_9"
+      n2: "FieldCageGuard_10"
+      R: "R3"
+    - n1: "FieldCageGuard_10"
+      n2: "FieldCageGuard_11"
+      R: "R3"
+    - n1: "FieldCageGuard_11"
+      n2: "FieldCageGuard_12"
+      R: "R3"
+    - n1: "FieldCageGuard_12"
+      n2: "FieldCageGuard_13"
+      R: "R3"
+    - n1: "FieldCageGuard_13"
+      n2: "FieldCageGuard_14"
+      R: "R3"
+    - n1: "FieldCageGuard_14"
+      n2: "FieldCageGuard_15"
+      R: "R3"
+    - n1: "FieldCageGuard_15"
+      n2: "FieldCageGuard_16"
+      R: "R3"
+    - n1: "FieldCageGuard_16"
+      n2: "FieldCageGuard_17"
+      R: "R3"
+    - n1: "FieldCageGuard_17"
+      n2: "FieldCageGuard_18"
+      R: "R3"
+    - n1: "FieldCageGuard_18"
+      n2: "FieldCageGuard_19"
+      R: "R3"
+    - n1: "FieldCageGuard_19"
+      n2: "FieldCageGuard_20"
+      R: "R3"
+    - n1: "FieldCageGuard_20"
+      n2: "FieldCageGuard_21"
+      R: "R3"
+    - n1: "FieldCageGuard_21"
+      n2: "FieldCageGuard_22"
+      R: "R3"
+    - n1: "FieldCageGuard_22"
+      n2: "FieldCageGuard_23"
+      R: "R3"
+    - n1: "FieldCageGuard_23"
+      n2: "FieldCageGuard_24"
+      R: "R3"
+    - n1: "FieldCageGuard_24"
+      n2: "FieldCageGuard_25"
+      R: "R3"
+    - n1: "FieldCageGuard_25"
+      n2: "FieldCageGuard_26"
+      R: "R3"
+    - n1: "FieldCageGuard_26"
+      n2: "FieldCageGuard_27"
+      R: "R3"
+    - n1: "FieldCageGuard_27"
+      n2: "FieldCageGuard_28"
+      R: "R3"
+    - n1: "FieldCageGuard_28"
+      n2: "FieldCageGuard_29"
+      R: "R3"
+    - n1: "FieldCageGuard_29"
+      n2: "FieldCageGuard_30"
+      R: "R3"
+    - n1: "FieldCageGuard_30"
+      n2: "FieldCageGuard_31"
+      R: "R3"
+    - n1: "FieldCageGuard_31"
+      n2: "FieldCageGuard_32"
+      R: "R3"
+    - n1: "FieldCageGuard_32"
+      n2: "FieldCageGuard_33"
+      R: "R3"
+    - n1: "FieldCageGuard_33"
+      n2: "FieldCageGuard_34"
+      R: "R3"
+    - n1: "FieldCageGuard_34"
+      n2: "FieldCageGuard_35"
+      R: "R3"
+    - n1: "FieldCageGuard_35"
+      n2: "FieldCageGuard_36"
+      R: "R3"
+    - n1: "FieldCageGuard_36"
+      n2: "FieldCageGuard_37"
+      R: "R3"
+    - n1: "FieldCageGuard_37"
+      n2: "FieldCageGuard_38"
+      R: "R3"
+    - n1: "FieldCageGuard_38"
+      n2: "FieldCageGuard_39"
+      R: "R3"
+    - n1: "FieldCageGuard_39"
+      n2: "FieldCageGuard_40"
+      R: "R3"
+    - n1: "FieldCageGuard_40"
+      n2: "FieldCageGuard_41"
+      R: "R3"
+    - n1: "FieldCageGuard_41"
+      n2: "FieldCageGuard_42"
+      R: "R3"
+    - n1: "FieldCageGuard_42"
+      n2: "FieldCageGuard_43"
+      R: "R3"
+    - n1: "FieldCageGuard_43"
+      n2: "FieldCageGuard_44"
+      R: "R3"
+    - n1: "FieldCageGuard_44"
+      n2: "FieldCageGuard_45"
+      R: "R3"
+    - n1: "FieldCageGuard_45"
+      n2: "FieldCageGuard_46"
+      R: "R3"
+    - n1: "FieldCageGuard_46"
+      n2: "FieldCageGuard_47"
+      R: "R3"
+    - n1: "FieldCageGuard_47"
+      n2: "FieldCageGuard_48"
+      R: "R3"
+    - n1: "FieldCageGuard_48"
+      n2: "FieldCageGuard_49"
+      R: "R3"
+    - n1: "FieldCageGuard_49"
+      n2: "FieldCageGuard_50"
+      R: "R3"
+    - n1: "FieldCageGuard_50"
+      n2: "FieldCageGuard_51"
+      R: "R3"
+    - n1: "FieldCageGuard_51"
+      n2: "FieldCageGuard_52"
+      R: "R3"
+    - n1: "FieldCageGuard_52"
+      n2: "FieldCageGuard_53"
+      R: "R3"
+    - n1: "FieldCageGuard_53"
+      n2: "FieldCageGuard_54"
+      R: "R3"
+    - n1: "FieldCageGuard_54"
+      n2: "FieldCageGuard_55"
+      R: "R3"
+    - n1: "FieldCageGuard_55"
+      n2: "FieldCageGuard_56"
+      R: "R3"
+    - n1: "FieldCageGuard_56"
+      n2: "FieldCageGuard_57"
+      R: "R3"
+    - n1: "FieldCageGuard_57"
+      n2: "FieldCageGuard_58"
+      R: "R3"
+    - n1: "FieldCageGuard_58"
+      n2: "FieldCageGuard_59"
+      R: "R3"
+    - n1: "FieldCageGuard_59"
+      n2: "FieldCageGuard_60"
+      R: "R3"
+    - n1: "FieldCageGuard_60"
+      n2: "FieldCageGuard_61"
+      R: "R3"
+    - n1: "FieldCageGuard_61"
+      n2: "FieldCageGuard_62"
+      R: "R3"
+    - n1: "FieldCageGuard_62"
+      n2: "FieldCageGuard_63"
+      R: "R3"
+    - n1: "FieldCageGuard_63"
+      n2: "FieldCageGuard_64"
+      R: "R3"
+    - n1: "FieldCageGuard_64"
+      n2: "FieldCage_68"
+      R: "R2"
+    - n1: "FieldCage_68"
+      n2: "FieldCage_69"
+      R: "R1"
+    - n1: "FieldCage_69"
+      n2: "FieldCage_70"
+      R: "R1"
+    - n1: "FieldCage_70"
+      n2: "FieldCage_71"
+      R: "R1"
+    - n1: "FieldCage_71"
+      n2: "Cathode"
+      R: "R_C"

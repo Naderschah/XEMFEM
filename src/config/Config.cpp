@@ -3,6 +3,7 @@
 #include <yaml-cpp/yaml.h>
 #include <stdexcept>
 #include <iostream>
+#include <algorithm>
 
 // read int or "auto"
 static std::pair<int,bool> read_int_or_auto(const YAML::Node& n, int dflt_val, bool dflt_auto=true)
@@ -28,134 +29,300 @@ static std::pair<int,bool> read_int_or_auto(const YAML::Node& n, int dflt_val, b
     catch (...) { return { dflt_val, dflt_auto }; }
 }
 
-
-// apply preset defaults first; explicit fields will override later
-static void apply_preset_defaults(Config &cfg)
-{
-  const std::string p = cfg.compute.preset;
-
-  if (p.empty()) return;
-  if (p=="null") return; 
-
-  // start from conservative defaults
-  cfg.compute.mpi.enabled = false;
-  cfg.compute.mpi.ranks_auto = true;
-  cfg.compute.mpi.ranks = 1;
-  cfg.compute.threads.enabled = true;
-  cfg.compute.threads.num_auto = true;
-  cfg.compute.threads.num = 0;
-  cfg.compute.threads.affinity = "compact";
-  cfg.compute.device.type = "none";
-  cfg.compute.device.id_auto = true;
-  cfg.compute.device.id = 0;
-  cfg.compute.device.per_rank = 1;
-
-  if (p == "serial") {
-    cfg.compute.mpi.enabled = false;
-    cfg.compute.threads.enabled = false;
-    cfg.compute.device.type = "none";
-    cfg.solver.assembly_mode = "full";
-  }
-  else if (p == "threads") {
-    cfg.compute.mpi.enabled        = false;
-    cfg.compute.threads.enabled    = true;
-    cfg.compute.threads.num        = -1;          // auto → we'll cap to available CPUs
-    cfg.compute.threads.affinity   = "compact";   // compact | scatter | none
-    cfg.compute.device.type        = "none";
-    cfg.solver.assembly_mode       = "partial";
-  }
-  else if (p == "mpi") {
-    cfg.compute.mpi.enabled        = true;
-    cfg.compute.mpi.ranks_auto     = true;
-    cfg.compute.threads.enabled    = false;
-    cfg.compute.device.type        = "none";
-    cfg.solver.assembly_mode       = "full";
-  }
-  else if (p == "gpu") { 
-    cfg.compute.mpi.enabled = false;
-    cfg.compute.threads.enabled = true;
-    cfg.compute.device.type = "cuda"; // default; user can override to hip/occa/cpu
-    if (cfg.solver.assembly_mode.empty()) cfg.solver.assembly_mode = "partial";
-  }
-  else if (p == "mpi+gpu") {
-    cfg.compute.mpi.enabled = true;
-    cfg.compute.threads.enabled = false;
-    cfg.compute.device.type = "cuda";
-    cfg.compute.device.per_rank = 1;
-    if (cfg.solver.assembly_mode.empty()) cfg.solver.assembly_mode = "partial";
-  }
-  else if (p == "mpi+threads") {
-    cfg.compute.mpi.enabled       = true;
-    cfg.compute.threads.enabled   = true;
-    cfg.compute.threads.num       = -1;
-    cfg.compute.threads.affinity  = "scatter";
-    cfg.compute.device.type       = "none";
-    cfg.solver.assembly_mode      = "partial";
-  }
-  else {
-    std::cout << "\033[0;33mWARNING Preset " << p << " not recognized\033[0m" << std::endl;
-  }
-}
-
-
-
 // parse compute.* blocks
 static void parse_compute(Config &cfg, const YAML::Node& root)
 {
-    // preset
-    if (root["preset"])
-        cfg.compute.preset = root["preset"].as<std::string>("");
-
-    // Apply preset defaults first (explicit fields below can override)
-    apply_preset_defaults(cfg);
-
     if (root["compute"]) {
         const auto C = root["compute"];
 
-        // mpi
+        // --- mpi ---
         if (C["mpi"]) {
             const auto M = C["mpi"];
-            cfg.compute.mpi.enabled = M["enabled"].as<bool>(cfg.compute.mpi.enabled);
+
+            cfg.compute.mpi.enabled =
+                M["enabled"].as<bool>(cfg.compute.mpi.enabled);
 
             // ranks: int or "auto"
-            auto [rk, rk_auto] = read_int_or_auto(M["ranks"], cfg.compute.mpi.ranks, cfg.compute.mpi.ranks_auto);
-            cfg.compute.mpi.ranks = rk;
+            auto [rk, rk_auto] =
+                read_int_or_auto(M["ranks"],
+                                 cfg.compute.mpi.ranks,
+                                 cfg.compute.mpi.ranks_auto);
+            cfg.compute.mpi.ranks      = rk;
             cfg.compute.mpi.ranks_auto = rk_auto;
 
-            cfg.compute.mpi.hostfile = M["hostfile"].as<std::string>(cfg.compute.mpi.hostfile);
             cfg.compute.mpi.repartition_after_refine =
-                M["repartition_after_refine"].as<bool>(cfg.compute.mpi.repartition_after_refine);
+                M["repartition_after_refine"].as<bool>(
+                    cfg.compute.mpi.repartition_after_refine);
         }
 
-        // threads
+        // --- threads ---
         if (C["threads"]) {
             const auto T = C["threads"];
-            cfg.compute.threads.enabled = T["enabled"].as<bool>(cfg.compute.threads.enabled);
-            auto [tnum, t_auto] = read_int_or_auto(T["num"], cfg.compute.threads.num, cfg.compute.threads.num_auto);
-            cfg.compute.threads.num = tnum;
+
+            cfg.compute.threads.enabled =
+                T["enabled"].as<bool>(cfg.compute.threads.enabled);
+
+            auto [tnum, t_auto] =
+                read_int_or_auto(T["num"],
+                                 cfg.compute.threads.num,
+                                 cfg.compute.threads.num_auto);
+            cfg.compute.threads.num      = tnum;
             cfg.compute.threads.num_auto = t_auto;
-            cfg.compute.threads.affinity = T["affinity"].as<std::string>(cfg.compute.threads.affinity);
+
+            cfg.compute.threads.affinity =
+                T["affinity"].as<std::string>(cfg.compute.threads.affinity);
         }
 
-        // device
+        // --- device ---
         if (C["device"]) {
             const auto D = C["device"];
-            cfg.compute.device.type = D["type"].as<std::string>(cfg.compute.device.type);
-            auto [did, d_auto] = read_int_or_auto(D["id"], cfg.compute.device.id, cfg.compute.device.id_auto);
-            cfg.compute.device.id = did;
+
+            cfg.compute.device.type =
+                D["type"].as<std::string>(cfg.compute.device.type);
+
+            auto [did, d_auto] =
+                read_int_or_auto(D["id"],
+                                 cfg.compute.device.id,
+                                 cfg.compute.device.id_auto);
+            cfg.compute.device.id      = did;
             cfg.compute.device.id_auto = d_auto;
-            cfg.compute.device.per_rank = D["per_rank"].as<int>(cfg.compute.device.per_rank);
+
+            cfg.compute.device.per_rank =
+                D["per_rank"].as<int>(cfg.compute.device.per_rank);
         }
     }
 
-    // Convenience: if GPU selected and no assembly_mode explicitly set → partial
-    if (cfg.compute.device.type != "none" && cfg.solver.assembly_mode.empty())
+    // Convenience: if a GPU-like device is selected and no assembly_mode set → partial.
+    // (Assumes "none" means "no GPU"; adjust if you add more device types.)
+    if (cfg.compute.device.type != "none" && cfg.solver.assembly_mode.empty()) {
         cfg.solver.assembly_mode = "partial";
+    }
 
     // If threads disabled → force single-thread behavior
     if (!cfg.compute.threads.enabled) {
         cfg.compute.threads.num_auto = false;
-        if (cfg.compute.threads.num <= 0) cfg.compute.threads.num = 1;
+        if (cfg.compute.threads.num <= 0) {
+            cfg.compute.threads.num = 1;
+        }
+    }
+}
+
+
+static SweepEntry::Kind parse_sweep_kind(const std::string &s_raw)
+{
+    std::string s = s_raw;
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+
+    if (s == "discrete" || s.empty()) {
+        return SweepEntry::Kind::Discrete;
+    }
+    if (s == "range") {
+        return SweepEntry::Kind::Range;
+    }
+    // Default / fallback
+    std::cerr << "Warning: unknown sweep kind \"" << s_raw
+              << "\"; defaulting to Discrete.\n";
+    return SweepEntry::Kind::Discrete;
+}
+
+static void parse_sweeps(Config &cfg, const YAML::Node &root)
+{
+    cfg.sweeps.clear();
+
+    if (!root["sweeps"]) {
+        // No sweeps defined; nothing to do.
+        return;
+    }
+
+    const YAML::Node S = root["sweeps"];
+    if (!S.IsSequence()) {
+        std::cerr << "Warning: 'sweeps' must be a sequence in YAML.\n";
+        return;
+    }
+
+    for (std::size_t i = 0; i < S.size(); ++i) {
+        const YAML::Node &node = S[i];
+        if (!node || !node.IsMap()) {
+            std::cerr << "Warning: sweeps[" << i
+                      << "] is not a map; skipping.\n";
+            continue;
+        }
+
+        SweepEntry sw;
+
+        // Optional label
+        sw.name = node["name"].as<std::string>(std::string{});
+
+        // Required: path "solver.order", "mesh.refine", etc.
+        sw.path = node["path"].as<std::string>(std::string{});
+        if (sw.path.empty()) {
+            std::cerr << "Warning: sweeps[" << i
+                      << "] missing 'path'; skipping.\n";
+            continue;
+        }
+
+        // Kind: discrete / range / nelder_mead
+        std::string kind_str = node["kind"].as<std::string>(std::string{"discrete"});
+        sw.kind = parse_sweep_kind(kind_str);
+
+        // Discrete values
+        if (sw.kind == SweepEntry::Kind::Discrete) {
+            if (node["values"]) {
+                const YAML::Node &vals = node["values"];
+                if (!vals.IsSequence()) {
+                    std::cerr << "Warning: sweeps[" << i
+                              << "].values is not a sequence; skipping entry.\n";
+                    continue;
+                }
+
+                sw.values.clear();
+                sw.values.reserve(vals.size());
+                for (std::size_t j = 0; j < vals.size(); ++j) {
+                    // Store as string, regardless of underlying type
+                    sw.values.push_back(vals[j].as<std::string>());
+                }
+
+                if (sw.values.empty()) {
+                    std::cerr << "Warning: sweeps[" << i
+                              << "] has empty 'values' for discrete kind; skipping.\n";
+                    continue;
+                }
+            } else {
+                std::cerr << "Warning: sweeps[" << i
+                          << "] kind=discrete but no 'values' provided; skipping.\n";
+                continue;
+            }
+        }
+
+        // Range sweep
+        if (sw.kind == SweepEntry::Kind::Range) {
+            sw.start = node["start"].as<double>(sw.start);
+            sw.end   = node["end"].as<double>(sw.end);
+            sw.steps = node["steps"].as<int>(sw.steps);
+
+            if (sw.steps <= 0) {
+                std::cerr << "Warning: sweeps[" << i
+                          << "] kind=range has non-positive 'steps'; skipping.\n";
+                continue;
+            }
+        }
+
+        cfg.sweeps.push_back(std::move(sw));
+    }
+}
+
+
+static void parse_fieldcage_network(Config &cfg, const YAML::Node &root)
+{
+    if (!root["fieldcage_network"]) return;
+    const auto FC = root["fieldcage_network"];
+
+    cfg.fieldcage_network.enabled =
+        FC["enabled"].as<bool>(cfg.fieldcage_network.enabled);
+
+    if (!cfg.fieldcage_network.enabled) return;
+
+    // --- nodes ---
+    if (FC["nodes"]) {
+        for (const auto &nd : FC["nodes"]) {
+            FieldCageNode node;
+            node.name     = nd["name"].as<std::string>();
+            node.boundary = nd["boundary"].as<std::string>("");
+            node.fixed    = nd["fixed"].as<bool>(false);
+            cfg.fieldcage_network.nodes.push_back(std::move(node));
+        }
+    }
+
+    // --- resistor values ---
+    if (FC["resistors"]) {
+        const auto Rnode = FC["resistors"];
+        if (!Rnode.IsMap()) {
+            throw std::runtime_error("fieldcage_network.resistors must be a mapping of name -> value");
+        }
+        for (auto it : Rnode) {
+            std::string rname = it.first.as<std::string>();
+            double rval       = it.second.as<double>();
+            cfg.fieldcage_network.R_values[rname] = rval;
+        }
+    }
+
+    // --- edges ---
+    if (FC["edges"]) {
+        for (const auto &ed : FC["edges"]) {
+            FieldCageEdge e;
+            e.n1     = ed["n1"].as<std::string>();
+            e.n2     = ed["n2"].as<std::string>();
+            e.R_name = ed["R"].as<std::string>();
+            cfg.fieldcage_network.edges.push_back(std::move(e));
+        }
+    }
+}
+static void parse_optimization(Config &cfg, const YAML::Node &root)
+{
+    if (!root["optimize"]) {
+        return; // not required
+    }
+
+    const YAML::Node O = root["optimize"];
+
+    cfg.optimize.enabled =
+        O["enabled"].as<bool>(cfg.optimize.enabled);
+
+    if (!cfg.optimize.enabled) {
+        return; // nothing else to do
+    }
+    
+    cfg.optimize.objective =
+        O["print_results"].as<bool>(cfg.optimize.print_results);
+
+    // Objective name (string keyword)
+    cfg.optimize.objective =
+        O["objective"].as<std::string>(cfg.optimize.objective);
+
+    // Optional weights for weighted objectives
+    cfg.optimize.w_CIV =
+        O["w_CIV"].as<double>(cfg.optimize.w_CIV);
+
+    // NM controls (names mapped from your YAML)
+    cfg.optimize.max_fun_evals =
+        O["max_evals"].as<int>(cfg.optimize.max_fun_evals);
+    cfg.optimize.max_iters =
+        O["max_iters"].as<int>(cfg.optimize.max_iters);
+    cfg.optimize.tol_fun =
+        O["rel_tol_f"].as<double>(cfg.optimize.tol_fun);
+    cfg.optimize.tol_x =
+        O["rel_tol_x"].as<double>(cfg.optimize.tol_x);
+    cfg.optimize.adaptive =
+        O["adaptive"].as<bool>(cfg.optimize.adaptive);
+
+    // Variables
+    if (O["variables"]) {
+        for (const auto &vnode : O["variables"]) {
+            OptimizeVar var;
+
+            var.name = vnode["name"].as<std::string>("");
+            var.path = vnode["path"].as<std::string>();
+
+            if (!vnode["lower"] || !vnode["upper"]) {
+                throw std::runtime_error(
+                    "Optimization variable '" +
+                    (var.name.empty() ? var.path : var.name) +
+                    "' must have 'lower' and 'upper'");
+            }
+
+            var.lower   = vnode["lower"].as<double>();
+            var.upper   = vnode["upper"].as<double>();
+
+            if (vnode["initial"]) {
+                var.initial = vnode["initial"].as<double>();
+            } else {
+                // default to midpoint if no initial provided
+                var.initial = 0.5 * (var.lower + var.upper);
+            }
+
+            cfg.optimize.variables.push_back(std::move(var));
+        }
     }
 }
 
@@ -172,14 +339,24 @@ Config LoadFromNode(const YAML::Node &root) {
   cfg.geometry_id    = root["geometry_id"].as<std::string>("");
 
   // --- Mesh path
-  if (root["mesh"] && root["mesh"]["path"])
-    cfg.mesh.path = root["mesh"]["path"].as<std::string>("geometry.msh");
+  if (!root["mesh"] || !root["mesh"]["path"]) {
+    throw std::runtime_error("Config error: missing mandatory field 'mesh.path'");
+  }
+  
+  cfg.mesh.path = root["mesh"]["path"].as<std::string>("geometry.msh");
+  cfg.mesh.tpc_r = root["mesh"]["tpc_r"].as<double>(-1.);
+  cfg.mesh.z_cathode = root["mesh"]["z_cathode"].as<double>(-1.);
+  cfg.mesh.z_liquidgas = root["mesh"]["z_liquidgas"].as<double>(-1.);
 
+  if (!root["save_path"]) {
+    throw std::runtime_error("Config error: missing mandatory field 'save_path'");
+  }
+  cfg.save_path = root["save_path"].as<std::string>();
 
   // --- Debug
   if (root["debug"]) {
     cfg.debug.debug      = root["debug"]["debug"].as<bool>(false);
-    cfg.debug.quick_mesh = root["debug"]["quick_mesh"].as<bool>(false);
+    cfg.debug.dry_run      = root["debug"]["dry_run"].as<bool>(false);
   }
 
   // --- Solver
@@ -227,14 +404,14 @@ Config LoadFromNode(const YAML::Node &root) {
     }
   }
 
-  // --- Compute (preset + mpi/threads/device) with precedence & back-compat
   parse_compute(cfg, root);
-
+  parse_sweeps(cfg, root);
+  parse_fieldcage_network(cfg, root);
+  parse_optimization(cfg, root);
 
   return cfg;
 }
 } // namespace
-// -----------------------------------------------------------------------------
 
 
 // -----------------------------------------------------------------------------
@@ -248,4 +425,217 @@ Config Config::Load(const std::string &path) {
 Config Config::LoadFromString(const std::string &yaml_str) {
     YAML::Node root = YAML::Load(yaml_str);
     return LoadFromNode(root);
+}
+
+
+// -----------------------------------------------------------------------------
+// Solve Circuit network
+// -----------------------------------------------------------------------------
+
+void apply_fieldcage_network(Config &cfg)
+{
+    const auto &fc = cfg.fieldcage_network;
+    if (!fc.enabled) {
+        return;
+    }
+
+    const auto &nodes = fc.nodes;
+    const auto &edges = fc.edges;
+    const auto &Rvals = fc.R_values;
+
+    // Check that there are nodes
+    const int N = static_cast<int>(nodes.size());
+    if (N == 0 || edges.empty()) {
+        return;
+    }
+
+    // make map: node name -> index
+    std::unordered_map<std::string, int> node_index;
+    node_index.reserve(N);
+    for (int i = 0; i < N; ++i) {
+        const std::string &name = nodes[i].name;
+        auto [it, inserted] = node_index.emplace(name, i);
+        if (!inserted) {
+            throw std::runtime_error(
+                "FieldCageNetwork: duplicate node name '" + name + "'");
+        }
+    }
+
+    // Classify fixed vs free nodes and read fixed potential
+    std::vector<bool>  is_fixed(N, false);
+    std::vector<double> V_fixed(N, 0.0);
+  
+    for (int i = 0; i < N; ++i) {
+        const auto &nd = nodes[i];
+        if (!nd.fixed) continue;
+        if (nd.boundary.empty()) {
+            std::cerr << "FieldCageNetwork: fixed node '"<< nd.name << "' has no boundary assigned" << std::endl;
+        }
+        auto itb = cfg.boundaries.find(nd.boundary);
+        if (itb == cfg.boundaries.end()) {
+            std::cerr << "FieldCageNetwork: fixed node '"<< nd.name << "' refers to unknown boundary '" << nd.boundary << "'" << std::endl;
+        }
+        is_fixed[i] = true;
+        V_fixed[i]  = itb->second.value;
+    }
+
+    // Build list of free nodes and make map node_index -> free_index
+    std::vector<int> free_nodes;
+    free_nodes.reserve(N);
+    for (int i = 0; i < N; ++i) {
+        if (!is_fixed[i]) free_nodes.push_back(i);
+    }
+
+    const int Nf = static_cast<int>(free_nodes.size());
+    if (Nf == 0) std::cerr << "No circuit values to compute. Assuming a configuration mistake" << std::endl;
+
+    // get free index per node -1 if fixed
+    std::vector<int> free_index_of_node(N, -1);
+    for (int k = 0; k < Nf; ++k) {
+        free_index_of_node[free_nodes[k]] = k;
+    }
+
+    /*
+    Solve Kirchhoff current law 
+    I_in = I_out -> sum_(neighbors to m) V_n/R_nm - V_m/R_nm= 0 
+    Written as 
+    Ax = b 
+    With 
+    A = 1/R 
+    x = Voltages
+    b = Fixed node contributions 
+
+    Solve using Gaussian Elimination
+
+    If i,j both free:
+      A[i,i] += G
+      A[j,j] += G
+      A[i,j] -= G
+      A[j,i] -= G
+    
+    If i free, j fixed:
+      A[i,i] += G
+      b[i]   += G * V_fixed[j]
+    */
+    // row-major, flat vector
+    std::vector<double> A(Nf * Nf, 0.0);
+    std::vector<double> b(Nf, 0.0);
+
+    auto add_to_A = [&](int row, int col, double val) {
+        A[row * Nf + col] += val;
+    };
+
+    for (const auto &e : edges) {
+        auto it1 = node_index.find(e.n1);
+        auto it2 = node_index.find(e.n2);
+        if (it1 == node_index.end() || it2 == node_index.end()) std::cerr << "FieldCageNetwork: edge (" << e.n1 << ", " << e.n2 << ") refers to unknown node" << std::endl;
+
+        const int ni = it1->second;
+        const int nj = it2->second;
+
+        auto itR = Rvals.find(e.R_name);
+        if (itR == Rvals.end()) std::cerr << "FieldCageNetwork: unknown resistor name '" << e.R_name << "' in edge (" << e.n1 << ", " << e.n2 + ")" << std::endl;
+
+        const double R = itR->second;
+        if (R <= 0.0) std::cerr << "FieldCageNetwork: non-positive resistance '" << e.R_name << "'" << std::endl;
+
+        const double G = 1.0 / R;
+
+        const int fi = free_index_of_node[ni];
+        const int fj = free_index_of_node[nj];
+
+        // both free
+        if (fi >= 0 && fj >= 0) {
+            add_to_A(fi, fi,  G);
+            add_to_A(fj, fj,  G);
+            add_to_A(fi, fj, -G);
+            add_to_A(fj, fi, -G);
+        }
+        // i free, j fixed
+        else if (fi >= 0 && fj < 0) {
+            add_to_A(fi, fi, G);
+            b[fi] += G * V_fixed[nj];
+        }
+        else if (fi < 0 && fj >= 0) {
+            // i fixed, j free
+            add_to_A(fj, fj, G);
+            b[fj] += G * V_fixed[ni];
+        }
+        else {
+            // both fixed
+        }
+    }
+
+    // Do gaussian evaluation
+    std::vector<double> x = b;
+
+    // Forward elimination
+    for (int k = 0; k < Nf; ++k) {
+        // Pivot on column k
+        int pivot = k;
+        double max_abs = std::fabs(A[k * Nf + k]);
+        for (int i = k + 1; i < Nf; ++i) {
+            double val = std::fabs(A[i * Nf + k]);
+            if (val > max_abs) {
+                max_abs = val;
+                pivot = i;
+            }
+        }
+
+        if (max_abs == 0.0) {
+            std::cerr <<  "FieldCageNetwork: no unique solution!" << std::endl;
+        }
+
+        if (pivot != k) {
+            // swap rows k and pivot in A and x
+            for (int j = k; j < Nf; ++j) {
+                std::swap(A[k * Nf + j], A[pivot * Nf + j]);
+            }
+            std::swap(x[k], x[pivot]);
+        }
+
+        const double Akk = A[k * Nf + k];
+
+        // Eliminate below
+        for (int i = k + 1; i < Nf; ++i) {
+            double factor = A[i * Nf + k] / Akk;
+            if (factor == 0.0) continue;
+
+            A[i * Nf + k] = 0.0;
+            for (int j = k + 1; j < Nf; ++j) {
+                A[i * Nf + j] -= factor * A[k * Nf + j];
+            }
+            x[i] -= factor * x[k];
+        }
+    }
+
+    // Back substite
+    for (int i = Nf - 1; i >= 0; --i) {
+        double sum = x[i];
+        for (int j = i + 1; j < Nf; ++j) {
+            sum -= A[i * Nf + j] * x[j];
+        }
+        double Aii = A[i * Nf + i];
+        x[i] = sum / Aii;
+    }
+
+    // Assemlbe Voltage vector
+    std::vector<double> V(N, 0.0);
+    for (int i = 0; i < N; ++i) {
+        if (is_fixed[i]) {
+            V[i] = V_fixed[i];
+        }
+    }
+    for (int k = 0; k < Nf; ++k) {
+        int ni = free_nodes[k];
+        V[ni] = x[k];
+    }
+
+    // Write to cfg.boundaries
+    for (int i = 0; i < N; ++i) {
+        const auto &nd = nodes[i];
+        if (nd.boundary.empty()) continue;
+        auto itb = cfg.boundaries.find(nd.boundary);
+        itb->second.value = V[i];
+    }
 }

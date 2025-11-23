@@ -3,7 +3,7 @@
 
 #include "mfem.hpp"
 #include "boundary_conditions.h"
-#include "config/Config.h"
+#include "Config.h"
 using namespace mfem;
 
 
