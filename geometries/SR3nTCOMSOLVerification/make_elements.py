@@ -16,6 +16,8 @@ volume_materials = {
     "PTFE_Group": 2.1,
 }
 
+
+grounded = {"type": "dirichlet", "value": 0}
 # Fixed boundary conditions (explicit Dirichlet values)
 # Names MUST match phys_map.txt
 fixed_boundaries = {
@@ -23,13 +25,14 @@ fixed_boundaries = {
     "BC_TopScreen":    {"type": "dirichlet", "value": -100},
     "BC_Anode":        {"type": "dirichlet", "value": 4850},
     "BC_Gate":         {"type": "dirichlet", "value": +300},
-    "FieldCage_1":     {"type": "dirichlet", "value": +650},
+    "FieldCage_1":     {"type": "dirichlet", "value": +650.},
     "BC_Cathode":      {"type": "dirichlet", "value": -2750},
     "BC_BottomScreen": {"type": "dirichlet", "value": -2750},
 
     "BC_PMT":          {"type": "dirichlet", "value": -1500},
-    "BC_Bell":          {"type": "dirichlet", "value": 0},
-    "BC_CopperRing":   {"type": "dirichlet", "value": 0},
+    "BC_Bell":         grounded,
+    "BC_CopperRing":   grounded,
+    "BC_Cryostat":     grounded
 }
 
 # Resistor values (only ratios matter for voltages)
@@ -257,6 +260,7 @@ def solve_fieldcage_network(fieldcage_names, guard_names, V_top, V_cathode):
 
 # Collect FieldCage_*/FieldCageGuard_* names from phys_map
 fieldcage_names = [name for name in boundaries_raw if name.startswith("FieldCage_")]
+# Circuit starts on field cage 1 
 guard_names     = [name for name in boundaries_raw if name.startswith("FieldCageGuard_")]
 
 print(f"[network] FieldCage_*: {len(fieldcage_names)}, FieldCageGuard_*: {len(guard_names)}")
@@ -349,17 +353,17 @@ edges_desc = []
 
 if n_fc > 0:
     # FieldCage_1: fixed node, boundary "FieldCage_1"
-    nodes_desc.append({
-        "name": "FieldCage_1",
-        "boundary": "FieldCage_1",
-        "fixed": True,
-    })
+    #nodes_desc.append({
+    #    "name": "FieldCage_1",
+    #    "boundary": "FieldCage_1",
+    #    "fixed": True,
+    #})
     # Remaining FieldCage_i: unknown
-    for name in fieldcage_names_sorted[1:]:
+    for name in fieldcage_names_sorted:
         nodes_desc.append({
             "name": name,
             "boundary": name,
-            "fixed": False,
+            "fixed": name.split("_")[1] == "1",
         })
 
 # Guard rings: all unknown
@@ -432,7 +436,7 @@ with output_path.open("w") as out:
     # boundaries
     out.write("\nboundaries:\n")
 
-    # fixed boundaries first (Anode, Gate, Cathode, etc.)
+    # fixed boundaries first (Anode, Gate, Cathode, etc. - last is field cage 1)
     for name in sorted(boundaries_fixed_out):
         v = boundaries_fixed_out[name]
         out.write(f"  {name}:\n")
@@ -448,6 +452,8 @@ with output_path.open("w") as out:
         return (0, extract_index(n, "FieldCage_") or 0)
 
     for name in sorted(boundaries_rings, key=sort_key_ring):
+        if name in boundaries_fixed_out:
+            continue   # skip FieldCage_1 once
         v = boundaries_rings[name]
         out.write(f"  {name}:\n")
         out.write(f"    bdr_id: {v['bdr_id']}\n")

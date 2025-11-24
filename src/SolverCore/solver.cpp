@@ -1,5 +1,38 @@
 #include "solver.h"
 
+#include <filesystem>
+#include <iomanip>
+
+// Writing residuals to file
+ResidualFileMonitor::ResidualFileMonitor(std::ostream &os)
+    : out_(os)
+{
+}
+
+void ResidualFileMonitor::MonitorResidual(int it,
+                                          mfem::real_t norm,
+                                          const mfem::Vector &,
+                                          bool final)
+{
+    out_ << it << " " << std::scientific << norm;
+    if (final)
+    {
+        out_ << " final";
+    }
+    out_ << std::endl;
+}
+void ResidualFileMonitor::MonitorSolution(int,
+                                          mfem::real_t,
+                                          const mfem::Vector&,
+                                          bool)
+{
+    // no-op
+}
+
+
+
+
+
 // Internal Helper for axisymmetric
 inline std::unique_ptr<mfem::Coefficient>
 MakeAxisymWeightCoeff(bool axisymmetric, int radial_idx)
@@ -105,7 +138,7 @@ std::unique_ptr<mfem::ParGridFunction> SolvePoisson(ParFiniteElementSpace &pfes,
   Array<int> ess_tdof;
   pfes.GetEssentialTrueDofs(dirichlet_attr, ess_tdof);
 
-  a->FormLinearSystem(ess_tdof, *V, *b, A, X, B);   // fills A, X, B for both modes
+  a->FormLinearSystem(ess_tdof, *V, *b, A, X, B);  
 
   auto P = make_prec(A);
   // It will error on setup, for ADS/AMS this happens in l1 row norm producing singular coarse-grid matrices causing the errors
@@ -124,6 +157,15 @@ std::unique_ptr<mfem::ParGridFunction> SolvePoisson(ParFiniteElementSpace &pfes,
   cg.SetAbsTol(cfg->solver.atol);
   cg.SetMaxIter(cfg->solver.maxiter);
   cg.SetPrintLevel(cfg->solver.printlevel);
+  // Print to file TODO need to homogenixze my saving customs
+  // already  have a save path but need to pass a per run save path
+  const std::filesystem::path mesh_path(cfg->solver.mesh_save_path);
+  const std::filesystem::path directory = mesh_path.parent_path();
+  const std::filesystem::path log_path = directory / "solver.log";
+  std::ofstream it_log(log_path);
+  ResidualFileMonitor monitor(it_log);
+  cg.SetMonitor(monitor);
+
   cg.Mult(B, X);
 
   a->RecoverFEMSolution(X, *b, *V);

@@ -3461,12 +3461,46 @@ if __name__ == '__main__':
     mesh = smesh.Mesh(MeshGroupPostPartition)
     NETGEN_1D_2D = mesh.Triangle(algo=smeshBuilder.NETGEN_1D2D)
 
+    NETGEN_2D_Params = NETGEN_1D_2D.Parameters()
+    NETGEN_2D_Params.SetFineness(smeshBuilder.Fine)          # VeryCoarse, Coarse, Moderate, Fine, VeryFine, Custom
+
+    # ================================ Surface Groups ====================================
     MSH_GXe_face_group  = mesh.GroupOnGeom(GXeGroupPostPartition,  "GXeGroup",  SMESH.FACE)
     MSH_LXe_face_group  = mesh.GroupOnGeom(LXeGroupPostPartition,  "LXeGroup",  SMESH.FACE)
     MSH_PTFE_face_group = mesh.GroupOnGeom(PTFE_GroupPostPartition, "PTFE_Group", SMESH.FACE)
+    # ================================ Boundary Groups ====================================
     BCs = [mesh.GroupOnGeom(msh_grp, msh_grp.GetName(), SMESH.EDGE) for msh_grp in BC_Groups]
+    # ------------------  Need to compute such that Borders exist ------------------
     mesh.Compute()
-
+    # --------------------------------  Also need the cryostat boundary --------------------------------
+    # Select only the free borders of the mesh (ie edges that dont connect to a triangle) 
+    free_border_edges = mesh.MakeGroup("FreeBordersAll",
+                                        SMESH.EDGE,
+                                        SMESH.FT_FreeBorders)
+    # Subtract every single boundary condition we have
+    all_bc_edges = mesh.UnionListOfGroups(BCs, "AllBC_Edges") # We need a union group here
+    free_borders_clean = mesh.CutGroups(
+        free_border_edges, 
+        all_bc_edges,
+        "FreeBorders_NoBC"
+    )   
+    # Pop out the x = 0 zero lines 
+    tol = 1e-9
+    def on_axis(node_id):
+        x, y, z = mesh.GetNodeXYZ(node_id)
+        return abs(x) < tol
+    edge_ids = free_borders_clean.GetListOfID()
+    keep_edges = []
+    for eid in edge_ids:
+        nodes = mesh.GetElemNodes(eid)
+        if not (on_axis(nodes[0]) and on_axis(nodes[1])):
+            keep_edges.append(eid)
+    cleaned = mesh.CreateEmptyGroup(SMESH.EDGE, "BC_Cryostat")
+    cleaned.Add(keep_edges)
+    # Delete helpers 
+    mesh.RemoveGroup(free_borders_clean)
+    mesh.RemoveGroup(all_bc_edges)
+    mesh.RemoveGroup(free_border_edges)
     
     mesh.ExportMED(
         "/home/felix/MFEMElectrostatics/geometries/SR3nTCOMSOLVerification/mesh.med",
