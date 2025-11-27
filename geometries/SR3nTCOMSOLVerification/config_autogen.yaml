@@ -53,539 +53,539 @@ boundaries:
   FieldCage_2:
     bdr_id: 13
     type: dirichlet
-    value: 625.5540272480802
+    value: 625.556808570623
   FieldCage_3:
     bdr_id: 14
     type: dirichlet
-    value: 601.1080544961604
+    value: 601.1136171412461
   FieldCage_4:
     bdr_id: 15
     type: dirichlet
-    value: 576.6620817442407
+    value: 576.670425711869
   FieldCage_5:
     bdr_id: 16
     type: dirichlet
-    value: 552.2161089923209
+    value: 552.227234282492
   FieldCage_6:
     bdr_id: 17
     type: dirichlet
-    value: 527.4802630457142
+    value: 527.6881872004507
   FieldCage_7:
     bdr_id: 18
     type: dirichlet
-    value: 478.0085711525009
+    value: 478.61009303636797
   FieldCage_8:
     bdr_id: 19
     type: dirichlet
-    value: 428.5368792592877
+    value: 429.5319988722853
   FieldCage_9:
     bdr_id: 20
     type: dirichlet
-    value: 379.0651873660746
+    value: 380.4539047082028
   FieldCage_10:
     bdr_id: 21
     type: dirichlet
-    value: 329.5934954728615
+    value: 331.3758105441203
   FieldCage_11:
     bdr_id: 22
     type: dirichlet
-    value: 280.1218035796483
+    value: 282.29771638003774
   FieldCage_12:
     bdr_id: 23
     type: dirichlet
-    value: 230.6501116864352
+    value: 233.21962221595518
   FieldCage_13:
     bdr_id: 24
     type: dirichlet
-    value: 181.17841979322208
+    value: 184.14152805187263
   FieldCage_14:
     bdr_id: 25
     type: dirichlet
-    value: 131.70672790000893
+    value: 135.06343388779004
   FieldCage_15:
     bdr_id: 26
     type: dirichlet
-    value: 82.23503600679575
+    value: 85.98533972370743
   FieldCage_16:
     bdr_id: 27
     type: dirichlet
-    value: 32.76334411358257
+    value: 36.90724555962482
   FieldCage_17:
     bdr_id: 28
     type: dirichlet
-    value: -16.708347779630618
+    value: -12.170848604457795
   FieldCage_18:
     bdr_id: 29
     type: dirichlet
-    value: -66.18003967284382
+    value: -61.24894276854042
   FieldCage_19:
     bdr_id: 30
     type: dirichlet
-    value: -115.65173156605701
+    value: -110.32703693262305
   FieldCage_20:
     bdr_id: 31
     type: dirichlet
-    value: -165.1234234592702
+    value: -159.40513109670567
   FieldCage_21:
     bdr_id: 32
     type: dirichlet
-    value: -214.5951153524834
+    value: -208.4832252607883
   FieldCage_22:
     bdr_id: 33
     type: dirichlet
-    value: -264.0668072456966
+    value: -257.56131942487093
   FieldCage_23:
     bdr_id: 34
     type: dirichlet
-    value: -313.53849913890986
+    value: -306.6394135889536
   FieldCage_24:
     bdr_id: 35
     type: dirichlet
-    value: -363.01019103212303
+    value: -355.71750775303616
   FieldCage_25:
     bdr_id: 36
     type: dirichlet
-    value: -412.48188292533615
+    value: -404.7956019171187
   FieldCage_26:
     bdr_id: 37
     type: dirichlet
-    value: -461.95357481854927
+    value: -453.8736960812013
   FieldCage_27:
     bdr_id: 38
     type: dirichlet
-    value: -511.42526671176245
+    value: -502.9517902452839
   FieldCage_28:
     bdr_id: 39
     type: dirichlet
-    value: -560.8969586049757
+    value: -552.0298844093666
   FieldCage_29:
     bdr_id: 40
     type: dirichlet
-    value: -610.3686504981888
+    value: -601.1079785734491
   FieldCage_30:
     bdr_id: 41
     type: dirichlet
-    value: -659.8403423914019
+    value: -650.1860727375317
   FieldCage_31:
     bdr_id: 42
     type: dirichlet
-    value: -709.312034284615
+    value: -699.2641669016144
   FieldCage_32:
     bdr_id: 43
     type: dirichlet
-    value: -758.7837261778283
+    value: -748.3422610656971
   FieldCage_33:
     bdr_id: 44
     type: dirichlet
-    value: -808.2554180710415
+    value: -797.4203552297798
   FieldCage_34:
     bdr_id: 45
     type: dirichlet
-    value: -857.7271099642549
+    value: -846.4984493938625
   FieldCage_35:
     bdr_id: 46
     type: dirichlet
-    value: -907.1988018574681
+    value: -895.5765435579452
   FieldCage_36:
     bdr_id: 47
     type: dirichlet
-    value: -956.6704937506813
+    value: -944.6546377220279
   FieldCage_37:
     bdr_id: 48
     type: dirichlet
-    value: -1006.1421856438945
+    value: -993.7327318861105
   FieldCage_38:
     bdr_id: 49
     type: dirichlet
-    value: -1055.6138775371076
+    value: -1042.810826050193
   FieldCage_39:
     bdr_id: 50
     type: dirichlet
-    value: -1105.0855694303207
+    value: -1091.8889202142757
   FieldCage_40:
     bdr_id: 51
     type: dirichlet
-    value: -1154.5572613235338
+    value: -1140.9670143783583
   FieldCage_41:
     bdr_id: 52
     type: dirichlet
-    value: -1204.0289532167467
+    value: -1190.0451085424406
   FieldCage_42:
     bdr_id: 53
     type: dirichlet
-    value: -1253.5006451099594
+    value: -1239.1232027065228
   FieldCage_43:
     bdr_id: 54
     type: dirichlet
-    value: -1302.972337003172
+    value: -1288.2012968706047
   FieldCage_44:
     bdr_id: 55
     type: dirichlet
-    value: -1352.444028896385
+    value: -1337.2793910346868
   FieldCage_45:
     bdr_id: 56
     type: dirichlet
-    value: -1401.9157207895978
+    value: -1386.357485198769
   FieldCage_46:
     bdr_id: 57
     type: dirichlet
-    value: -1451.3874126828102
+    value: -1435.435579362851
   FieldCage_47:
     bdr_id: 58
     type: dirichlet
-    value: -1500.859104576023
+    value: -1484.513673526933
   FieldCage_48:
     bdr_id: 59
     type: dirichlet
-    value: -1550.3307964692356
+    value: -1533.591767691015
   FieldCage_49:
     bdr_id: 60
     type: dirichlet
-    value: -1599.8024883624482
+    value: -1582.669861855097
   FieldCage_50:
     bdr_id: 61
     type: dirichlet
-    value: -1649.274180255661
+    value: -1631.747956019179
   FieldCage_51:
     bdr_id: 62
     type: dirichlet
-    value: -1698.7458721488736
+    value: -1680.8260501832608
   FieldCage_52:
     bdr_id: 63
     type: dirichlet
-    value: -1748.2175640420865
+    value: -1729.9041443473432
   FieldCage_53:
     bdr_id: 64
     type: dirichlet
-    value: -1797.6892559352993
+    value: -1778.9822385114253
   FieldCage_54:
     bdr_id: 65
     type: dirichlet
-    value: -1847.1609478285125
+    value: -1828.0603326755074
   FieldCage_55:
     bdr_id: 66
     type: dirichlet
-    value: -1896.6326397217254
+    value: -1877.1384268395898
   FieldCage_56:
     bdr_id: 67
     type: dirichlet
-    value: -1946.1043316149382
+    value: -1926.2165210036721
   FieldCage_57:
     bdr_id: 68
     type: dirichlet
-    value: -1995.5760235081511
+    value: -1975.2946151677545
   FieldCage_58:
     bdr_id: 69
     type: dirichlet
-    value: -2045.0477154013643
+    value: -2024.3727093318369
   FieldCage_59:
     bdr_id: 70
     type: dirichlet
-    value: -2094.5194072945774
+    value: -2073.4508034959194
   FieldCage_60:
     bdr_id: 71
     type: dirichlet
-    value: -2143.9910991877905
+    value: -2122.528897660002
   FieldCage_61:
     bdr_id: 72
     type: dirichlet
-    value: -2193.4627910810036
+    value: -2171.606991824084
   FieldCage_62:
     bdr_id: 73
     type: dirichlet
-    value: -2242.9344829742167
+    value: -2220.6850859881665
   FieldCage_63:
     bdr_id: 74
     type: dirichlet
-    value: -2292.4061748674294
+    value: -2269.763180152249
   FieldCage_64:
     bdr_id: 75
     type: dirichlet
-    value: -2341.877866760642
+    value: -2318.841274316331
   FieldCage_65:
     bdr_id: 76
     type: dirichlet
-    value: -2391.3495586538547
+    value: -2367.9193684804127
   FieldCage_66:
     bdr_id: 77
     type: dirichlet
-    value: -2440.821250547067
+    value: -2416.997462644494
   FieldCage_67:
     bdr_id: 78
     type: dirichlet
-    value: -2490.2929424402796
+    value: -2466.075556808576
   FieldCage_68:
     bdr_id: 79
     type: dirichlet
-    value: -2539.764634333492
+    value: -2515.153650972658
   FieldCage_69:
     bdr_id: 80
     type: dirichlet
-    value: -2564.2106070854115
+    value: -2564.231745136739
   FieldCage_70:
     bdr_id: 81
     type: dirichlet
-    value: -2588.656579837331
+    value: -2588.6749365661153
   FieldCage_71:
     bdr_id: 82
     type: dirichlet
-    value: -2613.10255258925
+    value: -2613.1181279954917
   FieldCageGuard_1:
     bdr_id: 83
     type: dirichlet
-    value: 528.0600094350879
+    value: 527.8798985057794
   FieldCageGuard_2:
     bdr_id: 84
     type: dirichlet
-    value: 479.7478103206216
+    value: 479.1852269523537
   FieldCageGuard_3:
     bdr_id: 85
     type: dirichlet
-    value: 431.4356112061555
+    value: 430.49055539892794
   FieldCageGuard_4:
     bdr_id: 86
     type: dirichlet
-    value: 383.12341209168943
+    value: 381.79588384550226
   FieldCageGuard_5:
     bdr_id: 87
     type: dirichlet
-    value: 334.81121297722336
+    value: 333.10121229207664
   FieldCageGuard_6:
     bdr_id: 88
     type: dirichlet
-    value: 286.49901386275735
+    value: 284.4065407386511
   FieldCageGuard_7:
     bdr_id: 89
     type: dirichlet
-    value: 238.18681474829137
+    value: 235.71186918522548
   FieldCageGuard_8:
     bdr_id: 90
     type: dirichlet
-    value: 189.87461563382536
+    value: 187.01719763179986
   FieldCageGuard_9:
     bdr_id: 91
     type: dirichlet
-    value: 141.56241651935937
+    value: 138.32252607837432
   FieldCageGuard_10:
     bdr_id: 92
     type: dirichlet
-    value: 93.2502174048934
+    value: 89.62785452494876
   FieldCageGuard_11:
     bdr_id: 93
     type: dirichlet
-    value: 44.93801829042744
+    value: 40.9331829715232
   FieldCageGuard_12:
     bdr_id: 94
     type: dirichlet
-    value: -3.3741808240385236
+    value: -7.761488581902352
   FieldCageGuard_13:
     bdr_id: 95
     type: dirichlet
-    value: -51.686379938504494
+    value: -56.45616013532791
   FieldCageGuard_14:
     bdr_id: 96
     type: dirichlet
-    value: -99.99857905297047
+    value: -105.15083168875347
   FieldCageGuard_15:
     bdr_id: 97
     type: dirichlet
-    value: -148.31077816743644
+    value: -153.845503242179
   FieldCageGuard_16:
     bdr_id: 98
     type: dirichlet
-    value: -196.62297728190242
+    value: -202.54017479560457
   FieldCageGuard_17:
     bdr_id: 99
     type: dirichlet
-    value: -244.93517639636838
+    value: -251.23484634903014
   FieldCageGuard_18:
     bdr_id: 100
     type: dirichlet
-    value: -293.2473755108344
+    value: -299.9295179024557
   FieldCageGuard_19:
     bdr_id: 101
     type: dirichlet
-    value: -341.55957462530046
+    value: -348.62418945588126
   FieldCageGuard_20:
     bdr_id: 102
     type: dirichlet
-    value: -389.87177373976647
+    value: -397.31886100930683
   FieldCageGuard_21:
     bdr_id: 103
     type: dirichlet
-    value: -438.1839728542325
+    value: -446.01353256273234
   FieldCageGuard_22:
     bdr_id: 104
     type: dirichlet
-    value: -486.49617196869855
+    value: -494.7082041161579
   FieldCageGuard_23:
     bdr_id: 105
     type: dirichlet
-    value: -534.8083710831646
+    value: -543.4028756695835
   FieldCageGuard_24:
     bdr_id: 106
     type: dirichlet
-    value: -583.1205701976306
+    value: -592.0975472230091
   FieldCageGuard_25:
     bdr_id: 107
     type: dirichlet
-    value: -631.4327693120968
+    value: -640.7922187764347
   FieldCageGuard_26:
     bdr_id: 108
     type: dirichlet
-    value: -679.7449684265628
+    value: -689.4868903298602
   FieldCageGuard_27:
     bdr_id: 109
     type: dirichlet
-    value: -728.0571675410289
+    value: -738.1815618832858
   FieldCageGuard_28:
     bdr_id: 110
     type: dirichlet
-    value: -776.3693666554951
+    value: -786.8762334367115
   FieldCageGuard_29:
     bdr_id: 111
     type: dirichlet
-    value: -824.6815657699613
+    value: -835.570904990137
   FieldCageGuard_30:
     bdr_id: 112
     type: dirichlet
-    value: -872.9937648844275
+    value: -884.2655765435627
   FieldCageGuard_31:
     bdr_id: 113
     type: dirichlet
-    value: -921.3059639988936
+    value: -932.9602480969884
   FieldCageGuard_32:
     bdr_id: 114
     type: dirichlet
-    value: -969.6181631133597
+    value: -981.6549196504142
   FieldCageGuard_33:
     bdr_id: 115
     type: dirichlet
-    value: -1017.9303622278256
+    value: -1030.34959120384
   FieldCageGuard_34:
     bdr_id: 116
     type: dirichlet
-    value: -1066.2425613422915
+    value: -1079.0442627572656
   FieldCageGuard_35:
     bdr_id: 117
     type: dirichlet
-    value: -1114.5547604567573
+    value: -1127.7389343106913
   FieldCageGuard_36:
     bdr_id: 118
     type: dirichlet
-    value: -1162.8669595712229
+    value: -1176.433605864117
   FieldCageGuard_37:
     bdr_id: 119
     type: dirichlet
-    value: -1211.1791586856882
+    value: -1225.1282774175431
   FieldCageGuard_38:
     bdr_id: 120
     type: dirichlet
-    value: -1259.4913578001538
+    value: -1273.822948970969
   FieldCageGuard_39:
     bdr_id: 121
     type: dirichlet
-    value: -1307.8035569146193
+    value: -1322.517620524395
   FieldCageGuard_40:
     bdr_id: 122
     type: dirichlet
-    value: -1356.1157560290849
+    value: -1371.2122920778208
   FieldCageGuard_41:
     bdr_id: 123
     type: dirichlet
-    value: -1404.4279551435504
+    value: -1419.906963631247
   FieldCageGuard_42:
     bdr_id: 124
     type: dirichlet
-    value: -1452.7401542580158
+    value: -1468.6016351846727
   FieldCageGuard_43:
     bdr_id: 125
     type: dirichlet
-    value: -1501.052353372481
+    value: -1517.2963067380986
   FieldCageGuard_44:
     bdr_id: 126
     type: dirichlet
-    value: -1549.3645524869466
+    value: -1565.9909782915245
   FieldCageGuard_45:
     bdr_id: 127
     type: dirichlet
-    value: -1597.6767516014122
+    value: -1614.6856498449501
   FieldCageGuard_46:
     bdr_id: 128
     type: dirichlet
-    value: -1645.9889507158778
+    value: -1663.3803213983756
   FieldCageGuard_47:
     bdr_id: 129
     type: dirichlet
-    value: -1694.3011498303433
+    value: -1712.074992951801
   FieldCageGuard_48:
     bdr_id: 130
     type: dirichlet
-    value: -1742.6133489448089
+    value: -1760.7696645052265
   FieldCageGuard_49:
     bdr_id: 131
     type: dirichlet
-    value: -1790.9255480592744
+    value: -1809.464336058652
   FieldCageGuard_50:
     bdr_id: 132
     type: dirichlet
-    value: -1839.2377471737398
+    value: -1858.1590076120774
   FieldCageGuard_51:
     bdr_id: 133
     type: dirichlet
-    value: -1887.549946288205
+    value: -1906.8536791655026
   FieldCageGuard_52:
     bdr_id: 134
     type: dirichlet
-    value: -1935.8621454026706
+    value: -1955.548350718928
   FieldCageGuard_53:
     bdr_id: 135
     type: dirichlet
-    value: -1984.1743445171362
+    value: -2004.2430222723533
   FieldCageGuard_54:
     bdr_id: 136
     type: dirichlet
-    value: -2032.4865436316015
+    value: -2052.9376938257788
   FieldCageGuard_55:
     bdr_id: 137
     type: dirichlet
-    value: -2080.798742746067
+    value: -2101.632365379204
   FieldCageGuard_56:
     bdr_id: 138
     type: dirichlet
-    value: -2129.110941860533
+    value: -2150.3270369326297
   FieldCageGuard_57:
     bdr_id: 139
     type: dirichlet
-    value: -2177.4231409749987
+    value: -2199.0217084860546
   FieldCageGuard_58:
     bdr_id: 140
     type: dirichlet
-    value: -2225.7353400894644
+    value: -2247.7163800394796
   FieldCageGuard_59:
     bdr_id: 141
     type: dirichlet
-    value: -2274.0475392039302
+    value: -2296.411051592904
   FieldCageGuard_60:
     bdr_id: 142
     type: dirichlet
-    value: -2322.359738318396
+    value: -2345.1057231463287
   FieldCageGuard_61:
     bdr_id: 143
     type: dirichlet
-    value: -2370.671937432862
+    value: -2393.8003946997537
   FieldCageGuard_62:
     bdr_id: 144
     type: dirichlet
-    value: -2418.9841365473276
+    value: -2442.4950662531783
   FieldCageGuard_63:
     bdr_id: 145
     type: dirichlet
-    value: -2467.2963356617934
+    value: -2491.189737806603
   FieldCageGuard_64:
     bdr_id: 146
     type: dirichlet
-    value: -2515.6085347762596
+    value: -2539.884409360027
 
 fieldcage_network:
   enabled: true
@@ -1208,6 +1208,9 @@ fieldcage_network:
     - n1: "FieldCage_67"
       n2: "FieldCage_68"
       R: "R3"
+    - n1: "FieldCage_68"
+      n2: "FieldCage_69"
+      R: "R3"
     - n1: "FieldCageGuard_1"
       n2: "FieldCageGuard_2"
       R: "R3"
@@ -1398,11 +1401,8 @@ fieldcage_network:
       n2: "FieldCageGuard_64"
       R: "R3"
     - n1: "FieldCageGuard_64"
-      n2: "FieldCage_68"
-      R: "R2"
-    - n1: "FieldCage_68"
       n2: "FieldCage_69"
-      R: "R1"
+      R: "R2"
     - n1: "FieldCage_69"
       n2: "FieldCage_70"
       R: "R1"

@@ -53,9 +53,6 @@ static std::string run_one(const Config &cfg,
 
     // Copy config and override solver output paths so they land in run_dir
     Config cfg_copy = cfg;
-    cfg_copy.solver.mesh_save_path      = (run_dir / "simulation_mesh.msh").string();
-    cfg_copy.solver.V_solution_path     = (run_dir / "solution_V.gf").string();
-    cfg_copy.solver.Emag_solution_path  = (run_dir / "solution_Emag.gf").string();
 
     auto cfg_ptr = std::make_shared<Config>(cfg_copy);
     if (!cfg.debug.dry_run)
@@ -68,26 +65,7 @@ static std::string run_one(const Config &cfg,
             return {};  // signal failure to caller
         }
 
-        // Save E components and magnitude inside run_dir
-        {
-            std::filesystem::path prefix = run_dir / "field";
-            SaveEComponents(*result.E, prefix.string());
-        }
-        {
-            std::ofstream ofs(run_dir / "field_mag.gf");
-            if (!ofs)
-            {
-                std::cerr << "Warning: could not open field_mag.gf in " << run_dir << "\n";
-            }
-            else
-            {
-                result.Emag->Save(ofs);
-            }
-        }
-
-        // Save mesh and potential using the solver paths we set above
-        result.mesh->Save(cfg_copy.solver.mesh_save_path.c_str());
-        result.V->Save(cfg_copy.solver.V_solution_path.c_str());
+        save_results(result, save_root);
     }
 
     if (cfg.debug.debug){

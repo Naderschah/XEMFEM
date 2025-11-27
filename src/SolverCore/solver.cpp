@@ -159,8 +159,7 @@ std::unique_ptr<mfem::ParGridFunction> SolvePoisson(ParFiniteElementSpace &pfes,
   cg.SetPrintLevel(cfg->solver.printlevel);
   // Print to file TODO need to homogenixze my saving customs
   // already  have a save path but need to pass a per run save path
-  const std::filesystem::path mesh_path(cfg->solver.mesh_save_path);
-  const std::filesystem::path directory = mesh_path.parent_path();
+  const std::filesystem::path directory(cfg->save_path);
   const std::filesystem::path log_path = directory / "solver.log";
   std::ofstream it_log(log_path);
   ResidualFileMonitor monitor(it_log);

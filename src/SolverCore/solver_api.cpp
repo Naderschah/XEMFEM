@@ -9,6 +9,8 @@
 #include "solver_api.h"
 
 #include <omp.h>
+#include <filesystem>
+
 
 
 using namespace mfem;
@@ -80,4 +82,51 @@ SimulationResult run_simulation(std::shared_ptr<Config> cfg,
   result.success = true;
 
   return result;
+}
+
+
+void save_results(const SimulationResult &result, const std::filesystem::path &root_path)
+{
+  // TODO Make some config entry for which to save
+
+  {
+  // Save E field components 
+  std::filesystem::path EComponentPath = root_path / "E";
+  SaveEComponents(*result.E, EComponentPath.string());  // E_ex.gf, E_ey.gf, ...
+  std::ofstream ofs(root_path / "Emag.gf");
+  if (!ofs) {
+      std::cerr << "Warning: could not open Emag.gf in " << root_path << "\n";
+  } else {
+      result.Emag->Save(ofs);
+  }
+  // Save V and mesh 
+  std::filesystem::path mesh_path = root_path / "simulation_mesh.msh";
+  result.mesh->Save(mesh_path.c_str());
+  std::filesystem::path V_path = root_path / "V.gf";
+  result.V->Save(V_path.c_str());
+  }
+
+  {
+  // ---------- ParaView output ----------
+  // Collection name appears in the .pvd file
+  std::string collection_name = "Simulation";
+  auto *pvdc = new ParaViewDataCollection(collection_name, result.mesh.get());
+
+  // Write under root_path (directory will be created if needed)
+  pvdc->SetPrefixPath(root_path.string());
+
+  // Register fields (they can be H1, L2, etc., as long as they live on result.mesh)
+  pvdc->RegisterField("V", result.V.get());       // H1 scalar
+  pvdc->RegisterField("E", result.E.get());       // L2 vector (components in the GF)
+  pvdc->RegisterField("Emag", result.Emag.get()); // scalar magnitude
+
+  // Optional: control output quality
+  int order = result.V->FESpace()->GetOrder(0);
+  pvdc->SetLevelsOfDetail(order);
+  pvdc->SetDataFormat(VTKFormat::BINARY);
+  pvdc->SetHighOrderOutput(true);
+
+  pvdc->Save();
+  }
+
 }

@@ -141,9 +141,7 @@ RunAndMetricsResult run_simulation_and_save(const Config &cfg, std::size_t eval_
 
     // Copy config and override solver output paths
     Config cfg_copy = cfg;
-    cfg_copy.solver.mesh_save_path      = (run_dir / "simulation_mesh.msh").string();
-    cfg_copy.solver.V_solution_path     = (run_dir / "solution_V.gf").string();
-    cfg_copy.solver.Emag_solution_path  = (run_dir / "solution_Emag.gf").string();
+    cfg_copy.save_path = run_dir.string();
 
     auto cfg_ptr = std::make_shared<Config>(cfg_copy);
 
@@ -161,23 +159,8 @@ RunAndMetricsResult run_simulation_and_save(const Config &cfg, std::size_t eval_
         return out;
     }
 
-    // Save E components and magnitude
-    {
-        std::filesystem::path prefix = run_dir / "field";
-        SaveEComponents(*result.E, prefix.string());  // field_ex.gf, field_ey.gf, ...
-    }
-    {
-        std::ofstream ofs(run_dir / "field_mag.gf");
-        if (!ofs) {
-            std::cerr << "Warning: could not open field_mag.gf in " << run_dir << "\n";
-        } else {
-            result.Emag->Save(ofs);
-        }
-    }
-
-    // Save mesh and potential
-    result.mesh->Save(cfg_copy.solver.mesh_save_path.c_str());
-    result.V->Save(cfg_copy.solver.V_solution_path.c_str());
+    // Save Results 
+    save_results(result, run_dir);
 
     out.success = true;
     out.sim     = std::move(result);
@@ -289,19 +272,7 @@ Ie 1-(Volume where electrons reach liquid gas interface) / (Total Volume)
         throw std::runtime_error("compute_civ currently implemented for 2D axisymmetric (r,z) only.");
     }
 
-    const double r_tpc      = cfg.mesh.tpc_r;
-    const double z_cathode  = cfg.mesh.z_cathode;
-    const double z_lgi      = cfg.mesh.z_liquidgas;
-
-    if (r_tpc <= 0.0) {
-        throw std::runtime_error("compute_civ: r_tpc must be > 0 -> Define it in the config");
-    }
-    if (z_lgi <= z_cathode) {
-        throw std::runtime_error("compute_civ: z_liquidgas must be above z_cathode");
-    }
-
-    const int ir_order = 1; //single IP per element
-    CivSeeds seeds = ExtractCivSeeds(cfg, result, ir_order);
+    CivSeeds seeds = ExtractCivSeeds(cfg, result);
 
     // If no seeds throw error
     if (seeds.positions.empty()) {
@@ -312,7 +283,7 @@ Ie 1-(Volume where electrons reach liquid gas interface) / (Total Volume)
     ElectronTraceParams trace_params;  
     std::vector<ElectronTraceResult> trace_results;
 
-    TraceElectronFieldLines(result, cfg, seeds.positions, seeds.elements, seeds.ips, trace_params, trace_results);
+    TraceElectronFieldLines(result, cfg, seeds, trace_results);
 
     MFEM_VERIFY(trace_results.size() == seeds.positions.size(), "TraceElectronFieldLines: result size mismatch");
 

@@ -23,6 +23,9 @@ find_package(MFEM CONFIG REQUIRED)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../config
                  ${CMAKE_CURRENT_BINARY_DIR}/config)
 
+#add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../plotting
+#                 ${CMAKE_CURRENT_BINARY_DIR}/plotting)
+
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../cmdLineParser
                  ${CMAKE_CURRENT_BINARY_DIR}/cmdLineParser)
 
@@ -78,6 +81,7 @@ target_include_directories(SWEEP PRIVATE
 target_link_libraries(SWEEP PRIVATE
   mfem
   config
+  #plotting
   cmdLineParser
   yaml-cpp
   MPI::MPI_CXX

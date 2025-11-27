@@ -192,7 +192,7 @@ def solve_fieldcage_network(fieldcage_names, guard_names, V_top, V_cathode):
             add_resistor(fc[4], guards[0], R2)
 
         # Middle sections with R3
-        merge_index = n_fc - 4  # 4th-from-last fieldcage is merge node
+        merge_index = n_fc - 3  # 4th-from-last fieldcage is merge node
 
         # Main branch: FC_6 ... FC_merge
         for i in range(5, merge_index):
@@ -403,7 +403,7 @@ if n_fc > 0:
             edges_desc.append({"n1": fc[4], "n2": guards[0], "R": "R2"})
 
         # Middle with R3
-        merge_index = n_fc - 4  # 4th from last
+        merge_index = n_fc - 3  # 4th from last
         # Main branch: FC_6 ... FC_merge with R3
         for i in range(5, merge_index):
             edges_desc.append({"n1": fc[i], "n2": fc[i+1], "R": "R3"})

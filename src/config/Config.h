@@ -20,9 +20,6 @@ struct Material {
 
 struct MeshSettings {
     std::string path = "geometry.msh"; // TODO Does mesh need more settings?
-    double tpc_r;
-    double z_cathode;
-    double z_liquidgas;
 };
 
 // -------------------- Compute / Runtime Settings ----------------------------
@@ -145,11 +142,23 @@ struct SolverSettings {
     double rtol = 0.0;
     int    maxiter = 100000;
     int    printlevel = 1;
+};
+// Field Line tracing parameters 
+struct ElectronTraceParams
+{
+    double c_step         = 1;        // in Δt ≤ c_step * h_K / ||v||
+    double max_time       = 1e3;      // max integration "time"
+    int    max_steps      = 200;      // safety cap
+    double min_field_norm = 0.01;     // stop if ||E|| < threshold
+    double geom_tol       = 1e-6;     // tolerance for r,z boundary checks
+    int ir_order          = 1;        // Order to use for the integration rule in mesh element tracing
+    int integration_points = 1;       // Number of integration points to use per integration element (this or min points returned by order interp)
+    // Bounds over which to evaluate civ
+    double r_min = 0;
+    double r_max = 0.664;
+    double z_min = -1.5028;
+    double z_max = 0;
 
-    // Outputs
-    std::string mesh_save_path   = "simulation_mesh.msh";
-    std::string V_solution_path  = "solution_V.gf";
-    std::string Emag_solution_path = "solution_Emag.gf";
 };
 
 // ------------------------- Actual Config Struct -------------------------------
@@ -175,6 +184,9 @@ struct Config {
 
     // Configuration to solve circuits
     FieldCageNetworkSettings fieldcage_network;
+
+    // TODO Not yet configuable (edit .cpp file)
+    ElectronTraceParams tracing_params;
 
     // Load from path
     static Config Load(const std::string& path);

@@ -99,9 +99,6 @@ void set_cfg_value_from_string(Config &cfg, const std::string &path, const std::
         if (field == "rtol")                         { s.rtol          = from_string<double>(value);        return; }
         if (field == "maxiter")                      { s.maxiter       = from_string<int>(value);           return; }
         if (field == "printlevel")                   { s.printlevel    = from_string<int>(value);           return; }
-        if (field == "mesh_save_path")               { s.mesh_save_path      = value;                       return; }
-        if (field == "V_solution_path")              { s.V_solution_path     = value;                       return; }
-        if (field == "Emag_solution_path")           { s.Emag_solution_path  = value;                       return; }
 
         throw std::runtime_error("Unknown solver field: " + field);
     }

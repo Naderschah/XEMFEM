@@ -27,3 +27,5 @@ SimulationResult run_simulation(
     std::shared_ptr<Config> cfg,
     const std::filesystem::path& model_path
 );
+
+void save_results(const SimulationResult &result, const std::filesystem::path &root_path);

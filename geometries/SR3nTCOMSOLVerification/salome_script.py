@@ -2012,6 +2012,34 @@ def build_cathode_insulating_frame(part_doc, p, makeface, Sketch=None):
       else:
         return Sketch
 
+def build_bottom_screen_holder_pin(part_doc, p, makeface, Sketch = None):
+    """Little pin that goes below the bottom screening electrode ring"""
+    dont_return = False
+    if Sketch is None:
+      Sketch = model.addSketch(part_doc, model.defaultPlane("XOY"))
+      Sketch.setName("BottomScreenHolderPin")
+    else:
+      dont_return = True
+    y0 = p.BottomScreenHolderVerticalPosition*p.ShrinkageFactor-p.BottomScreenHolderHeight*p.ShrinkageFactor
+    yplus = p.BottomScreenHolderHeight*p.ShrinkageFactor
+    pts = [
+        [p.BottomScreenHolderRadialPosition, y0],
+        [p.BottomScreenHolderRadialPosition + p.BottomScreenHolderRadialPosition, y0],
+        [p.BottomScreenHolderRadialPosition + p.BottomScreenHolderRadialPosition, y0 + yplus],
+        [p.BottomScreenHolderRadialPosition, y0 + yplus],
+    ]
+    lines = create_polygon_from_corners(Sketch, pts)
+
+    if MODELDO: model.do()
+    if makeface:
+      CopperRingInsulatingFrame = model.addFace(part_doc, [Sketch.result()])
+      CopperRingInsulatingFrame.setName("BottomScreenHolderPin")
+      return CopperRingInsulatingFrame
+    else:
+      return Sketch
+
+
+
 def build_topscreen_insulating_frame(part_doc, p, makeface, Sketch = None):
     pts = [
         [p.TopStackInsulationRadialPosition, p.TopScreenInsulationVerticalPosition + p.TopScreenInsulationDimensionG],
@@ -2041,6 +2069,34 @@ def build_topscreen_insulating_frame(part_doc, p, makeface, Sketch = None):
         return TopScreenInsulatingFrame
       else:
         return Sketch
+
+
+def build_copper_ring_insulating_frame(part_doc, p, makeface, Sketch = None):
+    """PTFE component between copper ring and gate electrode
+    
+    A simple rectangle """
+    dont_return = False
+    if Sketch is None:
+      Sketch = model.addSketch(part_doc, model.defaultPlane("XOY"))
+      Sketch.setName("CopperRingInsulation")
+    else:
+      dont_return = True
+    pts = [
+        [p.CopperRingInsulationRadialPosition, p.CopperRingInsulationVerticalPosition],
+        [p.CopperRingInsulationRadialPosition + p.CopperRingInsulationWidth, p.CopperRingInsulationVerticalPosition],
+        [p.CopperRingInsulationRadialPosition + p.CopperRingInsulationWidth, p.CopperRingInsulationVerticalPosition - p.CopperRingInsulationHeight],
+        [p.CopperRingInsulationRadialPosition, p.CopperRingInsulationVerticalPosition - p.CopperRingInsulationHeight],
+    ]
+    lines = create_polygon_from_corners(Sketch, pts)
+
+    if MODELDO: model.do()
+    if makeface:
+      CopperRingInsulatingFrame = model.addFace(part_doc, [Sketch.result()])
+      CopperRingInsulatingFrame.setName("CopperRingInsulation")
+      return CopperRingInsulatingFrame
+    else:
+      return Sketch
+
 
 def build_bottomstack_insulating_frame(part_doc, p, makeface, Sketch=None):
     dont_return = False
@@ -3036,6 +3092,7 @@ if __name__ == '__main__':
     BottomPMTReflectors      = build_bottom_PMT_reflectors(Cryostat_doc, p, makeface)
     TopPMTReflectors         = build_top_PMT_reflectors(Cryostat_doc, p, makeface)
     wallPTFE                 = BuildPTFEWall(Cryostat_doc, p, makeface)
+    CopperRingInsulation     = build_copper_ring_insulating_frame(Cryostat_doc, p, makeface)
 
     model.do()
 
@@ -3065,6 +3122,7 @@ if __name__ == '__main__':
     selec_BottomPMTReflectors      = safe_face_selections(BottomPMTReflectors)
     selec_TopPMTReflectors         = safe_face_selections(TopPMTReflectors)
     selec_wallPTFE                 = safe_face_selections(wallPTFE)
+    selec_CopperRingInsulation     = safe_face_selections(CopperRingInsulation)
 
     # Background volumes (these are normally required; if you set one to None, this will just be [])
     selec_GXeCryostat = safe_face_selections(GXeCryostat)
@@ -3098,6 +3156,7 @@ if __name__ == '__main__':
         + selec_BottomPMTReflectors
         + selec_TopPMTReflectors
         + selec_wallPTFE
+        + selec_CopperRingInsulation
     )
 
     # ----------------------------------------------------------------------
@@ -3172,6 +3231,7 @@ if __name__ == '__main__':
     name_feature_and_faces(BottomPMTReflectors, "BottomPMTReflectorsOGGroup")
     name_feature_and_faces(TopPMTReflectors, "TopPMTReflectorsOGGroup")
     name_feature_and_faces(wallPTFE, "WallPTFEOGGroup")
+    name_feature_and_faces(CopperRingInsulation, "CopperRingInsulation")
 
     name_feature_and_faces(GXeCryostat, "GXeCryostatOGGroup")
     name_feature_and_faces(LXeCryostat, "LXeCryostatOGGroup")

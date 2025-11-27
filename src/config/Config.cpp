@@ -344,9 +344,6 @@ Config LoadFromNode(const YAML::Node &root) {
   }
   
   cfg.mesh.path = root["mesh"]["path"].as<std::string>("geometry.msh");
-  cfg.mesh.tpc_r = root["mesh"]["tpc_r"].as<double>(-1.);
-  cfg.mesh.z_cathode = root["mesh"]["z_cathode"].as<double>(-1.);
-  cfg.mesh.z_liquidgas = root["mesh"]["z_liquidgas"].as<double>(-1.);
 
   if (!root["save_path"]) {
     throw std::runtime_error("Config error: missing mandatory field 'save_path'");
@@ -366,10 +363,6 @@ Config LoadFromNode(const YAML::Node &root) {
     cfg.solver.rtol        = s["rtol"].as<double>(0.0);
     cfg.solver.maxiter     = s["maxiter"].as<int>(100000);
     cfg.solver.printlevel  = s["printlevel"].as<int>(1);
-
-    cfg.solver.mesh_save_path     = s["mesh_save_path"].as<std::string>("simulation_mesh.msh");
-    cfg.solver.V_solution_path    = s["V_solution_path"].as<std::string>("solution_V.gf");
-    cfg.solver.Emag_solution_path = s["Emag_solution_path"].as<std::string>("solution_Emag.gf");
 
     // NEW: assembly/solver/precond (optional)
     if (s["assembly_mode"]) cfg.solver.assembly_mode = s["assembly_mode"].as<std::string>(cfg.solver.assembly_mode);
@@ -408,6 +401,8 @@ Config LoadFromNode(const YAML::Node &root) {
   parse_sweeps(cfg, root);
   parse_fieldcage_network(cfg, root);
   parse_optimization(cfg, root);
+
+  // TODO Parse block for ElectronTraceParams - add parameter validation
 
   return cfg;
 }

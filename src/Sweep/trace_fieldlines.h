@@ -1,81 +1,113 @@
+/*
+We have 2 options
+- Interpolate a grid
+- Integrate on the mesh <- Doing this 
+
+
+
+
+
+Little GPT summary on the error propagation here
+
+Field-Line Tracing Error Model
+------------------------------
+
+We trace trajectories of the discrete electric field E_h defined on the FEM mesh.
+The exact field is E, the discrete field is E_h, and the numerical trajectory uses
+a time step Δt.
+
+1. Field Approximation Error
+   Let x(t) solve ẋ = −E(x), and let x_h(t) solve ẋ = −E_h(x).
+   If  ||E − E_h||_{L∞} ≤ C h^m  and E_h is Lipschitz with constant L, then
+
+      ||x_h(t) − x(t)|| ≤ C_T ||E − E_h||_{L∞} ≤ C_T' h^m ,
+
+   so field lines of E_h converge to those of E as the mesh is refined.
+
+2. Time-Discretization Error
+   Let x̃_h^n be the numerical solution of order p with step Δt. Then
+
+      ||x̃_h(t_n) − x_h(t_n)|| ≤ C_T Δt^p ,
+
+   giving total trajectory error
+
+      ||x̃_h(t_n) − x(t_n)|| ≤ C_1 h^m + C_2 Δt^p .
+
+3. Step-Size Condition
+   We enforce
+
+      Δt ≤ c h_K / ||v_h(x)|| ,
+
+   where h_K is the size of the current element. Then
+
+      ||x_{n+1} − x_n|| ≤ c h_K ,
+
+   which guarantees x_{n+1} lies in the current element K or one of its
+   immediate neighbors (shape-regularity). This ensures neighbor-only
+   element lookup is exact and introduces no additional modeling error.
+
+4. Comparison with Grid Interpolation
+   If the field is additionally interpolated onto a structured grid
+   (spacing H, interpolation order q), producing E_g, then
+
+      ||x_g(t) − x(t)|| ≤ C_T ( h^m + H^q ),
+
+   so grid-based tracing adds an extra spatial error term H^q that the
+   direct FEM-based tracer does not incur.
+
+
+
+
+*/
 #pragma once
 
 #include <mfem.hpp>
-#include <memory>
-
+#include <vector>
+// TODO Add SolverCore to cmake 
 #include "solver_api.h"
+#include "Config.h"
 
-// Tracer interface types
 enum class ElectronExitCode
 {
     None = 0,
     HitCathode,
     HitLiquidGas,
-    HitAxis,   
-    HitWall,   
+    HitAxis,
+    HitWall,
     LeftVolume,
     WeakField,
     MaxSteps,
-    InvalidSeed
-};
-
-struct ElectronTraceParams
-{
-    double c_step         = 1;        // in Δt ≤ c_step * h_K / ||v||
-    double max_time       = 1e3;      // max integration "time"
-    int    max_steps      = 200;      // safety cap
-    double min_field_norm = 0.01;      // stop if ||E|| < threshold
-    double geom_tol       = 1e-6;     // tolerance for r,z boundary checks
+    InvalidSeed   // currently not produced by the tracer; kept for completeness
 };
 
 struct ElectronTraceResult
 {
-    std::vector<mfem::Vector> points; // (r,z) 
+    std::vector<mfem::Vector> points; // (r,z) trajectory points
     ElectronExitCode          exit_code    = ElectronExitCode::None;
     int                       exit_element = -1;
 };
 
-// ------------------------ Internal Helpers ------------------------
-// For this we make one of each cell to speed up the lookup of next mesh elem
-struct ElementAdjacency
-{
-    // list of face-neighbor
-    std::vector<std::vector<int>> neighbors;
-    // characteristic size of element
-    std::vector<double>           h;
-    // active[e]: whether element e lies inside the TPC volume of interest
-    std::vector<bool>             active;
-};
-// Mesh element seed container for things we care about in CIV 
+// Shared seed container used by both CIV and tracing.
 struct CivSeeds
 {
-    std::vector<mfem::Vector>        positions; // (r,z) seeds
-    std::vector<double>              volumes;   // dV per seed
-    std::vector<int>                 elements;  // element index for each seed
-    std::vector<mfem::IntegrationPoint> ips;    // reference IP for each seed
+    std::vector<mfem::Vector>          positions; // (r,z) seeds (physical coords)
+    std::vector<double>                volumes;   // volume weight per seed
+    std::vector<int>                   elements;  // element index for each seed
+    std::vector<mfem::IntegrationPoint> ips;      // reference IP for each seed
 };
 
+// ============================================================================
+// Public API
+// ============================================================================
 
+// Build volume-weighted seeds for CIV / optimization / tracing
+// based on the mesh and cfg.tracing_params.
+CivSeeds ExtractCivSeeds(const Config &cfg,
+                         const SimulationResult &result);
 
-// Electric field coefficient wrapper - just to have less to pass around
-class ElectricFieldCoeff : public mfem::VectorCoefficient
-{
-public:
-    explicit ElectricFieldCoeff(const mfem::GridFunction &E);
-
-    void Eval(mfem::Vector &V,
-              mfem::ElementTransformation &T,
-              const mfem::IntegrationPoint &ip) override;
-
-private:
-    const mfem::GridFunction &E_;
-};
-
-// Single electron tracing 
-static ElectronTraceResult TraceSingleElectronLine(const mfem::ParMesh &mesh,const ElectricFieldCoeff &E_coeff,const ElementAdjacency &adj,const Config &cfg,int start_elem,const mfem::IntegrationPoint &start_ip,const ElectronTraceParams &params);
-
-// Wrapper to trace all supplied electric field lines from starting points
-void TraceElectronFieldLines(const SimulationResult &sim,const Config &cfg,const std::vector<mfem::Vector> &seed_points,const std::vector<int> &seed_elements,const std::vector<mfem::IntegrationPoint> &seed_ips,const ElectronTraceParams &params,std::vector<ElectronTraceResult> &out_results);
-
-// Extract all the seeds for CIV
-CivSeeds ExtractCivSeeds(const Config &cfg, const SimulationResult &result, int ir_order = 1);
+// Trace all supplied seeds and fill out_results with one ElectronTraceResult
+// per seed. Tracing configuration and geometry come from cfg.tracing_params.
+void TraceElectronFieldLines(const SimulationResult           &sim,
+                             const Config                     &cfg,
+                             const CivSeeds                   &seeds,
+                             std::vector<ElectronTraceResult> &out_results);
