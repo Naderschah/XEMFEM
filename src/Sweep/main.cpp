@@ -26,11 +26,35 @@ static std::string run_one(const Config &cfg,
                            std::size_t run_index) // 0-based
 {
     std::filesystem::path model_path = cfg.mesh.path;
-
     // Determine root save directory from Config
     std::filesystem::path save_root(cfg.save_path);
     std::error_code ec;
 
+    // Check save path is empty 
+    if (std::filesystem::exists(save_root)) {
+        bool empty = std::filesystem::is_empty(save_root, ec);
+        if (ec) {
+            throw std::runtime_error("Failed to check save_path directory: " + ec.message());
+        }
+        if (!empty) {
+            if (!cfg.delete_files_present) {
+                throw std::runtime_error(
+                    "Directory '" + save_root.string() + "' is not empty.");
+            } else {
+                // Delete all contents but not the directory itself
+                for (const auto& entry : std::filesystem::directory_iterator(save_root)) {
+                    std::filesystem::remove_all(entry.path(), ec);
+                    if (ec) {
+                        throw std::runtime_error(
+                            "Failed to delete '" + entry.path().string() +
+                            "': " + ec.message());
+                    }
+                }
+            }
+        }
+    }
+
+    // Ensure directory exists
     std::filesystem::create_directories(save_root, ec);
     if (ec)
     {
@@ -256,7 +280,7 @@ int main(int argc, char *argv[])
     // ----------------------   Load Config ---------------------------
 
     Config init_cfg = Config::Load(config_path.string());
-
+    if (init_cfg.debug.debug && init_cfg.solver.axisymmetric) {std::cout<<"[DEBUG:MAIN] Running Axisymmetric Simulation" <<std::endl;}
     // Initialize parallel/MPI environment
     parallel::init_environment(init_cfg, argc, argv);
 
@@ -264,13 +288,14 @@ int main(int argc, char *argv[])
 
     // -----------  Single / Optimization / Sweep dispatch -------------
 
-    if (init_cfg.optimize.enabled)
+    // Do optimization
+    if (init_cfg.optimize.enabled && (!init_cfg.optimize.metrics_only))
     {
         std::cout << "[MAIN] Executing an optimization" << std::endl;
         run_optimization(init_cfg);
         return 0;
     }
-
+    // Do sweep
     else if (!sweeps.empty())
     {
         std::cout << "[MAIN] Executing a sweep simulation" << std::endl;
@@ -290,6 +315,11 @@ int main(int argc, char *argv[])
         std::filesystem::path save_root(init_cfg.save_path);
         write_sweep_meta(init_cfg.geometry_id, save_root, records);
         return 0;
+    }
+    // Compute optimization metrics only 
+    else if (init_cfg.optimize.enabled && (init_cfg.optimize.metrics_only))
+    {
+        run_metrics_only(init_cfg);
     }
     // Single Run     
     else

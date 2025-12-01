@@ -272,6 +272,8 @@ static void parse_optimization(Config &cfg, const YAML::Node &root)
     if (!cfg.optimize.enabled) {
         return; // nothing else to do
     }
+
+    cfg.optimize.metrics_only = O["metrics_only"].as<bool>(cfg.optimize.metrics_only);
     
     cfg.optimize.objective =
         O["print_results"].as<bool>(cfg.optimize.print_results);
@@ -326,6 +328,195 @@ static void parse_optimization(Config &cfg, const YAML::Node &root)
     }
 }
 
+// -----------------------------------------------------------------------------
+// Trace params
+// -----------------------------------------------------------------------------
+static void parse_trace_params(Config &cfg, const YAML::Node &root)
+{
+    // Start from current config values
+    ElectronTraceParams params = cfg.tracing_params;
+
+    const auto opt = root["optimize"];
+    if (!opt) {
+        cfg.tracing_params = params;
+        return;
+    }
+
+    const auto tp = opt["trace_params"];
+    if (!tp) {
+        cfg.tracing_params = params;
+        return;
+    }
+
+    auto get_d = [&](const char *key, double cur) {
+        const auto n = tp[key];
+        return n ? n.as<double>(cur) : cur;
+    };
+    auto get_i = [&](const char *key, int cur) {
+        const auto n = tp[key];
+        return n ? n.as<int>(cur) : cur;
+    };
+    auto get_b = [&](const char *key, bool cur) {
+        const auto n = tp[key];
+        return n ? n.as<bool>(cur) : cur;
+    };
+
+    // Domain bounds
+    params.r_min = get_d("r_min", params.r_min);
+    params.r_max = get_d("r_max", params.r_max);
+    params.z_min = get_d("z_min", params.z_min);
+    params.z_max = get_d("z_max", params.z_max);
+
+    // Main controls
+    params.max_steps     = get_i("max_steps",     params.max_steps);
+    params.geom_tol      = get_d("geom_tol",      params.geom_tol);
+    params.ir_order      = get_i("ir_order",      params.ir_order);
+    params.num_seed_elements   = get_i("num_seed_elements",   params.num_seed_elements);
+
+    // Step-size controls
+    params.c_step        = get_d("c_step",        params.c_step);
+    params.ds_min_factor = get_d("ds_min_factor", params.ds_min_factor);
+    params.ds_max_factor = get_d("ds_max_factor", params.ds_max_factor);
+
+    // Adaptive / error control
+    params.adapt_grow    = get_d("adapt_grow",    params.adapt_grow);
+    params.adapt_shrink  = get_d("adapt_shrink",  params.adapt_shrink);
+    params.tol_rel       = get_d("tol_rel",       params.tol_rel);
+
+    // Termination options
+    params.terminate_on_axis = get_b("terminate_on_axis", params.terminate_on_axis);
+
+    // Basic validation
+    if (params.r_min >= params.r_max) {
+        throw std::runtime_error("Config error: optimize.trace_params: r_min must be < r_max");
+    }
+    if (params.z_min >= params.z_max) {
+        throw std::runtime_error("Config error: optimize.trace_params: z_min must be < z_max");
+    }
+    if (params.max_steps <= 0) {
+        throw std::runtime_error("Config error: optimize.trace_params: max_steps must be > 0");
+    }
+    if (params.geom_tol <= 0.0) {
+        throw std::runtime_error("Config error: optimize.trace_params: geom_tol must be > 0");
+    }
+    if (params.ir_order <= 0) {
+        throw std::runtime_error("Config error: optimize.trace_params: ir_order must be > 0");
+    }
+    if (params.c_step <= 0.0) {
+        throw std::runtime_error("Config error: optimize.trace_params: c_step must be > 0");
+    }
+    if (params.ds_min_factor <= 0.0) {
+        throw std::runtime_error("Config error: optimize.trace_params: ds_min_factor must be > 0");
+    }
+    if (params.ds_max_factor <= 0.0 || params.ds_max_factor < params.ds_min_factor) {
+        throw std::runtime_error("Config error: optimize.trace_params: ds_max_factor must be >= ds_min_factor and > 0");
+    }
+    if (params.adapt_grow < 1.0) {
+        throw std::runtime_error("Config error: optimize.trace_params: adapt_grow must be >= 1");
+    }
+    if (params.adapt_shrink <= 0.0 || params.adapt_shrink >= 1.0) {
+        throw std::runtime_error("Config error: optimize.trace_params: adapt_shrink must be in (0,1)");
+    }
+    if (params.tol_rel <= 0.0) {
+        throw std::runtime_error("Config error: optimize.trace_params: tol_rel must be > 0");
+    }
+
+    cfg.tracing_params = params;
+}
+
+// -----------------------------------------------------------------------------
+// Debug settings
+// -----------------------------------------------------------------------------
+static void parse_debug_settings(Config &cfg, const YAML::Node &root)
+{
+    // Start from current config values
+    DebugSettings dbg = cfg.debug;
+
+    const auto dn = root["debug"];
+    if (!dn) {
+        cfg.debug = dbg;
+        return;
+    }
+
+    // Primary flags (default to existing config values)
+    dbg.debug   = dn["debug"]   ? dn["debug"].as<bool>(dbg.debug)     : dbg.debug;
+    dbg.dry_run = dn["dry_run"] ? dn["dry_run"].as<bool>(dbg.dry_run) : dbg.dry_run;
+
+    const bool debug_enabled = dbg.debug;
+
+    // Helper: read a bool, defaulting to current, then gate by debug flag
+    auto gated = [&](const char *key, bool current) {
+        bool value = current;
+        const auto n = dn[key];
+        if (n) {
+            value = n.as<bool>(value);
+        }
+        return debug_enabled && value;
+    };
+
+    dbg.printBoundaryConditions = gated("printBoundaryConditions", dbg.printBoundaryConditions);
+    dbg.printHypreWarnings      = gated("printHypreWarnings",      dbg.printHypreWarnings);
+    dbg.dumpdata                = gated("dumpdata",                dbg.dumpdata);
+    dbg.debug_single_seed       = gated("debug_single_seed",       dbg.debug_single_seed);
+
+    cfg.debug = dbg;
+}
+
+
+static void parse_solver_params(Config &cfg, const YAML::Node &root)
+{
+    const auto s = root["solver"];
+    if (!s) return;
+
+    // Required/optional scalars with defaults
+    cfg.solver.atol       = s["atol"].as<double>(1.0);
+    cfg.solver.rtol       = s["rtol"].as<double>(0.0);
+    cfg.solver.maxiter    = s["maxiter"].as<int>(100000);
+    cfg.solver.printlevel = s["printlevel"].as<int>(1);
+    cfg.solver.axisymmetric  = s["axisymmetric"].as<bool>(false);
+
+    // Optional overrides (keep existing stored defaults if absent)
+    if (s["assembly_mode"])
+        cfg.solver.assembly_mode = s["assembly_mode"].as<std::string>(cfg.solver.assembly_mode);
+
+}
+
+static void parse_material_params(Config &cfg, const YAML::Node &root)
+{
+    const auto mats = root["materials"];
+    if (!mats) return;
+
+    for (const auto &it : mats) {
+        std::string name = it.first.as<std::string>();
+        const auto node  = it.second;
+
+        Material m;
+        m.id        = node["attr_id"]   ? node["attr_id"].as<int>(-1)   : -1;
+        m.epsilon_r = node["epsilon_r"] ? node["epsilon_r"].as<double>(1.0) : 1.0;
+
+        cfg.materials[name] = m;
+    }
+}
+static void parse_boundary_params(Config &cfg, const YAML::Node &root)
+{
+    const auto bnds = root["boundaries"];
+    if (!bnds) return;
+
+    for (const auto &it : bnds) {
+        std::string name = it.first.as<std::string>();
+        const auto node  = it.second;
+
+        Boundary b;
+        b.bdr_id = node["bdr_id"].as<int>(-1);
+        b.type   = node["type"].as<std::string>("dirichlet");
+        b.value  = node["value"].as<double>(0.0);
+
+        if (b.bdr_id <= 0)
+            throw std::runtime_error("Boundary '" + name + "' is missing a valid bdr_id");
+
+        cfg.boundaries[name] = b;
+    }
+}
 
 
 // -----------------------------------------------------------------------------
@@ -342,68 +533,27 @@ Config LoadFromNode(const YAML::Node &root) {
   if (!root["mesh"] || !root["mesh"]["path"]) {
     throw std::runtime_error("Config error: missing mandatory field 'mesh.path'");
   }
-  
   cfg.mesh.path = root["mesh"]["path"].as<std::string>("geometry.msh");
 
+  // --- Results save path 
   if (!root["save_path"]) {
     throw std::runtime_error("Config error: missing mandatory field 'save_path'");
   }
   cfg.save_path = root["save_path"].as<std::string>();
+  cfg.delete_files_present = root["delete_files_present"].as<bool>(false);
 
-  // --- Debug
-  if (root["debug"]) {
-    cfg.debug.debug      = root["debug"]["debug"].as<bool>(false);
-    cfg.debug.dry_run      = root["debug"]["dry_run"].as<bool>(false);
-  }
+  parse_debug_settings(cfg, root);
 
-  // --- Solver
-  if (root["solver"]) {
-    const auto s = root["solver"];
-    cfg.solver.atol        = s["atol"].as<double>(1.0);
-    cfg.solver.rtol        = s["rtol"].as<double>(0.0);
-    cfg.solver.maxiter     = s["maxiter"].as<int>(100000);
-    cfg.solver.printlevel  = s["printlevel"].as<int>(1);
-
-    // NEW: assembly/solver/precond (optional)
-    if (s["assembly_mode"]) cfg.solver.assembly_mode = s["assembly_mode"].as<std::string>(cfg.solver.assembly_mode);
-    if (s["solver"])        cfg.solver.solver        = s["solver"].as<std::string>(cfg.solver.solver);
-    if (s["precond"])       cfg.solver.precond       = s["precond"].as<std::string>(cfg.solver.precond);
-  }
-
-  // --- Materials
-  if (root["materials"]) {
-    for (const auto &it : root["materials"]) {
-      std::string name = it.first.as<std::string>();
-      auto node = it.second;
-      Material m;
-      m.id         = node["attr_id"]   ? node["attr_id"].as<int>(-1) : -1;
-      m.epsilon_r  = node["epsilon_r"] ? node["epsilon_r"].as<double>(1.0) : 1.0;
-      cfg.materials[name] = m;
-    }
-  }
-
-  // --- Boundaries
-  if (root["boundaries"]) {
-    for (const auto &it : root["boundaries"]) {
-      std::string name = it.first.as<std::string>();
-      auto node = it.second;
-      Boundary b;
-      b.bdr_id = node["bdr_id"].as<int>(-1);
-      b.type   = node["type"].as<std::string>("dirichlet");
-      b.value  = node["value"].as<double>(0.0);
-      if (b.bdr_id <= 0)
-          throw std::runtime_error("Boundary '" + name + "' is missing a valid bdr_id");
-      cfg.boundaries[name] = b;
-    }
-  }
-
+  parse_solver_params(cfg, root);
+  parse_material_params(cfg, root);
+  parse_boundary_params(cfg, root);
+  
   parse_compute(cfg, root);
   parse_sweeps(cfg, root);
   parse_fieldcage_network(cfg, root);
   parse_optimization(cfg, root);
-
-  // TODO Parse block for ElectronTraceParams - add parameter validation
-
+  parse_trace_params(cfg, root);
+  
   return cfg;
 }
 } // namespace

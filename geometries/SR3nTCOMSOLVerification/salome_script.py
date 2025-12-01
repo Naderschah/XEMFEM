@@ -2024,17 +2024,17 @@ def build_bottom_screen_holder_pin(part_doc, p, makeface, Sketch = None):
     yplus = p.BottomScreenHolderHeight*p.ShrinkageFactor
     pts = [
         [p.BottomScreenHolderRadialPosition, y0],
-        [p.BottomScreenHolderRadialPosition + p.BottomScreenHolderRadialPosition, y0],
-        [p.BottomScreenHolderRadialPosition + p.BottomScreenHolderRadialPosition, y0 + yplus],
+        [p.BottomScreenHolderRadialPosition + p.BottomScreenHolderWidth, y0],
+        [p.BottomScreenHolderRadialPosition + p.BottomScreenHolderWidth, y0 + yplus],
         [p.BottomScreenHolderRadialPosition, y0 + yplus],
     ]
     lines = create_polygon_from_corners(Sketch, pts)
 
     if MODELDO: model.do()
     if makeface:
-      CopperRingInsulatingFrame = model.addFace(part_doc, [Sketch.result()])
-      CopperRingInsulatingFrame.setName("BottomScreenHolderPin")
-      return CopperRingInsulatingFrame
+      BottomScreenHolderPin = model.addFace(part_doc, [Sketch.result()])
+      BottomScreenHolderPin.setName("BottomScreenHolderPin")
+      return BottomScreenHolderPin
     else:
       return Sketch
 
@@ -3087,6 +3087,7 @@ if __name__ == '__main__':
     GateInsulatingFrame      = build_gate_insulating_frame(Cryostat_doc, p, makeface)
     AnodeInsulatingFrame     = build_anode_insulating_frame(Cryostat_doc, p, makeface)
     CathodeInsulatingFrame   = build_cathode_insulating_frame(Cryostat_doc, p, makeface)
+    BottomScreenHolderPin    = build_bottom_screen_holder_pin(Cryostat_doc, p, makeface)
     TopScreenInsulatingFrame = build_topscreen_insulating_frame(Cryostat_doc, p, makeface)
     BottomStackInsulation    = build_bottomstack_insulating_frame(Cryostat_doc, p, makeface)
     BottomPMTReflectors      = build_bottom_PMT_reflectors(Cryostat_doc, p, makeface)
@@ -3123,7 +3124,7 @@ if __name__ == '__main__':
     selec_TopPMTReflectors         = safe_face_selections(TopPMTReflectors)
     selec_wallPTFE                 = safe_face_selections(wallPTFE)
     selec_CopperRingInsulation     = safe_face_selections(CopperRingInsulation)
-
+    selec_BottomScreenHolderPin    = safe_face_selections(BottomScreenHolderPin)
     # Background volumes (these are normally required; if you set one to None, this will just be [])
     selec_GXeCryostat = safe_face_selections(GXeCryostat)
     selec_LXeCryostat = safe_face_selections(LXeCryostat)
@@ -3157,6 +3158,7 @@ if __name__ == '__main__':
         + selec_TopPMTReflectors
         + selec_wallPTFE
         + selec_CopperRingInsulation
+        + selec_BottomScreenHolderPin
     )
 
     # ----------------------------------------------------------------------
@@ -3232,6 +3234,7 @@ if __name__ == '__main__':
     name_feature_and_faces(TopPMTReflectors, "TopPMTReflectorsOGGroup")
     name_feature_and_faces(wallPTFE, "WallPTFEOGGroup")
     name_feature_and_faces(CopperRingInsulation, "CopperRingInsulation")
+    name_feature_and_faces(BottomScreenHolderPin, "BottomScreenHolderPin")
 
     name_feature_and_faces(GXeCryostat, "GXeCryostatOGGroup")
     name_feature_and_faces(LXeCryostat, "LXeCryostatOGGroup")
@@ -3268,7 +3271,7 @@ if __name__ == '__main__':
     objects = all_ptfe + all_electrode
     # Want to use OG groups
     pre_partition_faces = []
-    [pre_partition_faces.extend(i.results()) for i in (Anode,Bell,Gate,Cathode,TopScreen,BottomScreen,CopperRing,FieldCage,FieldCageGuard,BottomPMTS,TopPMTS,GateInsulatingFrame,AnodeInsulatingFrame,CathodeInsulatingFrame,TopScreenInsulatingFrame,BottomStackInsulation,BottomPMTReflectors,TopPMTReflectors,wallPTFE)]
+    [pre_partition_faces.extend(i.results()) for i in (Anode,Bell,Gate,Cathode,TopScreen,BottomScreen,CopperRing,FieldCage,FieldCageGuard,BottomPMTS,TopPMTS,GateInsulatingFrame,AnodeInsulatingFrame,CathodeInsulatingFrame,TopScreenInsulatingFrame,BottomStackInsulation,BottomPMTReflectors,TopPMTReflectors,wallPTFE,CopperRingInsulation, BottomScreenHolderPin)]
     pre_partition = {
       i.name(): [get_area(i), *center_of_weight(Cryostat_doc,i)] for i in pre_partition_faces
     }
@@ -3320,22 +3323,20 @@ if __name__ == '__main__':
     # partition.result().subResult(idx).setName(name)
 
     #   Manually naming: 
-    partition.result().subResult(162-1).setName("LXeVol1") # Main Vol
-    partition.result().subResult(480-1).setName("LXeVol2") # Above Cathode
+    # THIS NEEDS TO BE CHECKED ON EACH CHANGE - The indeces change 
 
-    partition.result().subResult(1-1).setName("GXeVol1") # Main Vol
-    partition.result().subResult(3-1).setName("GXeVol2") # Above Bell
-    partition.result().subResult(158-1).setName("GXeVol3")# below some electrode volume 
-    partition.result().subResult(159-1).setName("GXeVol4")# electrode volume
-
-
-    partition.result().subResult(154-1).setName("PTFECutByInterface1")
-    partition.result().subResult(404-1).setName("PTFECutByInterface2")
-
-    partition.result().subResult(2-1).setName("Bell1") # Bell in GXe
-    partition.result().subResult(547-1).setName("Bell2") # Bell in LXe
+    partition.result().subResult(1   -1).setName("GXeVol1") # Main Vol
+    partition.result().subResult(2   -1).setName("Bell1") # Bell in GXe
+    partition.result().subResult(3   -1).setName("GXeVol2") # Above Bell
+    partition.result().subResult(154 -1).setName("PTFECutByInterface1")
+    partition.result().subResult(158 -1).setName("GXeVol3")# below some electrode volume 
+    partition.result().subResult(159 -1).setName("GXeVol4")# electrode volume
+    partition.result().subResult(162 -1).setName("LXeVol1") # Main Vol
+    partition.result().subResult(404 -1).setName("PTFECutByInterface2")
+    partition.result().subResult(480 -1).setName("LXeVol2") # Above Cathode
+    partition.result().subResult(549 -1).setName("LXeVol3") # Bell in LXe
+    partition.result().subResult(550 -1).setName("Bell2") # Bell in LXe
     print("Manually renamed 10")
-
     ### --------------------------   Make Meshing Groups -----------------------------
     # Make GXe submesh group
     GXe_faces = [
@@ -3352,13 +3353,14 @@ if __name__ == '__main__':
     LXe_faces = [
         model.selection("FACE", "LXeVol1"),
         model.selection("FACE", "LXeVol2"),
+        model.selection("FACE", "LXeVol3"),
     ]
     LXe_group = model.addGroup(Cryostat_doc, "FACE", LXe_faces)
     LXe_group.setName("LXe")
     LXe_group.result().setName("LXe")
 
     # Make PTFE submesh group
-    ptfe_names = ["GateInsulatingFrameOGGroup","AnodeInsulatingFrameOGGroup","CathodeInsulatingFrameOGGroup","TopScreenInsulatingFrameOGGroup","BottomStackInsulationOGGroup","BottomPMTReflectorsOGGroup","TopPMTReflectorsOGGroup","WallPTFEOGGroup",]
+    ptfe_names = ["GateInsulatingFrameOGGroup","AnodeInsulatingFrameOGGroup","CathodeInsulatingFrameOGGroup","TopScreenInsulatingFrameOGGroup","BottomStackInsulationOGGroup","BottomPMTReflectorsOGGroup","TopPMTReflectorsOGGroup","WallPTFEOGGroup","BottomScreenHolderPinOGGroup", "CopperRingInsulationOGGroup"]
     # Select PTFE based item names in the generated names in partitions
     ptfe_selec_names = [i for i in names_in_partition if any(j for j in ptfe_names if j in i)]
     PTFE_faces = [
@@ -3382,7 +3384,7 @@ if __name__ == '__main__':
     # We make residual faces which must include all electrode name based faces
     already_used = set(ptfe_selec_names) | {
         "LXeVol1", "LXeVol2", "GXeVol1", "GXeVol2", "GXeVol3", "GXeVol4",
-        "PTFECutByInterface1", "PTFECutByInterface2",# "Bell1", "Bell2"
+        "PTFECutByInterface1", "PTFECutByInterface2",
     }
     residual_faces = [i for i in names_in_partition if i not in already_used]
     
@@ -3510,20 +3512,75 @@ if __name__ == '__main__':
 
     model.publishToShaperStudy()
     import SHAPERSTUDY
-    partition_surfaces, GXeGroupPostPartition, LXeGroupPostPartition, PTFE_GroupPostPartition, MeshGroupPostPartition, *BC_Groups = SHAPERSTUDY.shape(model.featureStringId(partition))
-
+    # The order changed at some point
+    #partition_surfaces, GXeGroupPostPartition, LXeGroupPostPartition, PTFE_GroupPostPartition, MeshGroupPostPartition, *BC_Groups = SHAPERSTUDY.shape(model.featureStringId(partition))
+    all_groups = SHAPERSTUDY.shape(model.featureStringId(partition))
+    # Build a name to group dictionary
+    named_groups = {}
+    for g in all_groups:
+        name = g.GetName()
+        named_groups[name] = g
+    partition_surfaces      = named_groups.get("partition_surfaces")
+    GXeGroupPostPartition   = named_groups.get("GXe")
+    LXeGroupPostPartition   = named_groups.get("LXe")
+    PTFE_GroupPostPartition = named_groups.get("PTFE")
+    MeshGroupPostPartition  = named_groups.get("MeshGroupPostPartition")
+    used_names = (
+        "partition_surfaces",
+        "GXe",
+        "LXe",
+        "PTFE",
+        "MeshGroupPostPartition"
+    )
+    BC_Groups = [g for g in all_groups if g.GetName() not in used_names]
+    
+    
     from salome.smesh import smeshBuilder
     import SMESH
     model.end()
 
     smesh = smeshBuilder.New()
-
+    # smallest TopStackWireDiameter 216 micrometer 
+    # largest use PanelHeight (PTFE wall height)
     mesh = smesh.Mesh(MeshGroupPostPartition)
     NETGEN_1D_2D = mesh.Triangle(algo=smeshBuilder.NETGEN_1D2D)
-
+    # ---------- Configure Netgen Meshing rules -----------
+    # https://docs.salome-platform.org/latest/gui/NETGENPLUGIN/netgen_2d_3d_hypo_page.html
     NETGEN_2D_Params = NETGEN_1D_2D.Parameters()
-    NETGEN_2D_Params.SetFineness(smeshBuilder.Fine)          # VeryCoarse, Coarse, Moderate, Fine, VeryFine, Custom
-
+    # Get a preset
+    NETGEN_2D_Params.SetFineness(smeshBuilder.VeryFine)          # VeryCoarse, Coarse, Moderate, Fine, VeryFine, Custom
+    # --- General sizing ---
+    # Min and max edge lengths
+    NETGEN_2D_Params.SetMaxSize(p.PanelHeight / 100) # 1/100 of our largest part
+    NETGEN_2D_Params.SetMinSize(0)        # Dont set a minimum
+    NETGEN_2D_Params.SetGrowthRate(0.2)  # Mesh element growth rate relative to one another 
+    # --- Curvature-driven sizing ---
+    # Lots of curves we want to optimize against
+    NETGEN_2D_Params.SetUseSurfaceCurvature(1)
+    # Minimum segments per topological edge
+    NETGEN_2D_Params.SetNbSegPerEdge(1)
+    # For a circle the local target size is radius / N
+    # Number of segments on a circle then 2piR / (R/N) = 2piN
+    # So with N NbSegPerRadius we get ~2piN segments around the circle
+    # So for 12 edges on a circle we want ~2=N
+    NETGEN_2D_Params.SetNbSegPerRadius(1) # FIXME Debug use 4 at least on default
+    # Alternatively we can use this with a maximum allowed deviation - not enabled
+    NETGEN_2D_Params.SetChordalErrorEnabled(0)
+    NETGEN_2D_Params.SetChordalError(p.TopStackWireDiameter * 0.1)
+    # --- Local Size Control ---
+    # This can be used to set local sizes on individual shapes
+    # A source file can also be used
+    #NETGEN_2D_Params.SetLocalSizeOnShape
+    # --- Advanced Quality Algorithms ---
+    NETGEN_2D_Params.SetElemSizeWeight(0.3) # Prioritize mesh quality over accuracy
+    NETGEN_2D_Params.SetUseDelauney(1) # advancing front is a bit more fragile but sometimes nicer mesh
+    NETGEN_2D_Params.SetCheckOverlapping(1) # Surface elements cant overlap
+    NETGEN_2D_Params.SetCheckChartBoundary(2) # Strict checking
+    NETGEN_2D_Params.SetFuseEdges(1)        # Avoid Duplicate edges 
+    # --- Element Types and Optimization ---
+    NETGEN_2D_Params.SetQuadAllowed(False)  # Dont allow quad meshes
+    NETGEN_2D_Params.SetSecondOrder(0)      # Overkill for our purposes - also not sure MFEM supports this by default
+    NETGEN_2D_Params.SetOptimize(True)      # Post meshing optimization of the mesh 
     # ================================ Surface Groups ====================================
     MSH_GXe_face_group  = mesh.GroupOnGeom(GXeGroupPostPartition,  "GXeGroup",  SMESH.FACE)
     MSH_LXe_face_group  = mesh.GroupOnGeom(LXeGroupPostPartition,  "LXeGroup",  SMESH.FACE)
@@ -3561,9 +3618,9 @@ if __name__ == '__main__':
     mesh.RemoveGroup(free_borders_clean)
     mesh.RemoveGroup(all_bc_edges)
     mesh.RemoveGroup(free_border_edges)
-    
+    base_path = "/home/felix/MFEMElectrostatics/geometries/SR3nTCOMSOLVerification/"
     mesh.ExportMED(
-        "/home/felix/MFEMElectrostatics/geometries/SR3nTCOMSOLVerification/mesh.med",
+        "mesh.med",
         auto_groups=False,   # you control groups explicitly
         minor=42,            # MED 4.2
     )

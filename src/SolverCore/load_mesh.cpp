@@ -16,9 +16,7 @@ std::unique_ptr<mfem::ParMesh> CreateSimulationDomain(const std::string &path, M
   return pmesh;
 }
 
-void CheckAxisymmetricMesh(const mfem::Mesh &mesh,
-                                  int radial_coord_index,   // 0 = x, 1 = y
-                                  int axis_bdr_attr)        // 0 if not checking boundary tag
+void CheckAxisymmetricMesh(const mfem::Mesh &mesh, int radial_coord_index)
 {
     // 1) Must be a 2D meridian mesh
     if (mesh.Dimension() != 2)
@@ -44,36 +42,6 @@ void CheckAxisymmetricMesh(const mfem::Mesh &mesh,
                   << "         Axisymmetric meshes must lie entirely in r >= 0.\n"
                   << "         Minimum r detected: " << rmin << "\n";
         std::exit(1);
-    }
-
-    // 3) Optional: sanity check that boundary tag for axis is located at r = 0
-    if (axis_bdr_attr > 0)
-    {
-        bool found = false;
-        for (int be = 0; be < mesh.GetNBE(); ++be)
-        {
-            if (mesh.GetBdrAttribute(be) == axis_bdr_attr)
-            {
-                found = true;
-                mfem::Array<int> v;
-                mesh.GetBdrElementVertices(be, v);
-                for (int k = 0; k < v.Size(); ++k)
-                {
-                    const double* X = mesh.GetVertex(v[k]);
-                    if (std::fabs(X[radial_coord_index]) > 1e-12)
-                    {
-                        std::cerr << "[Axisym] WARNING: Boundary attribute "
-                                  << axis_bdr_attr << " is not located exactly at r=0.\n";
-                        break;
-                    }
-                }
-            }
-        }
-        if (!found)
-        {
-            std::cerr << "[Axisym] WARNING: No boundary elements found with axis_bdr_attr="
-                      << axis_bdr_attr << ".\n";
-        }
     }
 
     std::cout << "[Axisym] Mesh OK. r-range: [" << rmin << ", " << rmax << "]\n";

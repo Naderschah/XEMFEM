@@ -9,8 +9,7 @@
 class ElectricFieldPostprocessor
 {
 public:
-  explicit ElectricFieldPostprocessor(mfem::FiniteElementSpace &V_h1,
-                                      bool smooth_output = false);
+  explicit ElectricFieldPostprocessor(mfem::FiniteElementSpace &V_h1);
 
   std::unique_ptr<mfem::GridFunction> MakeE() const;     // vector field (vdim = dim)
   std::unique_ptr<mfem::GridFunction> MakeEmag() const;  // scalar field
@@ -25,8 +24,10 @@ public:
   void SaveComponents(const mfem::GridFunction &E,
                       const std::string &prefix) const;
 
+  void LoadE(mfem::GridFunction &E_out,
+             const std::string &prefix);
+
   int Dimension() const { return dim_; }
-  bool Smooth()   const { return smooth_; }
 
 private:
   // NOTE: these must be non-const pointers for MFEM APIs that expect non-const.
@@ -34,20 +35,18 @@ private:
   mfem::FiniteElementSpace     *fes_h1_;   // space of V (non-const ptr)
   int                            dim_;
   int                            p_;
-  bool                           smooth_;
 
   // Owned FE spaces (non-const pointers returned by get()).
   std::unique_ptr<mfem::FiniteElementSpace> sfes_L2_; // scalar L2
   std::unique_ptr<mfem::FiniteElementSpace> vfes_L2_; // vector L2 (vdim = dim)
 
-  std::unique_ptr<mfem::FiniteElementSpace> sfes_H1_; // scalar H1 (optional)
-  std::unique_ptr<mfem::FiniteElementSpace> vfes_H1_; // vector H1 (optional, vdim = dim)
+  std::unique_ptr<mfem::FiniteElementSpace> sfes_L2_mag_; // scalar L2(p=0)
 
   std::unique_ptr<mfem::DiscreteLinearOperator> gradOp_; // H1 → L2^dim
 };
 
 // -------- Optional simple wrappers (keep your old call style) --------
-void InitFieldPostprocessor(mfem::FiniteElementSpace &V_h1, bool smooth_output = false);
+void InitFieldPostprocessor(mfem::FiniteElementSpace &V_h1);
 std::unique_ptr<mfem::GridFunction> CreateE();     // vector container
 std::unique_ptr<mfem::GridFunction> CreateEmag();  // scalar container
 void ComputeElectricField(mfem::GridFunction &V, mfem::GridFunction &E, double scale = -1.0);

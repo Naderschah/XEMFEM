@@ -56,9 +56,12 @@ void run_optimization(const Config &init_cfg)
     // Build objective function (metrics -> scalar)
     ObjectiveFn objective_fn = make_objective_function(opt);
 
-    // Storage for all runs (for meta.txt)
+    // Storage for all runs and logging setup
     std::vector<OptRunRecord> records;
     records.reserve(opt.max_fun_evals > 0 ? opt.max_fun_evals : 100);
+    std::filesystem::path save_root(init_cfg.save_path);
+    OptimizationLogger logger(init_cfg.geometry_id, save_root);
+    logger.initialize();
 
     // Counter to label runs as run_0001, run_0002, ...
     std::size_t eval_counter = 0;
@@ -71,7 +74,8 @@ void run_optimization(const Config &init_cfg)
             x,
             eval_counter,
             objective_fn,
-            records
+            records,
+            &logger
         );
         ++eval_counter;
         return f;
@@ -107,7 +111,6 @@ void run_optimization(const Config &init_cfg)
     }
 
     // Write meta.txt summarizing all optimization runs
-    std::filesystem::path save_root(init_cfg.save_path);
     write_optimization_meta(init_cfg.geometry_id, save_root, records);
 }
 
@@ -175,8 +178,10 @@ double evaluate_one_optimization_point(const Config &base_cfg,
                                        const std::vector<double> &x,
                                        std::size_t eval_index,
                                        const ObjectiveFn &objective_fn,
-                                       std::vector<OptRunRecord> &records)
+                                       std::vector<OptRunRecord> &records,
+                                       OptimizationLogger *logger)
 {
+    std::cout << "[OPTIMIZATION] Running iteration " << eval_index << std::endl;
     // 1. Build config for this eval
     Config cfg = base_cfg;
 
@@ -214,6 +219,10 @@ double evaluate_one_optimization_point(const Config &base_cfg,
     rec.objective_value = f;
     rec.vars            = make_var_list(opt, x);
     records.push_back(std::move(rec));
+
+    if (logger) {
+      logger->append_record(records.back());
+    }
 
     return f;
 }
@@ -255,59 +264,6 @@ OptimizationMetrics compute_metrics(const Config &cfg, const SimulationResult &r
     return m;
 }
 
-double compute_civ(const Config &cfg, const SimulationResult &result)
-/*
-Compute Charge Insensitive Volume on the mesh
-Ie 1-(Volume where electrons reach liquid gas interface) / (Total Volume)
-*/
-{
-    using namespace mfem;
-
-    MFEM_VERIFY(result.mesh, "compute_civ: mesh is null");
-    MFEM_VERIFY(result.E,    "compute_civ: E field is null");
-
-    ParMesh &pmesh = *result.mesh;
-    const int dim  = pmesh.Dimension();
-    if (dim != 2) {
-        throw std::runtime_error("compute_civ currently implemented for 2D axisymmetric (r,z) only.");
-    }
-
-    CivSeeds seeds = ExtractCivSeeds(cfg, result);
-
-    // If no seeds throw error
-    if (seeds.positions.empty()) {
-        throw std::runtime_error("No seeds to compute CIV for");
-    }
-    
-    // TODO Add config entry for this
-    ElectronTraceParams trace_params;  
-    std::vector<ElectronTraceResult> trace_results;
-
-    TraceElectronFieldLines(result, cfg, seeds, trace_results);
-
-    MFEM_VERIFY(trace_results.size() == seeds.positions.size(), "TraceElectronFieldLines: result size mismatch");
-
-    double V_total = 0.0; // active TPC volume
-    double V_civ   = 0.0; // Volume where electrons do not reach liquid gas interface
-
-    for (std::size_t i = 0; i < seeds.positions.size(); ++i)
-    {
-        const double dV = seeds.volumes[i];
-        const ElectronTraceResult &res = trace_results[i];
-
-        V_total += dV;
-
-        // Check if hit liquid gas or not 
-        if (res.exit_code != ElectronExitCode::HitLiquidGas)
-        {
-            V_civ += dV;
-        }
-    }
-    // Return volume fraction
-    return V_civ / V_total;
-}
-
-
 // ================================ Helper function =================================
 void apply_opt_vars(Config &cfg, const OptimizationSettings &opt, const std::vector<double> &x)
 {
@@ -340,7 +296,7 @@ std::vector<std::pair<std::string, std::string>> make_var_list(const Optimizatio
     return vars;
 }
 
-// ============================= Write Meta function ===================================
+// ============================= Write Meta functions ===================================
 void write_optimization_meta(const std::string &geometry_id,
                              const std::filesystem::path &save_root,
                              const std::vector<OptRunRecord> &records)
@@ -388,4 +344,184 @@ void write_optimization_meta(const std::string &geometry_id,
         meta << "    V_solution: " << (run_dir / "solution_V.gf.000000").string() << "\n";
         meta << "\n";
     }
+}
+
+void write_single_opt_record_block(std::ostream &meta,
+                                   const std::filesystem::path &save_root,
+                                   const OptRunRecord &rec)
+{
+    std::filesystem::path run_dir = save_root / rec.run_dir_name;
+
+    meta << rec.run_dir_name << ":\n";
+    meta << "  objective: " << rec.objective_value << "\n";
+
+    meta << "  params:\n";
+    if (rec.vars.empty()) {
+        meta << "    (none)\n";
+    } else {
+        for (const auto &p : rec.vars) {
+            meta << "    " << p.first << " = " << p.second << "\n";
+        }
+    }
+
+    meta << "  outputs:\n";
+    meta << "    field_ex: "   << (run_dir / "field_ex.gf").string() << "\n";
+    meta << "    field_ey: "   << (run_dir / "field_ey.gf").string() << "\n";
+    meta << "    field_mag: "  << (run_dir / "field_mag.gf").string() << "\n";
+    meta << "    mesh: "       << (run_dir / "simulation_mesh.msh.000000").string() << "\n";
+    meta << "    V_solution: " << (run_dir / "solution_V.gf.000000").string() << "\n";
+    meta << "\n";
+}
+
+// ------------------------------
+// OptimizationLogger
+// ------------------------------
+
+OptimizationLogger::OptimizationLogger(std::string geometry_id,
+                                       std::filesystem::path save_root)
+    : geometry_id_(std::move(geometry_id))
+    , save_root_(std::move(save_root))
+    , initialized_(false)
+{
+}
+
+void OptimizationLogger::ensure_initialized()
+{
+    if (!initialized_) {
+        initialize();
+    }
+}
+
+void OptimizationLogger::initialize()
+{
+    if (initialized_) {
+        return;
+    }
+
+    std::error_code ec;
+    std::filesystem::create_directories(save_root_, ec);
+    if (ec) {
+        std::cerr << "Warning: could not create save_root directory "
+                  << save_root_ << " : " << ec.message() << "\n";
+        // continue; opening meta.txt may still work if directory exists already
+    }
+
+    std::ofstream meta(save_root_ / "meta.txt");
+    if (!meta) {
+        std::cerr << "Warning: could not open meta.txt for header in "
+                  << save_root_ << "\n";
+        return; // leave initialized_ = false
+    }
+
+    // Header: geometry_id + blank line, no "(no runs)" here
+    meta << geometry_id_ << "\n\n";
+
+    initialized_ = true;
+}
+
+void OptimizationLogger::append_record(const OptRunRecord &rec)
+{
+    ensure_initialized();
+    if (!initialized_) {
+        return;
+    }
+
+    std::ofstream meta(save_root_ / "meta.txt", std::ios::app);
+    if (!meta) {
+        std::cerr << "Warning: could not open meta.txt for appending in "
+                  << save_root_ << "\n";
+        return;
+    }
+
+    write_single_opt_record_block(meta, save_root_, rec);
+    meta.flush();
+}
+
+
+// Helper code for only running optimization no mesh creation
+
+static inline std::string rtrim(const std::string &s)
+{
+    std::string::size_type end = s.find_last_not_of(" \t\r\n");
+    if (end == std::string::npos) return "";
+    return s.substr(0, end + 1);
+}
+
+static std::vector<std::string> read_root_level_runs_from_meta(const std::filesystem::path &save_root)
+{
+    std::vector<std::string> runs;
+
+    std::filesystem::path meta_path = save_root / "meta.txt";
+    if (!std::filesystem::exists(meta_path)) {
+        return runs; // empty → no meta.txt
+    }
+
+    std::ifstream meta(meta_path);
+    if (!meta) {
+        std::cerr << "Warning: could not open meta.txt in " << save_root << "\n";
+        return runs;
+    }
+
+    std::string line;
+    while (std::getline(meta, line)) {
+        // Ignore empty lines
+        if (line.empty()) continue;
+
+        // Ignore lines starting with whitespace (indented blocks)
+        if (!line.empty() && (line[0] == ' ' || line[0] == '\t')) {
+            continue;
+        }
+
+        // We only care about root-level lines like "run_0001:"
+        std::string trimmed = rtrim(line);
+        if (trimmed.size() < 2) continue;
+
+        if (trimmed.back() == ':') {
+            std::string name = trimmed.substr(0, trimmed.size() - 1);
+            if (!name.empty()) {
+                runs.push_back(name);
+            }
+        }
+    }
+
+    return runs;
+}
+
+
+void run_metrics_only(const Config &cfg)
+{
+    std::filesystem::path save_root(cfg.save_path);
+
+    std::filesystem::path run_dir;
+
+    auto runs = read_root_level_runs_from_meta(save_root);
+    if (runs.empty()) {
+        run_dir = save_root;
+        std::cout << "[METRICS] meta.txt not found or empty; "
+                  << "using save_root directly: " << run_dir << "\n";
+    } else if (runs.size() == 1) {
+        run_dir = save_root / runs.front();
+        std::cout << "[METRICS] Found single run in meta.txt: "
+                  << runs.front() << " → " << run_dir << "\n";
+    } else {
+        std::cerr << "[METRICS] meta.txt contains multiple runs under "
+                  << save_root << ":\n";
+        for (const auto &r : runs) {
+            std::cerr << "  - " << r << "\n";
+        }
+        std::cerr << "Please specify which run to use (CLI/config).\n";
+        std::exit(1);
+    }
+
+    std::cout << "[METRICS] Loading results from " << run_dir << "\n";
+
+    SimulationResult result = load_results(cfg, run_dir);
+    if (!result.success) {
+        std::cerr << "[METRICS] Failed to load results: "
+                  << result.error_message << "\n";
+        std::exit(1);
+    }
+
+    OptimizationMetrics m = compute_metrics(cfg, result);
+    std::cout << "[METRICS] CIV = " << m.CIV << "\n";
 }

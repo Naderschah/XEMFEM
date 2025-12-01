@@ -1,12 +1,21 @@
+# src/Sweep/CMakeLists.txt
 cmake_minimum_required(VERSION 3.15)
-project(SWEEP LANGUAGES CXX)
-
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # ---------------------------------------------------------
-# --- Third-party packages (same as SolverCore) ----------
+# --- Standalone or subproject detection ------------------
+# ---------------------------------------------------------
+set(IS_SWEEP_TOPLEVEL OFF)
+if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    set(IS_SWEEP_TOPLEVEL ON)
+    project(SWEEP LANGUAGES CXX)
+
+    set(CMAKE_CXX_STANDARD 17)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+endif()
+
+# ---------------------------------------------------------
+# --- Third-party packages (any mode) ---------------------
 # ---------------------------------------------------------
 find_package(yaml-cpp REQUIRED)
 find_package(MPI REQUIRED)
@@ -16,36 +25,24 @@ set(MFEM_DIR "/home/felix/mfem-install/lib/cmake/mfem")
 find_package(MFEM CONFIG REQUIRED)
 
 # ---------------------------------------------------------
-# --- Config (YAML loader) --------------------------------
+# --- Dependencies when Sweep is standalone ---------------
 # ---------------------------------------------------------
-# Reuse the config and cmdLineParser subprojects from src/
-# Adjust relative paths if your layout is different.
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../config
-                 ${CMAKE_CURRENT_BINARY_DIR}/config)
+if (IS_SWEEP_TOPLEVEL)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../config
+                     ${CMAKE_CURRENT_BINARY_DIR}/config)
 
-#add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../plotting
-#                 ${CMAKE_CURRENT_BINARY_DIR}/plotting)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../cmdLineParser
+                     ${CMAKE_CURRENT_BINARY_DIR}/cmdLineParser)
 
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../cmdLineParser
-                 ${CMAKE_CURRENT_BINARY_DIR}/cmdLineParser)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../SolverCore
+                     ${CMAKE_CURRENT_BINARY_DIR}/SolverCore)
+endif()
 
 # ---------------------------------------------------------
 # --- Sweep executable ------------------------------------
 # ---------------------------------------------------------
-# main.cpp is your sweep main in src/Sweep
-# The other sources are the shared solver implementation from SolverCore.
 add_executable(SWEEP
   main.cpp
-
-  # From SolverCore
-  ../SolverCore/load_mesh.cpp
-  ../SolverCore/parallelization.cpp
-  ../SolverCore/boundary_conditions.cpp
-  ../SolverCore/solver.cpp
-  ../SolverCore/solver_api.cpp
-  ../SolverCore/ComputeElectricField.cpp
-
-  # From this module
   config_modification.cpp
   optimization.cpp
   trace_fieldlines.cpp
@@ -65,11 +62,6 @@ if(NOT neldermead_POPULATED)
     FetchContent_Populate(neldermead)
 endif()
 
-
-# Include paths:
-#  - MFEM headers
-#  - the src root (so that #include "Config.h" etc. work)
-#  - SolverCore (for solver_api.h etc.)
 target_include_directories(SWEEP PRIVATE
   ${MFEM_INCLUDE_DIRS}
   ${CMAKE_CURRENT_SOURCE_DIR}/..          # src/
@@ -77,13 +69,8 @@ target_include_directories(SWEEP PRIVATE
   ${neldermead_SOURCE_DIR}
 )
 
-# Link against the same libs as SOLVER
 target_link_libraries(SWEEP PRIVATE
-  mfem
-  config
-  #plotting
-  cmdLineParser
-  yaml-cpp
-  MPI::MPI_CXX
-  OpenMP::OpenMP_CXX
+  SolverCore
+  # SolverCore already links PUBLIC to:
+  # mfem, config, cmdLineParser, yaml-cpp, MPI::MPI_CXX, OpenMP::OpenMP_CXX
 )

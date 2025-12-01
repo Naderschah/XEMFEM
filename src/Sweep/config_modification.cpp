@@ -90,11 +90,8 @@ void set_cfg_value_from_string(Config &cfg, const std::string &path, const std::
         SolverSettings &s = cfg.solver;
 
         if (field == "axisymmetric")                 { s.axisymmetric = from_string<bool>(value);           return; }
-        if (field == "axisymmetric_r0_bd_attribute") { s.axisymmetric_r0_bd_attribute = from_string<int>(value); return; }
         if (field == "order")                        { s.order        = from_string<int>(value);            return; }
         if (field == "assembly_mode")                { s.assembly_mode = value;                             return; }
-        if (field == "solver")                       { s.solver        = value;                             return; }
-        if (field == "precond")                      { s.precond       = value;                             return; }
         if (field == "atol")                         { s.atol          = from_string<double>(value);        return; }
         if (field == "rtol")                         { s.rtol          = from_string<double>(value);        return; }
         if (field == "maxiter")                      { s.maxiter       = from_string<int>(value);           return; }

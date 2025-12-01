@@ -2,6 +2,11 @@ import numpy as np
 from pathlib import Path
 import re
 
+"""
+Top Field Cage has maximum index 
+Same with guard
+"""
+
 # ============================================================
 # 0. USER CONFIGURATION
 # ============================================================
@@ -25,11 +30,39 @@ fixed_boundaries = {
     "BC_TopScreen":    {"type": "dirichlet", "value": -100},
     "BC_Anode":        {"type": "dirichlet", "value": 4850},
     "BC_Gate":         {"type": "dirichlet", "value": +300},
-    "FieldCage_1":     {"type": "dirichlet", "value": +650.},
+    "FieldCage_71":    {"type": "dirichlet", "value": +650.},
     "BC_Cathode":      {"type": "dirichlet", "value": -2750},
     "BC_BottomScreen": {"type": "dirichlet", "value": -2750},
 
-    "BC_PMT":          {"type": "dirichlet", "value": -1500},
+    "BC_PMT":          {"type": "dirichlet", "value": -1300},
+    "BC_Bell":         grounded,
+    "BC_CopperRing":   grounded,
+    "BC_Cryostat":     grounded
+}
+fixed_boundaries = {
+    # SR0 config From Francescos thesis
+    "BC_TopScreen":    {"type": "dirichlet", "value": -900},
+    "BC_Anode":        {"type": "dirichlet", "value": 4900},
+    "BC_Gate":         {"type": "dirichlet", "value": 300},
+    "FieldCage_71":    {"type": "dirichlet", "value": 650.},
+    "BC_Cathode":      {"type": "dirichlet", "value": -2750},
+    "BC_BottomScreen": {"type": "dirichlet", "value": -1300},
+
+    "BC_PMT":          {"type": "dirichlet", "value": -1300},
+    "BC_Bell":         grounded,
+    "BC_CopperRing":   grounded,
+    "BC_Cryostat":     grounded
+}
+fixed_boundaries = {
+    # Design config From Francescos thesis
+    "BC_TopScreen":    {"type": "dirichlet", "value": -1500},
+    "BC_Anode":        {"type": "dirichlet", "value": 6500},
+    "BC_Gate":         {"type": "dirichlet", "value": -1000},
+    "FieldCage_71":    {"type": "dirichlet", "value": -950.},
+    "BC_Cathode":      {"type": "dirichlet", "value": -30000},
+    "BC_BottomScreen": {"type": "dirichlet", "value": -1500},
+
+    "BC_PMT":          {"type": "dirichlet", "value": -1300},
     "BC_Bell":         grounded,
     "BC_CopperRing":   grounded,
     "BC_Cryostat":     grounded
@@ -118,8 +151,8 @@ def solve_fieldcage_network(fieldcage_names, guard_names, V_top, V_cathode):
         return {}
 
     # Sort by index
-    fieldcage_names = sorted(fieldcage_names, key=lambda n: extract_index(n, "FieldCage_"))
-    guard_names     = sorted(guard_names,     key=lambda n: extract_index(n, "FieldCageGuard_"))
+    fieldcage_names = sorted(fieldcage_names, key=lambda n: extract_index(n, "FieldCage_"), reverse=True)
+    guard_names     = sorted(guard_names,     key=lambda n: extract_index(n, "FieldCageGuard_"), reverse=True)
 
     fc     = fieldcage_names
     guards = guard_names
@@ -260,15 +293,17 @@ def solve_fieldcage_network(fieldcage_names, guard_names, V_top, V_cathode):
 
 # Collect FieldCage_*/FieldCageGuard_* names from phys_map
 fieldcage_names = [name for name in boundaries_raw if name.startswith("FieldCage_")]
-# Circuit starts on field cage 1 
 guard_names     = [name for name in boundaries_raw if name.startswith("FieldCageGuard_")]
 
 print(f"[network] FieldCage_*: {len(fieldcage_names)}, FieldCageGuard_*: {len(guard_names)}")
 
+# Determine which FieldCage_* is the first in the chain (highest index)
+top_fc_name = max(fieldcage_names, key=lambda n: extract_index(n, "FieldCage_"))
+
 fc_voltages = solve_fieldcage_network(
     fieldcage_names,
     guard_names,
-    V_top=fixed_boundaries["FieldCage_1"]["value"],
+    V_top=fixed_boundaries[top_fc_name]["value"],
     V_cathode=fixed_boundaries["BC_Cathode"]["value"],
 )
 
@@ -342,8 +377,8 @@ else:
 # ============================================================
 
 # Sort fieldcage / guard names by index
-fieldcage_names_sorted = sorted(fieldcage_names, key=lambda n: extract_index(n, "FieldCage_"))
-guard_names_sorted     = sorted(guard_names,     key=lambda n: extract_index(n, "FieldCageGuard_"))
+fieldcage_names_sorted = sorted(fieldcage_names, key=lambda n: extract_index(n, "FieldCage_"), reverse=True)
+guard_names_sorted     = sorted(guard_names,     key=lambda n: extract_index(n, "FieldCageGuard_"), reverse=True)
 
 n_fc   = len(fieldcage_names_sorted)
 n_guard = len(guard_names_sorted)
@@ -352,18 +387,12 @@ nodes_desc = []
 edges_desc = []
 
 if n_fc > 0:
-    # FieldCage_1: fixed node, boundary "FieldCage_1"
-    #nodes_desc.append({
-    #    "name": "FieldCage_1",
-    #    "boundary": "FieldCage_1",
-    #    "fixed": True,
-    #})
-    # Remaining FieldCage_i: unknown
+    top_fc_name = max(fieldcage_names, key=lambda n: extract_index(n, "FieldCage_"))
     for name in fieldcage_names_sorted:
         nodes_desc.append({
             "name": name,
             "boundary": name,
-            "fixed": name.split("_")[1] == "1",
+            "fixed": (name == top_fc_name),
         })
 
 # Guard rings: all unknown
@@ -446,10 +475,13 @@ with output_path.open("w") as out:
 
     # then all FieldCage_*/FieldCageGuard_* rings
     def sort_key_ring(n):
-        # sort FieldCage_1..N, then FieldCageGuard_1..N in index order
+        # sort FieldCage_N..1, then FieldCageGuard_M..1 in index order (descending)
         if n.startswith("FieldCageGuard_"):
-            return (1, extract_index(n, "FieldCageGuard_") or 0)
-        return (0, extract_index(n, "FieldCage_") or 0)
+            idx = extract_index(n, "FieldCageGuard_") or 0
+            return (1, -idx)
+        else:
+            idx = extract_index(n, "FieldCage_") or 0
+            return (0, -idx)
 
     for name in sorted(boundaries_rings, key=sort_key_ring):
         if name in boundaries_fixed_out:

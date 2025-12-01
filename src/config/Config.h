@@ -50,10 +50,23 @@ struct ComputeSettings {
     DeviceRuntime   device;
 };
 
+// If debug enabled but nothing else we default to maximal debug
+struct DebugSettings
+{
+    bool debug                   = false;
+    bool dry_run                 = false; // TODO Remove? 
+    bool printBoundaryConditions = true;
+    bool printHypreWarnings      = true;
 
-struct DebugSettings {
-    bool debug = false;
-    bool dry_run = false; // TODO Remove ? Originally included for debugging likely not needed anymore
+    // Dump data to file where applicable
+    bool dumpdata              = false;
+
+    // If true, TraceElectronFieldLines (Optimization: CIV Computation) should:
+    //   - only trace seed with index debug_single_seed_index,
+    //   - optionally override c_step for that seed to a very small value.
+    bool   debug_single_seed         = false;
+    int    debug_single_seed_index   = -1; // Internal dont touch
+    double debug_c_step_override = 0.; // Overwrite c_step in debug mode
 };
 
 // -------------------- Circuit Computation --------------------------
@@ -110,6 +123,7 @@ struct OptimizeVar {
 };
 struct OptimizationSettings {
     bool enabled = false;
+    bool metrics_only = false; // Triggers no mesh simulation but computes metrics for all available simulations
 
     bool print_results = false;
 
@@ -132,11 +146,8 @@ struct OptimizationSettings {
 struct SolverSettings {
     // MFEM / solve controls
     bool axisymmetric = false;
-    int axisymmetric_r0_bd_attribute = 9999;
-    int    order = 3;
+    int order = 3;
     std::string assembly_mode = "partial";
-    std::string solver = "pcg";
-    std::string precond = "bommerang"; 
 
     double atol = 1.0;
     double rtol = 0.0;
@@ -146,19 +157,38 @@ struct SolverSettings {
 // Field Line tracing parameters 
 struct ElectronTraceParams
 {
-    double c_step         = 1;        // in Δt ≤ c_step * h_K / ||v||
-    double max_time       = 1e3;      // max integration "time"
-    int    max_steps      = 200;      // safety cap
-    double min_field_norm = 0.01;     // stop if ||E|| < threshold
-    double geom_tol       = 1e-6;     // tolerance for r,z boundary checks
-    int ir_order          = 1;        // Order to use for the integration rule in mesh element tracing
-    int integration_points = 1;       // Number of integration points to use per integration element (this or min points returned by order interp)
-    // Bounds over which to evaluate civ
-    double r_min = 0;
-    double r_max = 0.664;
-    double z_min = -1.5028;
-    double z_max = 0;
+    // Select CIV tracing method 
+    std::string method = "ColumnSweep"; // Or RandomSample or currently not working InformedSweep
+    // Maximum number of accepted steps per electron
+    int    max_steps      = 200;
+    // Tolerance for r,z boundary checks (axis clamp, z-range, etc.)
+    double geom_tol       = 1e-12;
+    // Order for integration rules used when seeding CIV / volume weights
+    int    ir_order       = 1;
+    // Field-line step control (first-order drift integrator)
+    // Base fraction of local element size used as nominal step:
+    //   ds_nominal = c_step * hK
+    double c_step         = 0.25;
+    // Adaptive bounds (for error control):
+    //   ds_min = ds_min_factor * hK; ds_max = ds_max_factor * hK
+    double ds_min_factor  = 0.001;  // small steps near strong curvature
+    double ds_max_factor  = 0.30;  // do not exceed frac of hK 
+    // Error-control parameters for embedded RK
+    double adapt_grow     = 1.5;   // max step growth per acceptance
+    double adapt_shrink   = 0.25;   // min shrink factor on rejection
+    double tol_rel        = 1e-3;  // relative position error tolerance
+    // Bounds over which to evaluate CIV / tracing domain
+    double r_min          = 0.0;
+    double r_max          = 0.664;
+    double z_min          = -1.5028;
+    double z_max          = 0.004;
+    // If true, treat r <= geom_tol as an exit condition 
+    bool   terminate_on_axis = true;
+    int    num_seed_elements = 0;  // <= 0 means "use all elements"
+    int    rng_seed = 67;       // We always want the same one - Currently not exposed
 
+    // Parameters specific to informed sweep
+    bool dump_civ_boundary = true;
 };
 
 // ------------------------- Actual Config Struct -------------------------------
@@ -167,6 +197,7 @@ struct Config {
     std::string geometry_id;
 
     std::string save_path; 
+    bool delete_files_present = false;
 
     MeshSettings mesh;
     ComputeSettings compute;

@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <iomanip>
+#include "HYPRE_parcsr_ls.h"
 
 // Writing residuals to file
 ResidualFileMonitor::ResidualFileMonitor(std::ostream &os)
@@ -98,7 +99,10 @@ std::unique_ptr<mfem::ParGridFunction> SolvePoisson(ParFiniteElementSpace &pfes,
 {
   using namespace mfem;
 
-  if (cfg->debug.debug) {std::cout << "In Poisson Solver" << std::endl;}
+  if (cfg->debug.debug) {std::cout << "[DEBUG] In Poisson Solver" << std::endl;}
+
+  const std::filesystem::path directory(cfg->save_path);
+  const std::filesystem::path log_path = directory / "solver.log";
 
   const Mesh &mesh = *pfes.GetMesh();
   PWConstCoefficient epsilon_pw = BuildEpsilonPWConst(mesh, cfg);
@@ -121,10 +125,20 @@ std::unique_ptr<mfem::ParGridFunction> SolvePoisson(ParFiniteElementSpace &pfes,
   make_prec = [=](OperatorHandle &Ah) -> std::unique_ptr<Solver>
   {
     auto *Ap = Ah.As<HypreParMatrix>();
-    return std::make_unique<HypreBoomerAMG>(*Ap);
+    auto prec = std::make_unique<HypreBoomerAMG>(*Ap);
+
+    // Make hypre actually print something (level > 0)
+    prec->SetPrintLevel(cfg->solver.printlevel);
+
+    // Get underlying hypre solver object and set its print file
+    {
+      HYPRE_Solver hsolver = (HYPRE_Solver)(*prec);
+      HYPRE_BoomerAMGSetPrintFileName(hsolver, log_path.c_str());
+    }
+
+    return prec;
   };
 
-  // ---------- shared body ----------
   *V = 0.0;
   ApplyDirichletValues(*V, dirichlet_attr, cfg);
 
@@ -146,8 +160,9 @@ std::unique_ptr<mfem::ParGridFunction> SolvePoisson(ParFiniteElementSpace &pfes,
   // Future debug note: This only started happening when I compiled hypre inside the Dockerfile, up until that point this didnt 
   // happen, but OpenMP didnt work either (ie always 1 thread never more)  
   if (auto *hypre_prec = dynamic_cast<mfem::HypreSolver*>(P.get()))
-  {
-      hypre_prec->SetErrorMode(mfem::HypreSolver::WARN_HYPRE_ERRORS);
+  {   
+    if (cfg->debug.printHypreWarnings) hypre_prec->SetErrorMode(mfem::HypreSolver::WARN_HYPRE_ERRORS);
+    else hypre_prec->SetErrorMode(mfem::HypreSolver::IGNORE_HYPRE_ERRORS);
   }
 
   CGSolver cg(comm);
@@ -159,8 +174,6 @@ std::unique_ptr<mfem::ParGridFunction> SolvePoisson(ParFiniteElementSpace &pfes,
   cg.SetPrintLevel(cfg->solver.printlevel);
   // Print to file TODO need to homogenixze my saving customs
   // already  have a save path but need to pass a per run save path
-  const std::filesystem::path directory(cfg->save_path);
-  const std::filesystem::path log_path = directory / "solver.log";
   std::ofstream it_log(log_path);
   ResidualFileMonitor monitor(it_log);
   cg.SetMonitor(monitor);

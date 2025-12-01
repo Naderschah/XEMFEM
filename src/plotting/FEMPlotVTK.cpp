@@ -7,8 +7,16 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <cstdlib>  
+#include <cstring>
 
 // VTK includes
+#include <vtkPlane.h>
+#include <vtkPlanes.h>
+#include <vtkTextProperty.h>
+#include <vtkPlanes.h>
+#include <vtkTextActor.h>
+#include <vtkTextProperty.h>
 #include <vtkXMLUnstructuredGridReader.h>
 #include <vtkUnstructuredGrid.h>
 #include <vtkPointData.h>
@@ -35,20 +43,49 @@
 #include <vtkDataObject.h>
 #include <vtkDataSet.h>
 #include <vtkImageData.h>
-#include <cstring> 
-
+#include <vtkLookupTable.h>
+#include <vtkColorTransferFunction.h>
+#include <vtkScalarBarActor.h>
+#include <vtkCubeAxesActor.h>
+#include <vtkContourFilter.h>
+#include <vtkColorSeries.h>
 #include <vtkPolyData.h>
 #include <vtkPolyDataMapper.h>
 #include <vtkRenderWindowInteractor.h>
 #include <vtkCellArray.h>
 #include <vtkPoints.h>
-
+#include <vtkGraphicsFactory.h>
+#include <vtkActor.h>
+#include <vtkGraphicsFactory.h>
+#include <vtkNamedColors.h>
+#include <vtkNew.h>
+#include <vtkPNGWriter.h>
+#include <vtkPolyDataMapper.h>
+#include <vtkProperty.h>
+#include <vtkRenderWindow.h>
+#include <vtkRenderer.h>
+#include <vtkSphereSource.h>
+#include <vtkWindowToImageFilter.h>
+#include <vtkDataSetMapper.h>
+#include <vtkClipDataSet.h>
+#include <vtkBox.h>
+#include <vtkExtractGeometry.h>
+// Mesh IO
+#include <vtkXMLUnstructuredGridReader.h>
+#include <vtkUnstructuredGrid.h>
+// Scalars
+#include <vtkPointData.h>
+#include <vtkDataArray.h>
+// Seeding for Streamlines
+#include <vtkBoundedPointSource.h>
 
 namespace FEMPlot
 {
-// ---------------------------------------------------------------------------
-// Core helpers
-// ---------------------------------------------------------------------------
+
+
+// -----------------------------------------------------------------------------
+// Core IO
+// -----------------------------------------------------------------------------
 
 vtkSmartPointer<vtkUnstructuredGrid>
 LoadGridFromVTU(const std::string& filename)
@@ -56,47 +93,280 @@ LoadGridFromVTU(const std::string& filename)
     auto reader = vtkSmartPointer<vtkXMLUnstructuredGridReader>::New();
     reader->SetFileName(filename.c_str());
     reader->Update();
-    return reader->GetOutput();
+
+    vtkUnstructuredGrid* ug = reader->GetOutput();
+    if (!ug)
+    {
+        std::cerr << "[LoadGridFromVTU] ERROR: reader->GetOutput() is null for '"
+                  << filename << "'.\n";
+        return nullptr;
+    }
+
+    // Wrap in smart pointer explicitly (reader owns it internally, but this
+    // pattern is what we already use elsewhere).
+    auto result = vtkSmartPointer<vtkUnstructuredGrid>::New();
+    result->ShallowCopy(ug);
+    return result;
 }
 
-vtkSmartPointer<vtkDataSetMapper>
-CreateScalarMapper(vtkUnstructuredGrid* grid,
-                   const std::string& scalar_name,
-                   double range_min,
-                   double range_max)
+// -----------------------------------------------------------------------------
+// Geometry clipping (ROI support)
+// -----------------------------------------------------------------------------
+
+static vtkSmartPointer<vtkUnstructuredGrid>
+ClipToBox(vtkUnstructuredGrid* grid, const double bounds[6])
 {
-    auto mapper = vtkSmartPointer<vtkDataSetMapper>::New();
-    mapper->SetInputData(grid);
-
-    // Use named point-data array instead of relying on "active" scalars.
-    mapper->SetScalarModeToUsePointFieldData();
-    mapper->SelectColorArray(scalar_name.c_str());
-    mapper->ScalarVisibilityOn();
-
-    // If explicit range given, use it; otherwise use global range of the array.
-    if (!std::isnan(range_min) && !std::isnan(range_max))
+    if (!grid)
     {
-        mapper->SetScalarRange(range_min, range_max);
+        std::cerr << "[ClipToBox] ERROR: grid is null.\n";
+        return nullptr;
     }
-    else
+
+    double b[6] = {
+        bounds[0], bounds[1],
+        bounds[2], bounds[3],
+        bounds[4], bounds[5]
+    };
+
+    // If this is effectively a 2D slice in z, give it a tiny thickness so
+    // VTK filters don't get confused by zero extent.
+    if (b[4] == b[5])
     {
-        auto pd = grid->GetPointData();
-        if (auto arr = pd->GetArray(scalar_name.c_str()))
+        const double dz = 1e-6 * std::max({b[1] - b[0], b[3] - b[2], 1.0});
+        b[4] -= dz * 0.5;
+        b[5] += dz * 0.5;
+    }
+
+    vtkNew<vtkBox> box;
+    box->SetBounds(b); // xmin,xmax, ymin,ymax, zmin,zmax
+
+    vtkNew<vtkExtractGeometry> extract;
+    extract->SetInputData(grid);
+    extract->SetImplicitFunction(box);
+    extract->ExtractInsideOn();         // keep cells inside the box
+    extract->ExtractBoundaryCellsOn();
+    extract->Update();
+
+    auto clipped = vtkSmartPointer<vtkUnstructuredGrid>::New();
+    clipped->ShallowCopy(extract->GetOutput());
+    return clipped;
+}
+
+// -----------------------------------------------------------------------------
+// Streamlines overlay
+// -----------------------------------------------------------------------------
+
+void AddStreamlines(
+    vtkDataSet* dataset,               // MUST contain the geometry
+    vtkRenderer* renderer,
+    const Result& result,              // E-field at VTK points
+    const StreamlineConfig& cfg)
+{
+    if (!dataset || !renderer)
+    {
+        std::cerr << "[AddStreamlines] ERROR: dataset or renderer is null.\n";
+        return;
+    }
+
+    vtkIdType npts = dataset->GetNumberOfPoints();
+    if (npts <= 0)
+    {
+        std::cerr << "[AddStreamlines] WARNING: dataset has no points.\n";
+        return;
+    }
+
+    if (result.E_at_points.size() != static_cast<std::size_t>(npts))
+    {
+        std::cerr << "[AddStreamlines] ERROR: E_at_points size ("
+                  << result.E_at_points.size()
+                  << ") does not match number of VTK points ("
+                  << npts << ").\n";
+        return;
+    }
+
+    // ---------------------------------------------------------------------
+    // 1) Attach / update vector field E(x) on the dataset
+    // ---------------------------------------------------------------------
+    auto pd = dataset->GetPointData();
+    if (!pd)
+    {
+        std::cerr << "[AddStreamlines] ERROR: dataset has no point data.\n";
+        return;
+    }
+
+    vtkDataArray* existingE = pd->GetArray("E");
+    vtkSmartPointer<vtkDoubleArray> evec;
+
+    if (existingE)
+    {
+        // Reuse existing array if it is 3-component and same size.
+        if (existingE->GetNumberOfComponents() == 3 &&
+            existingE->GetNumberOfTuples() == npts)
         {
-            double r[2];
-            arr->GetRange(r);
-            mapper->SetScalarRange(r);
+            evec = vtkDoubleArray::SafeDownCast(existingE);
         }
         else
         {
-            std::cerr << "Warning: scalar array '" << scalar_name
-                      << "' not found on grid; mapper will have no scalars.\n";
-            mapper->ScalarVisibilityOff();
+            // Replace with a fresh, correctly-sized array.
+            evec = vtkSmartPointer<vtkDoubleArray>::New();
+            evec->SetName("E");
+            evec->SetNumberOfComponents(3);
+            evec->SetNumberOfTuples(npts);
+            pd->RemoveArray("E");
+            pd->AddArray(evec);
         }
     }
+    else
+    {
+        evec = vtkSmartPointer<vtkDoubleArray>::New();
+        evec->SetName("E");
+        evec->SetNumberOfComponents(3);
+        evec->SetNumberOfTuples(npts);
+        pd->AddArray(evec);
+    }
 
-    return mapper;
+    for (vtkIdType i = 0; i < npts; ++i)
+    {
+        const auto& e = result.E_at_points[static_cast<std::size_t>(i)];
+        double tuple[3] = { e[0], e[1], e[2] };
+        evec->SetTuple(i, tuple);
+    }
+
+    pd->SetActiveVectors("E");
+
+    // ---------------------------------------------------------------------
+    // 2) Compute bounding box → characteristic radius for tube radius
+    // ---------------------------------------------------------------------
+    double bounds[6];
+    dataset->GetBounds(bounds);
+
+    const double dx = bounds[1] - bounds[0];
+    const double dy = bounds[3] - bounds[2];
+    const double dz = bounds[5] - bounds[4];
+    const double radius = 0.5 * std::max({dx, dy, dz, 1e-6});
+
+    // ---------------------------------------------------------------------
+    // 3) Seed generator (within dataset bounds or, after clipping, within ROI)
+    // ---------------------------------------------------------------------
+    auto seeds = vtkSmartPointer<vtkBoundedPointSource>::New();
+    seeds->SetNumberOfPoints(cfg.n_seeds);
+    seeds->SetBounds(bounds);         // current dataset bounding box
+
+    // ---------------------------------------------------------------------
+    // 4) Stream tracer
+    // ---------------------------------------------------------------------
+    auto rk4 = vtkSmartPointer<vtkRungeKutta4>::New();
+
+    auto tracer = vtkSmartPointer<vtkStreamTracer>::New();
+    tracer->SetInputData(dataset);            // dataset WITH vectors
+    tracer->SetSourceConnection(seeds->GetOutputPort());
+    tracer->SetIntegrator(rk4);
+    tracer->SetIntegrationDirectionToBoth();
+    tracer->SetMaximumPropagation(cfg.max_propagation);
+    tracer->SetInitialIntegrationStep(cfg.initial_step);
+    tracer->SetMinimumIntegrationStep(cfg.min_step);
+    tracer->SetMaximumIntegrationStep(cfg.max_step);
+    tracer->SetMaximumNumberOfSteps(cfg.max_steps);
+    tracer->SetComputeVorticity(false);       // avoid extra computation
+
+    // ---------------------------------------------------------------------
+    // 5) Tubes
+    // ---------------------------------------------------------------------
+    auto tubes = vtkSmartPointer<vtkTubeFilter>::New();
+    tubes->SetInputConnection(tracer->GetOutputPort());
+    tubes->SetRadius(radius * cfg.tube_radius_rel);
+    tubes->SetNumberOfSides(10);
+    tubes->CappingOn();
+
+    // ---------------------------------------------------------------------
+    // 6) Mapper + Actor
+    // ---------------------------------------------------------------------
+    auto mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
+    mapper->SetInputConnection(tubes->GetOutputPort());
+    mapper->ScalarVisibilityOff();            // plain-colored tubes
+
+    auto actor = vtkSmartPointer<vtkActor>::New();
+    actor->SetMapper(mapper);
+    actor->GetProperty()->SetColor(1.0, 1.0, 1.0);
+    actor->GetProperty()->SetOpacity(0.75);
+    actor->GetProperty()->SetInterpolationToPhong();
+
+    renderer->AddActor(actor);
 }
+
+// -----------------------------------------------------------------------------
+// Offscreen rendering
+// -----------------------------------------------------------------------------
+
+// New, more general overload for a pre-configured render window.
+// This will be used later for multi-viewport layouts (field + colorbar).
+static void RenderOffscreenPNG(vtkRenderWindow* renderWindow,
+                               const std::string& filename)
+{
+    if (!renderWindow)
+    {
+        std::cerr << "RenderOffscreenPNG(window) ERROR: renderWindow is null\n";
+        return;
+    }
+
+    // Ensure offscreen mode and render
+    renderWindow->SetOffScreenRendering(1);
+    renderWindow->Render();
+
+    vtkNew<vtkWindowToImageFilter> windowToImageFilter;
+    windowToImageFilter->SetInput(renderWindow);
+    //windowToImageFilter->SetInputBufferTypeToRGBA();
+    windowToImageFilter->ReadFrontBufferOff();
+    windowToImageFilter->Update();
+
+    vtkImageData* image = windowToImageFilter->GetOutput();
+    if (!image || !image->GetScalarPointer())
+    {
+        std::cerr << "RenderOffscreenPNG(window) ERROR: "
+                     "WindowToImageFilter produced null image\n";
+        return;
+    }
+
+    vtkNew<vtkPNGWriter> writer;
+    writer->SetFileName(filename.c_str());
+    writer->SetInputConnection(windowToImageFilter->GetOutputPort());
+    writer->Write();
+}
+
+// Backwards-compatible wrapper for the existing single-renderer usage.
+// Internally forwards to the window-based overload above.
+void RenderOffscreenPNG(vtkRenderer* renderer,
+                        const std::string& filename,
+                        int width,
+                        int height)
+{
+    if (!renderer)
+    {
+        std::cerr << "RenderOffscreenPNG(renderer) ERROR: renderer is null\n";
+        return;
+    }
+
+    // If renderer is already attached to some window, detach it first.
+    if (renderer->GetRenderWindow())
+    {
+        std::cerr << "RenderOffscreenPNG(renderer): renderer already "
+                     "has a RenderWindow; detaching it before capture.\n";
+        renderer->GetRenderWindow()->RemoveRenderer(renderer);
+    }
+
+    vtkNew<vtkRenderWindow> renderWindow;
+    renderWindow->SetOffScreenRendering(1);
+    renderWindow->SetSize(width, height);
+    renderWindow->AddRenderer(renderer);
+    // Ensure the window background is white as well
+
+    // Use the new, window-based helper
+    RenderOffscreenPNG(renderWindow, filename);
+
+    // Detach the renderer so it is in a clean state if you ever reuse it.
+    renderWindow->RemoveRenderer(renderer);
+}
+
 
 vtkSmartPointer<vtkActor>
 CreateMeshActor(vtkSmartPointer<vtkDataSetMapper> mapper,
@@ -110,126 +380,19 @@ CreateMeshActor(vtkSmartPointer<vtkDataSetMapper> mapper,
     prop->SetEdgeVisibility(show_edges ? 1 : 0);
     prop->SetLineWidth(line_width);
 
+    // Optionally tweak surface appearance here if needed, e.g.:
+    // prop->SetInterpolationToPhong();
+
     return actor;
 }
-
-vtkSmartPointer<vtkRenderer>
-CreateRendererWithActor(vtkSmartPointer<vtkActor> actor,
-                        const double* background)
-{
-    auto renderer = vtkSmartPointer<vtkRenderer>::New();
-    renderer->AddActor(actor);
-
-    double bg[3] = {1.0, 1.0, 1.0};
-    if (background)
-    {
-        bg[0] = background[0];
-        bg[1] = background[1];
-        bg[2] = background[2];
-    }
-    renderer->SetBackground(bg[0], bg[1], bg[2]);
-
-    return renderer;
-}
-
-std::pair<double, double>
-ComputeLocalScalarRange(vtkUnstructuredGrid* grid,
-                        const std::string& scalar_name,
-                        const double region_bounds[6])
-{
-    auto pd = grid->GetPointData();
-    auto scalars = pd->GetArray(scalar_name.c_str());
-    if (!scalars)
-    {
-        std::cerr << "Warning: scalar array '" << scalar_name
-                  << "' not found; using global range.\n";
-        double global_range[2] = {0.0, 0.0};
-        pd->GetScalars() ? pd->GetScalars()->GetRange(global_range)
-                         : void();
-        return {global_range[0], global_range[1]};
-    }
-
-    double local_min = std::numeric_limits<double>::infinity();
-    double local_max = -std::numeric_limits<double>::infinity();
-
-    vtkIdType npts = grid->GetNumberOfPoints();
-    for (vtkIdType i = 0; i < npts; ++i)
-    {
-        double p[3];
-        grid->GetPoint(i, p);
-
-        if (p[0] < region_bounds[0] || p[0] > region_bounds[1] ||
-            p[1] < region_bounds[2] || p[1] > region_bounds[3] ||
-            p[2] < region_bounds[4] || p[2] > region_bounds[5])
-        {
-            continue;
-        }
-
-        double val = scalars->GetComponent(i, 0);
-        if (val < local_min) local_min = val;
-        if (val > local_max) local_max = val;
-    }
-
-    if (!std::isfinite(local_min) || !std::isfinite(local_max))
-    {
-        double r[2];
-        scalars->GetRange(r);
-        return {r[0], r[1]};
-    }
-
-    return {local_min, local_max};
-}
-
-// ---------------------------------------------------------------------------
-// High-level plot builders
-// ---------------------------------------------------------------------------
-
-vtkSmartPointer<vtkRenderer>
-CreatePotentialRenderer(vtkUnstructuredGrid* grid,
-                        const std::string& scalar_name)
-{
-    auto mapper = CreateScalarMapper(grid, scalar_name);
-    auto actor  = CreateMeshActor(mapper, true, 1.0);
-    auto renderer = CreateRendererWithActor(actor);
-
-    double bounds[6];
-    grid->GetBounds(bounds);
-    renderer->ResetCamera(bounds);
-
-    EnsureScalarBar(renderer, scalar_name);
-
-    return renderer;
-}
-
-vtkSmartPointer<vtkRenderer>
-CreateZoomedRenderer(vtkUnstructuredGrid* grid,
-                     const std::string& scalar_name,
-                     const double region_bounds[6])
-{
-    auto range = ComputeLocalScalarRange(grid, scalar_name, region_bounds);
-    auto mapper = CreateScalarMapper(grid, scalar_name, range.first, range.second);
-    auto actor  = CreateMeshActor(mapper, true, 1.0);
-    auto renderer = CreateRendererWithActor(actor);
-
-    // Zoom camera to region bounds
-    double b[6];
-    std::copy(region_bounds, region_bounds + 6, b);
-    renderer->ResetCamera(b);
-
-    EnsureScalarBar(renderer, scalar_name);
-
-    return renderer;
-}
-
-// ---------------------------------------------------------------------------
-// Decorations and overlays
-// ---------------------------------------------------------------------------
 
 void AddXYAxes(vtkRenderer* renderer,
                const double bounds[6],
                const std::string& x_label,
                const std::string& y_label,
-               const std::string& z_label)
+               const std::string& z_label,
+               int axis_title_font_size,
+               int axis_label_font_size)
 {
     if (!renderer)
         return;
@@ -237,6 +400,8 @@ void AddXYAxes(vtkRenderer* renderer,
     auto axes = vtkSmartPointer<vtkCubeAxesActor>::New();
     axes->SetBounds(bounds);
     axes->SetCamera(renderer->GetActiveCamera());
+
+    axes->SetScreenSize(15.0);
 
     axes->SetXTitle(x_label.c_str());
     axes->SetYTitle(y_label.c_str());
@@ -248,293 +413,941 @@ void AddXYAxes(vtkRenderer* renderer,
 
     axes->SetFlyModeToClosestTriad();
 
-    renderer->AddActor(axes);
-}
+    // Symmetric tick marks (both sides)
+    axes->SetTickLocation(vtkCubeAxesActor::VTK_TICKS_BOTH);
 
-void EnsureScalarBar(vtkRenderer* renderer,
-                     const std::string& title)
-{
-    if (!renderer)
-        return;
-
-    // Check if scalar bar already exists
-    auto actors2D = renderer->GetActors2D();
-    actors2D->InitTraversal();
-    while (auto a2d = actors2D->GetNextActor2D())
+    // Text styling for all axes with per-view font sizes
+    for (int i = 0; i < 3; ++i)
     {
-        if (vtkScalarBarActor::SafeDownCast(a2d))
-            return;
-    }
-
-    // Find a DataSetMapper with LUT
-    vtkDataSetMapper* mapper_with_lut = nullptr;
-    auto actors3D = renderer->GetActors();
-    actors3D->InitTraversal();
-    while (auto a = actors3D->GetNextActor())
-    {
-        if (auto m = vtkDataSetMapper::SafeDownCast(a->GetMapper()))
+        if (auto tprop = axes->GetTitleTextProperty(i))
         {
-            if (m->GetLookupTable())
-            {
-                mapper_with_lut = m;
-                break;
-            }
+            tprop->SetFontFamilyToArial();
+            tprop->SetColor(0.0, 0.0, 0.0);
+            tprop->SetFontSize(axis_title_font_size);
+        }
+        if (auto lprop = axes->GetLabelTextProperty(i))
+        {
+            lprop->SetFontFamilyToArial();
+            lprop->SetColor(0.0, 0.0, 0.0);
+            lprop->SetFontSize(axis_label_font_size);
         }
     }
 
-    if (!mapper_with_lut)
-        return;
+    axes->GetXAxesLinesProperty()->SetColor(0.0, 0.0, 0.0);
+    axes->GetYAxesLinesProperty()->SetColor(0.0, 0.0, 0.0);
+    axes->GetZAxesLinesProperty()->SetColor(0.0, 0.0, 0.0);
 
-    auto scalar_bar = vtkSmartPointer<vtkScalarBarActor>::New();
-    scalar_bar->SetLookupTable(mapper_with_lut->GetLookupTable());
-    if (!title.empty())
-        scalar_bar->SetTitle(title.c_str());
-    scalar_bar->SetNumberOfLabels(4);
-
-    renderer->AddActor2D(scalar_bar);
+    renderer->AddActor(axes);
 }
 
-void AddStreamlines(vtkUnstructuredGrid* grid,
-                    vtkRenderer* renderer,
-                    const Result& result,
-                    const StreamlineConfig& cfg)
+// Adjust image width/height so that the FIELD viewport has roughly the same
+// aspect ratio as the physical region, while reserving some room for title
+// and colorbar. The longest side is capped to 3840 pixels.
+static PlottingOptions
+FitPlottingOptionsToRegion(const PlottingOptions& base,
+                           const double[6],
+                           bool)
 {
-    if (!grid || !renderer)
-        return;
+    return base;  // fixed resolution for all plots
+}
 
-    vtkIdType npts = grid->GetNumberOfPoints();
-    if (static_cast<size_t>(npts) != result.E_at_points.size())
+// Compute scalar statistics on the given dataset for the given array name.
+// Currently: uses all points of the dataset; the "ROI" is whatever dataset
+// you pass (so if you cropped first, this is already local).
+static ScalarStats ComputeScalarStats(vtkDataSet* ds,
+                                      const std::string& scalar_name)
+{
+    ScalarStats stats;
+
+    if (!ds)
     {
-        std::cerr << "Error: AddStreamlines - E_at_points size mismatch.\n";
-        return;
+        std::cerr << "[ComputeScalarStats] ERROR: dataset is null.\n";
+        return stats;
     }
 
-    // Attach vector field as point-data array
-    auto vec_array = vtkSmartPointer<vtkDoubleArray>::New();
-    vec_array->SetName("E");
-    vec_array->SetNumberOfComponents(3);
-    vec_array->SetNumberOfTuples(npts);
+    vtkPointData* pd = ds->GetPointData();
+    if (!pd)
+    {
+        std::cerr << "[ComputeScalarStats] ERROR: no point data.\n";
+        return stats;
+    }
+
+    vtkDataArray* arr = pd->GetArray(scalar_name.c_str());
+    if (!arr)
+    {
+        std::cerr << "[ComputeScalarStats] ERROR: scalar array '"
+                  << scalar_name << "' not found.\n";
+        return stats;
+    }
+
+    vtkIdType n = arr->GetNumberOfTuples();
+    if (n <= 0)
+    {
+        std::cerr << "[ComputeScalarStats] WARNING: scalar array '"
+                  << scalar_name << "' has no tuples.\n";
+        return stats;
+    }
+
+    std::vector<double> vals;
+    vals.reserve(static_cast<std::size_t>(n));
+
+    double minv = std::numeric_limits<double>::infinity();
+    double maxv = -std::numeric_limits<double>::infinity();
+
+    for (vtkIdType i = 0; i < n; ++i)
+    {
+        double v = arr->GetComponent(i, 0);
+        vals.push_back(v);
+        if (v < minv) minv = v;
+        if (v > maxv) maxv = v;
+    }
+
+    stats.min_roi = minv;
+    stats.max_roi = maxv;
+
+    // Percentile-based clipping to avoid tiny outliers dominating the colorbar.
+    // Use 2%–98% as a first reasonable default.
+    std::sort(vals.begin(), vals.end());
+
+    auto get_percentile = [&](double p) -> double {
+        if (vals.empty()) return 0.0;
+        if (p <= 0.0) return vals.front();
+        if (p >= 100.0) return vals.back();
+        double pos = p * (vals.size() - 1) / 100.0;
+        auto idx = static_cast<std::size_t>(pos);
+        if (idx >= vals.size() - 1) return vals.back();
+        double alpha = pos - idx;
+        return (1.0 - alpha) * vals[idx] + alpha * vals[idx + 1];
+    };
+
+    double p_low  = get_percentile(5.0);
+    double p_high = get_percentile(95.0);
+
+    // If the spread is too small, fall back to full min/max.
+    const double eps = 1e-12;
+    if (std::fabs(p_high - p_low) < eps)
+    {
+        stats.min_used = minv;
+        stats.max_used = maxv;
+    }
+    else
+    {
+        stats.min_used = p_low;
+        stats.max_used = p_high;
+    }
+
+    return stats;
+}
+static ScalarStats ComputeScalarStatsInBounds(vtkDataSet* ds,
+                                              const std::string& scalar_name,
+                                              const double bounds[6])
+{
+    ScalarStats stats;
+
+    if (!ds)
+    {
+        std::cerr << "[ComputeScalarStatsInBounds] ERROR: dataset is null.\n";
+        return stats;
+    }
+
+    vtkPointData* pd = ds->GetPointData();
+    if (!pd)
+    {
+        std::cerr << "[ComputeScalarStatsInBounds] ERROR: no point data.\n";
+        return stats;
+    }
+
+    vtkDataArray* arr = pd->GetArray(scalar_name.c_str());
+    if (!arr)
+    {
+        std::cerr << "[ComputeScalarStatsInBounds] ERROR: scalar array '"
+                  << scalar_name << "' not found.\n";
+        return stats;
+    }
+
+    vtkIdType npts = ds->GetNumberOfPoints();
+    if (npts <= 0)
+    {
+        std::cerr << "[ComputeScalarStatsInBounds] WARNING: no points.\n";
+        return stats;
+    }
+
+    std::vector<double> vals;
+    vals.reserve(static_cast<std::size_t>(npts));
+
+    double minv = std::numeric_limits<double>::infinity();
+    double maxv = -std::numeric_limits<double>::infinity();
 
     for (vtkIdType i = 0; i < npts; ++i)
     {
-        const auto& e = result.E_at_points[static_cast<size_t>(i)];
-        double v[3] = { e[0], e[1], e[2] };
-        vec_array->SetTuple(i, v);
+        double p[3];
+        ds->GetPoint(i, p);
+
+        if (p[0] < bounds[0] || p[0] > bounds[1] ||
+            p[1] < bounds[2] || p[1] > bounds[3] ||
+            p[2] < bounds[4] || p[2] > bounds[5])
+        {
+            continue;
+        }
+
+        double v = arr->GetComponent(i, 0);
+        vals.push_back(v);
+        if (v < minv) minv = v;
+        if (v > maxv) maxv = v;
     }
 
-    auto pd = grid->GetPointData();
-    pd->AddArray(vec_array);
-    pd->SetActiveVectors("E");
+    if (vals.empty())
+    {
+        std::cerr << "[ComputeScalarStatsInBounds] WARNING: no points in ROI, "
+                     "falling back to global stats.\n";
+        return ComputeScalarStats(ds, scalar_name);
+    }
 
-    // Domain center and radius for seeding and tube scaling
-    double bounds[6];
-    grid->GetBounds(bounds);
-    double center[3] = {
-        0.5 * (bounds[0] + bounds[1]),
-        0.5 * (bounds[2] + bounds[3]),
-        0.5 * (bounds[4] + bounds[5])
+    stats.min_roi = minv;
+    stats.max_roi = maxv;
+
+    std::sort(vals.begin(), vals.end());
+
+    auto get_percentile = [&](double p) -> double {
+        if (vals.empty()) return 0.0;
+        if (p <= 0.0) return vals.front();
+        if (p >= 100.0) return vals.back();
+        double pos = p * (vals.size() - 1) / 100.0;
+        auto idx = static_cast<std::size_t>(pos);
+        if (idx >= vals.size() - 1) return vals.back();
+        double alpha = pos - idx;
+        return (1.0 - alpha) * vals[idx] + alpha * vals[idx + 1];
     };
-    double dx = bounds[1] - bounds[0];
-    double dy = bounds[3] - bounds[2];
-    double dz = bounds[5] - bounds[4];
-    double radius = 0.5 * std::max({dx, dy, dz});
 
-    auto seeds = vtkSmartPointer<vtkPointSource>::New();
-    seeds->SetCenter(center);
-    seeds->SetRadius(radius);
-    seeds->SetNumberOfPoints(cfg.n_seeds);
-    seeds->SetDistributionToUniform();
+    double p_low  = get_percentile(5.0);
+    double p_high = get_percentile(95.0);
 
-    auto integrator = vtkSmartPointer<vtkRungeKutta4>::New();
-
-    auto stream = vtkSmartPointer<vtkStreamTracer>::New();
-    stream->SetInputData(grid);
-    stream->SetSourceConnection(seeds->GetOutputPort());
-    stream->SetIntegrator(integrator);
-    stream->SetIntegrationDirectionToBoth();
-    stream->SetMaximumPropagation(cfg.max_propagation);
-    stream->SetInitialIntegrationStep(cfg.initial_step);
-    stream->SetMinimumIntegrationStep(cfg.min_step);
-    stream->SetMaximumIntegrationStep(cfg.max_step);
-    stream->SetMaximumNumberOfSteps(cfg.max_steps);
-
-    auto tubes = vtkSmartPointer<vtkTubeFilter>::New();
-    tubes->SetInputConnection(stream->GetOutputPort());
-    tubes->SetRadius(cfg.tube_radius_rel * radius);
-    tubes->SetNumberOfSides(8);
-    tubes->CappingOn();
-
-    auto mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
-    mapper->SetInputConnection(tubes->GetOutputPort());
-    mapper->ScalarVisibilityOff();
-
-    auto actor = vtkSmartPointer<vtkActor>::New();
-    actor->SetMapper(mapper);
-    actor->GetProperty()->SetColor(0.0, 0.0, 0.0);
-
-    renderer->AddActor(actor);
-}
-
-// ---------------------------------------------------------------------------
-// Output
-// ---------------------------------------------------------------------------
-
-void RenderOffscreenPNG(vtkRenderer* /*unused*/,
-                        const std::string& /*filename*/,
-                        int width,
-                        int height)
-{
-    std::cerr << "=== Interactive VTK test: drawing y = x ===\n";
-
-    // 1. Build a simple line from (0,0,0) to (1,1,0)
-    auto points = vtkSmartPointer<vtkPoints>::New();
-    points->InsertNextPoint(0.0, 0.0, 0.0);
-    points->InsertNextPoint(1.0, 1.0, 0.0);
-
-    auto lines = vtkSmartPointer<vtkCellArray>::New();
-    lines->InsertNextCell(2);
-    lines->InsertCellPoint(0);
-    lines->InsertCellPoint(1);
-
-    auto polydata = vtkSmartPointer<vtkPolyData>::New();
-    polydata->SetPoints(points);
-    polydata->SetLines(lines);
-
-    auto mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
-    mapper->SetInputData(polydata);
-
-    auto actor = vtkSmartPointer<vtkActor>::New();
-    actor->SetMapper(mapper);
-    actor->GetProperty()->SetColor(1.0, 0.0, 0.0); // red line
-    actor->GetProperty()->SetLineWidth(2.0);
-
-    // 2. Renderer + window
-    auto ren = vtkSmartPointer<vtkRenderer>::New();
-    ren->AddActor(actor);
-    ren->SetBackground(1.0, 1.0, 1.0);
-    ren->ResetCamera();
-
-    auto window = vtkSmartPointer<vtkRenderWindow>::New();
-    window->AddRenderer(ren);
-    window->SetSize(width, height);
-    window->SetWindowName("VTK y = x minimal test");
-
-    // 3. Interactor to show the window
-    auto iren = vtkSmartPointer<vtkRenderWindowInteractor>::New();
-    iren->SetRenderWindow(window);
-
-    std::cerr << "Calling Render()...\n";
-    window->Render();
-    std::cerr << "Render() returned, starting interactor...\n";
-
-    iren->Initialize();
-    iren->Start();  // <-- This should pop up a window and block until you close it.
-
-    std::cerr << "Interactor finished, returning from RenderOffscreenPNG.\n";
-}
-
-
-
-
-
-void RenderThreeSideBySide(vtkRenderer* left,
-                           vtkRenderer* middle,
-                           vtkRenderer* right,
-                           const std::string& filename,
-                           int width,
-                           int height)
-{
-    if (!left || !middle || !right)
-        return;
-
-    auto window = vtkSmartPointer<vtkRenderWindow>::New();
-    window->SetSize(width, height);
-
-    left->SetViewport(0.0,         0.0, 1.0 / 3.0, 1.0);
-    middle->SetViewport(1.0 / 3.0,  0.0, 2.0 / 3.0, 1.0);
-    right->SetViewport(2.0 / 3.0,   0.0, 1.0,       1.0);
-
-    window->AddRenderer(left);
-    window->AddRenderer(middle);
-    window->AddRenderer(right);
-
-    window->Render();
-
-    int* sz = window->GetSize();
-    int w = sz[0];
-    int h = sz[1];
-    if (w <= 0 || h <= 0)
+    const double eps = 1e-12;
+    if (std::fabs(p_high - p_low) < eps)
     {
-        std::cerr << "RenderThreeSideBySide: invalid window size (" << w
-                  << "x" << h << ")\n";
-        return;
+        stats.min_used = minv;
+        stats.max_used = maxv;
+    }
+    else
+    {
+        stats.min_used = p_low;
+        stats.max_used = p_high;
     }
 
-    unsigned char* rgb = window->GetPixelData(0, 0, w - 1, h - 1, 1);
-    if (!rgb)
-    {
-        std::cerr << "RenderThreeSideBySide: GetPixelData returned null.\n";
-        return;
-    }
-
-    auto image = vtkSmartPointer<vtkImageData>::New();
-    image->SetDimensions(w, h, 1);
-    image->AllocateScalars(VTK_UNSIGNED_CHAR, 3); // RGB
-
-    unsigned char* dst =
-        static_cast<unsigned char*>(image->GetScalarPointer());
-    const int row_bytes = w * 3;
-
-    for (int y = 0; y < h; ++y)
-    {
-        unsigned char* src_row = rgb + (h - 1 - y) * row_bytes;
-        unsigned char* dst_row = dst + y * row_bytes;
-        std::memcpy(dst_row, src_row, row_bytes);
-    }
-
-    delete [] rgb;
-
-    auto writer = vtkSmartPointer<vtkPNGWriter>::New();
-    writer->SetFileName(filename.c_str());
-    writer->SetInputData(image);
-    writer->Write();
+    return stats;
 }
 
-} // namespace FEMPlot
-int make_plots(int argc, char** argv)
+// Basic LUT builder. Right now we support a few simple "names";
+// otherwise we fall back to a default blue-red like map.
+static vtkSmartPointer<vtkLookupTable>
+BuildLookupTable(const std::string& color_map_name,
+                 double range_min,
+                 double range_max)
 {
-    using namespace FEMPlot;
+    auto lut = vtkSmartPointer<vtkLookupTable>::New();
+    lut->SetNumberOfTableValues(256);
+    lut->SetRange(range_min, range_max);
 
-    if (argc < 2)
+    // Simple hard-coded styles for now.
+    // You can refine this later with vtkColorSeries, etc.
+    if (color_map_name == "gray" || color_map_name == "grey")
     {
-        std::cerr << "Usage: " << argv[0]
-                  << " <simulation .vtu or Simulation.pvd>\n";
-        return 1;
+        lut->SetHueRange(0.0, 0.0);      // no hue
+        lut->SetSaturationRange(0.0, 0.0);
+        lut->SetValueRange(0.0, 1.0);    // black -> white
+    }
+    else if (color_map_name == "blue-red" || color_map_name == "coolwarm")
+    {
+        lut->SetHueRange(0.6667, 0.0);   // blue -> red
+        lut->SetSaturationRange(1.0, 1.0);
+        lut->SetValueRange(1.0, 1.0);
+    }
+    else if (color_map_name == "viridis")
+    {
+        // Approximate "viridis"-like (greenish-blue to yellowish).
+        lut->SetHueRange(0.7, 0.1);
+        lut->SetSaturationRange(1.0, 1.0);
+        lut->SetValueRange(0.3, 1.0);
+    }
+    else
+    {
+        // Default: VTK classic (blue->red)
+        lut->SetHueRange(0.6667, 0.0);
+        lut->SetSaturationRange(1.0, 1.0);
+        lut->SetValueRange(1.0, 1.0);
+    }
+
+    lut->Build();
+    return lut;
+}
+
+// Helper to create a scalar bar actor for a given lookup table and title.
+static vtkSmartPointer<vtkScalarBarActor>
+CreateScalarBar(vtkLookupTable* lut,
+                const std::string& title,
+                int title_font_size,
+                int label_font_size,
+                int num_labels)
+{
+    auto scalar_bar = vtkSmartPointer<vtkScalarBarActor>::New();
+    scalar_bar->SetLookupTable(lut);
+    scalar_bar->SetTitle(title.c_str());
+    scalar_bar->SetNumberOfLabels(num_labels > 0 ? num_labels : 5);
+
+    auto tprop = scalar_bar->GetTitleTextProperty();
+    tprop->SetFontFamilyToArial();
+    tprop->SetFontSize(title_font_size);
+    tprop->SetColor(0.0, 0.0, 0.0);
+
+    auto lprop = scalar_bar->GetLabelTextProperty();
+    lprop->SetFontFamilyToArial();
+    lprop->SetFontSize(label_font_size);
+    lprop->SetColor(0.0, 0.0, 0.0);
+
+    // Default geometry (overridden when using separate cbar viewport)
+    scalar_bar->SetWidth(0.1);
+    scalar_bar->SetHeight(0.7);
+    scalar_bar->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();
+    scalar_bar->GetPositionCoordinate()->SetValue(0.90, 0.15);
+
+    return scalar_bar;
+}
+bool AttachGradientEAndMagnitude(vtkUnstructuredGrid* grid,
+                                 const std::string& potential_array_name,
+                                 const std::string& e_array_name,
+                                 const std::string& emag_array_name)
+{
+    if (!grid)
+    {
+        std::cerr << "[AttachGradientEAndMagnitude] ERROR: grid is null.\n";
+        return false;
+    }
+
+    vtkPointData* pd = grid->GetPointData();
+    if (!pd)
+    {
+        std::cerr << "[AttachGradientEAndMagnitude] ERROR: no point data.\n";
+        return false;
+    }
+
+    vtkDataArray* pot = pd->GetArray(potential_array_name.c_str());
+    if (!pot)
+    {
+        std::cerr << "[AttachGradientEAndMagnitude] ERROR: potential array '"
+                  << potential_array_name << "' not found.\n";
+        return false;
+    }
+
+    vtkIdType npts_grid = grid->GetNumberOfPoints();
+    if (pot->GetNumberOfTuples() != npts_grid)
+    {
+        std::cerr << "[AttachGradientEAndMagnitude] ERROR: potential array '"
+                  << potential_array_name << "' size mismatch.\n";
+        return false;
     }
 
     // ---------------------------------------------------------------------
-    // 1. Normalize input path (expand ~, strip trailing /)
+    // 1) Compute gradient of potential with vtkGradientFilter
     // ---------------------------------------------------------------------
-    std::string path = argv[1];
+    auto grad = vtkSmartPointer<vtkGradientFilter>::New();
+    grad->SetInputData(grid);
+    grad->SetInputScalars(vtkDataObject::FIELD_ASSOCIATION_POINTS,
+                          potential_array_name.c_str());
+    grad->SetResultArrayName("GradTemp");
+    grad->Update();
 
-    // Expand "~" manually
+    vtkDataSet* ds_grad = grad->GetOutput();
+    if (!ds_grad)
+    {
+        std::cerr << "[AttachGradientEAndMagnitude] ERROR: "
+                     "gradient filter returned null output.\n";
+        return false;
+    }
+
+    vtkPointData* pd_grad = ds_grad->GetPointData();
+    if (!pd_grad)
+    {
+        std::cerr << "[AttachGradientEAndMagnitude] ERROR: "
+                     "no point data on gradient output.\n";
+        return false;
+    }
+
+    vtkDataArray* gradArray = pd_grad->GetArray("GradTemp");
+    if (!gradArray)
+    {
+        std::cerr << "[AttachGradientEAndMagnitude] ERROR: "
+                     "GradTemp array not found.\n";
+        return false;
+    }
+
+    int comps = gradArray->GetNumberOfComponents();
+    if (comps < 1)
+    {
+        std::cerr << "[AttachGradientEAndMagnitude] ERROR: GradTemp has "
+                  << comps << " components.\n";
+        return false;
+    }
+
+    vtkIdType npts_grad = ds_grad->GetNumberOfPoints();
+    if (npts_grad != npts_grid)
+    {
+        std::cerr << "[AttachGradientEAndMagnitude] ERROR: point count mismatch, "
+                  << "grid=" << npts_grid << " grad=" << npts_grad << "\n";
+        return false;
+    }
+
+    // ---------------------------------------------------------------------
+    // 2) Build E = -∇V as a vector array on the original grid
+    // ---------------------------------------------------------------------
+    auto evec = vtkSmartPointer<vtkDoubleArray>::New();
+    evec->SetName(e_array_name.c_str());
+    evec->SetNumberOfComponents(3);
+    evec->SetNumberOfTuples(npts_grid);
+
+    for (vtkIdType i = 0; i < npts_grid; ++i)
+    {
+        double g[3] = {0.0, 0.0, 0.0};
+        int ncopy = std::min(comps, 3);
+        for (int c = 0; c < ncopy; ++c)
+            g[c] = gradArray->GetComponent(i, c);
+
+        // E = -∇V
+        double e[3] = { -g[0], -g[1], -g[2] };
+        evec->SetTuple(i, e);
+    }
+
+    pd->AddArray(evec);
+    pd->SetActiveVectors(e_array_name.c_str());
+
+    // ---------------------------------------------------------------------
+    // 3) Build |E| as scalar
+    // ---------------------------------------------------------------------
+    auto emag = vtkSmartPointer<vtkDoubleArray>::New();
+    emag->SetName(emag_array_name.c_str());
+    emag->SetNumberOfComponents(1);
+    emag->SetNumberOfTuples(npts_grid);
+
+    for (vtkIdType i = 0; i < npts_grid; ++i)
+    {
+        double e[3];
+        evec->GetTuple(i, e);
+        double mag = std::sqrt(e[0]*e[0] + e[1]*e[1] + e[2]*e[2]);
+        emag->SetValue(i, mag);
+    }
+
+    pd->AddArray(emag);
+
+    return true;
+}
+void PlotScalarFieldView(vtkUnstructuredGrid* grid,
+                         const ScalarViewRequest& request,
+                         const PlottingOptions& plotting,
+                         const StreamlineConfig* /*stream_cfg*/)
+{
+    if (!grid)
+    {
+        std::cerr << "[PlotScalarFieldView] ERROR: grid is null.\n";
+        return;
+    }
+
+    vtkDataSet* dataset_to_plot = grid;
+
+    vtkPointData* pd = dataset_to_plot->GetPointData();
+    if (!pd)
+    {
+        std::cerr << "[PlotScalarFieldView] ERROR: dataset has no point data.\n";
+        return;
+    }
+
+    vtkDataArray* scalars = pd->GetArray(request.scalar_name.c_str());
+    if (!scalars)
+    {
+        std::cerr << "[PlotScalarFieldView] ERROR: scalar array '"
+                  << request.scalar_name << "' not found on dataset.\n";
+        return;
+    }
+
+    // ---------------------------------------------------------------------
+    // 2) Scalar statistics and LUT (color map)
+    // ---------------------------------------------------------------------
+    ScalarStats stats;
+    if (request.crop_to_region)
+    {
+        stats = ComputeScalarStatsInBounds(dataset_to_plot,
+                                           request.scalar_name,
+                                           request.region_bounds);
+    }
+    else
+    {
+        stats = ComputeScalarStats(dataset_to_plot, request.scalar_name);
+    }
+
+    
+
+    auto lut = BuildLookupTable(request.color_map_name,
+                                stats.min_used,
+                                stats.max_used);
+
+    // ---------------------------------------------------------------------
+    // 3) Mapper and mesh actor (with optional clipping planes)
+    // ---------------------------------------------------------------------
+    auto mapper = vtkSmartPointer<vtkDataSetMapper>::New();
+    mapper->SetInputData(dataset_to_plot);
+    mapper->SetScalarModeToUsePointFieldData();
+    mapper->SelectColorArray(request.scalar_name.c_str());
+    mapper->SetScalarRange(stats.min_used, stats.max_used);
+    mapper->SetLookupTable(lut);
+    mapper->ScalarVisibilityOn();
+
+    if (request.crop_to_region)
+    {
+        double xmin = request.region_bounds[0];
+        double xmax = request.region_bounds[1];
+        double ymin = request.region_bounds[2];
+        double ymax = request.region_bounds[3];
+
+        mapper->RemoveAllClippingPlanes();
+
+        vtkNew<vtkPlane> pxMin;
+        pxMin->SetOrigin(xmin, 0.0, 0.0);
+        pxMin->SetNormal(1.0, 0.0, 0.0);
+        mapper->AddClippingPlane(pxMin);
+
+        vtkNew<vtkPlane> pxMax;
+        pxMax->SetOrigin(xmax, 0.0, 0.0);
+        pxMax->SetNormal(-1.0, 0.0, 0.0);
+        mapper->AddClippingPlane(pxMax);
+
+        vtkNew<vtkPlane> pyMin;
+        pyMin->SetOrigin(0.0, ymin, 0.0);
+        pyMin->SetNormal(0.0, 1.0, 0.0);
+        mapper->AddClippingPlane(pyMin);
+
+        vtkNew<vtkPlane> pyMax;
+        pyMax->SetOrigin(0.0, ymax, 0.0);
+        pyMax->SetNormal(0.0, -1.0, 0.0);
+        mapper->AddClippingPlane(pyMax);
+    }
+    else
+    {
+        mapper->RemoveAllClippingPlanes();
+    }
+
+    auto mesh_actor = CreateMeshActor(mapper,
+                                      plotting.show_edges,
+                                      plotting.edge_width);
+
+    // ---------------------------------------------------------------------
+    // 4) Renderer(s) and render window
+    // ---------------------------------------------------------------------
+    int img_w = (request.image_width  > 0) ? request.image_width  : plotting.image_width;
+    int img_h = (request.image_height > 0) ? request.image_height : plotting.image_height;
+
+    vtkNew<vtkRenderWindow> renderWindow;
+    renderWindow->SetOffScreenRendering(1);
+    renderWindow->SetAlphaBitPlanes(0);
+    renderWindow->SetMultiSamples(0);
+    renderWindow->SetSize(img_w, img_h);
+
+    auto field_renderer = vtkSmartPointer<vtkRenderer>::New();
+    field_renderer->SetBackground(1.0, 1.0, 1.0);
+    field_renderer->SetBackground2(1.0, 1.0, 1.0);
+    field_renderer->GradientBackgroundOff();
+    field_renderer->AddActor(mesh_actor);
+
+    vtkSmartPointer<vtkRenderer> cbar_renderer;
+
+    if (request.separate_cbar_viewport)
+    {
+        if (request.cbar_horizontal)
+        {
+            // Field on top 80%, cbar bottom 20%
+            field_renderer->SetViewport(0.0, 0.2, 1.0, 1.0);
+            renderWindow->AddRenderer(field_renderer);
+
+            cbar_renderer = vtkSmartPointer<vtkRenderer>::New();
+            cbar_renderer->SetBackground(1.0, 1.0, 1.0);
+            cbar_renderer->SetBackground2(1.0, 1.0, 1.0);
+            cbar_renderer->GradientBackgroundOff();
+            cbar_renderer->SetViewport(0.0, 0.0, 1.0, 0.2);
+            renderWindow->AddRenderer(cbar_renderer);
+        }
+        else
+        {
+            // Field left 80%, cbar right 20%
+            field_renderer->SetViewport(0.0, 0.0, 0.8, 1.0);
+            renderWindow->AddRenderer(field_renderer);
+
+            cbar_renderer = vtkSmartPointer<vtkRenderer>::New();
+            cbar_renderer->SetBackground(1.0, 1.0, 1.0);
+            cbar_renderer->SetBackground2(1.0, 1.0, 1.0);
+            cbar_renderer->GradientBackgroundOff();
+            cbar_renderer->SetViewport(0.8, 0.0, 1.0, 1.0);
+            renderWindow->AddRenderer(cbar_renderer);
+        }
+    }
+    else
+    {
+        field_renderer->SetViewport(0.0, 0.0, 1.0, 1.0);
+        renderWindow->AddRenderer(field_renderer);
+    }
+
+    // ---------------------------------------------------------------------
+    // 5) Axes and title on field renderer
+    // ---------------------------------------------------------------------
+    AddXYAxes(field_renderer, request.region_bounds,
+              request.x_label, request.y_label, request.z_label,
+              request.axis_title_font_size,
+              request.axis_label_font_size);
+
+    {
+        auto titleActor = vtkSmartPointer<vtkTextActor>::New();
+        titleActor->SetInput(request.title.c_str());
+        auto tprop = titleActor->GetTextProperty();
+        tprop->SetFontFamilyToArial();
+        tprop->SetFontSize(request.title_font_size);
+        tprop->SetColor(0.0, 0.0, 0.0);
+
+        auto pos = titleActor->GetPositionCoordinate();
+        pos->SetCoordinateSystemToNormalizedViewport();
+        titleActor->SetPosition(0.02, 0.95);  // 2% from left, 94% up
+
+        field_renderer->AddActor2D(titleActor);
+    }
+    
+
+    // ---------------------------------------------------------------------
+    // 6) Scalar bar
+    // ---------------------------------------------------------------------
+    auto scalar_bar = CreateScalarBar(
+        lut,
+        request.cbar_title,
+        request.cbar_title_font_size,
+        request.cbar_label_font_size,
+        request.cbar_num_labels);
+    
+
+    if (request.show_contours)
+    {
+        
+    }
+    else
+    {
+        // Default: evenly spaced labels
+        scalar_bar->UseCustomLabelsOff();
+    }
+
+
+    if (request.separate_cbar_viewport && cbar_renderer)
+    {
+        if (request.cbar_horizontal)
+        {
+            scalar_bar->SetOrientationToHorizontal();
+            scalar_bar->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();
+            scalar_bar->GetPositionCoordinate()->SetValue(0.15, 0.3);
+            scalar_bar->SetWidth(0.7);
+            scalar_bar->SetHeight(0.4);
+        }
+        else
+        {
+            scalar_bar->SetOrientationToVertical();
+            scalar_bar->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();
+            scalar_bar->GetPositionCoordinate()->SetValue(0.25, 0.15);
+            scalar_bar->SetWidth(0.5);
+            scalar_bar->SetHeight(0.7);
+        }
+
+        cbar_renderer->AddActor2D(scalar_bar);
+    }
+    else
+    {
+        field_renderer->AddActor2D(scalar_bar);
+    }
+
+    // ---------------------------------------------------------------------
+    // 7) True min/max annotations
+    // ---------------------------------------------------------------------
+    if (request.separate_cbar_viewport && cbar_renderer)
+    {
+        if (stats.min_used > stats.min_roi)
+        {
+            auto txt = vtkSmartPointer<vtkTextActor>::New();
+            std::ostringstream ss;
+            ss << "min = " << stats.min_roi;
+            txt->SetInput(ss.str().c_str());
+
+            auto tp = txt->GetTextProperty();
+            tp->SetFontFamilyToArial();
+            tp->SetFontSize(request.cbar_minmax_font_size);
+            tp->SetColor(0.0, 0.0, 0.0);
+
+            txt->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();
+
+            if (request.cbar_horizontal)
+            {
+                txt->SetPosition(0.15, 0.10);
+            }
+            else
+            {
+                txt->SetPosition(0.10, 0.05);
+            }
+
+            cbar_renderer->AddActor2D(txt);
+        }
+
+        if (stats.max_used < stats.max_roi)
+        {
+            auto txt = vtkSmartPointer<vtkTextActor>::New();
+            std::ostringstream ss;
+            ss << "max = " << stats.max_roi;
+            txt->SetInput(ss.str().c_str());
+
+            auto tp = txt->GetTextProperty();
+            tp->SetFontFamilyToArial();
+            tp->SetFontSize(request.cbar_minmax_font_size);
+            tp->SetColor(0.0, 0.0, 0.0);
+
+            txt->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();
+
+            if (request.cbar_horizontal)
+            {
+                txt->SetPosition(0.75, 0.10);
+            }
+            else
+            {
+                txt->SetPosition(0.10, 0.85);
+            }
+
+            cbar_renderer->AddActor2D(txt);
+        }
+    }
+
+    
+    // 9) Streamlines — left as future work
+    if (request.show_streamlines)
+    {
+        std::cerr << "[PlotScalarFieldView] NOTE: show_streamlines requested "
+                     "but streamlines are not yet wired into the new view "
+                     "pipeline.\n";
+    }
+
+    // ---------------------------------------------------------------------
+    // 10) Camera setup and zoom
+    // ---------------------------------------------------------------------
+    double b[6];
+    std::copy(std::begin(request.region_bounds),
+              std::end(request.region_bounds), b);
+
+    if (b[4] == b[5])
+    {
+        const double dz = 1e-3;
+        b[4] -= dz * 0.8;
+        b[5] += dz * 0.8;
+    }
+
+    field_renderer->ResetCamera(b);
+    if (auto cam = field_renderer->GetActiveCamera())
+    {
+        cam->SetParallelProjection(true);
+        field_renderer->ResetCameraClippingRange();
+
+        double zf = request.zoom_factor;
+        if (zf <= 0.0) zf = 1.0;
+        double ps = cam->GetParallelScale();
+        cam->SetParallelScale(ps * zf);
+    }
+
+    // ---------------------------------------------------------------------
+    // 11) Render and write PNG
+    // ---------------------------------------------------------------------
+    RenderOffscreenPNG(renderWindow, request.output_path);
+}
+
+void PlotStandardViewsForPotentialAndEnorm(vtkUnstructuredGrid* grid,
+                                           const PlotInput& input,
+                                           const PlottingOptions& base_options)
+{
+    if (!grid)
+    {
+        std::cerr << "[PlotStandardViewsForPotentialAndEnorm] ERROR: grid is null.\n";
+        return;
+    }
+
+    double full_bounds[6];
+    grid->GetBounds(full_bounds);
+
+    if (!AttachGradientEAndMagnitude(grid, "V", "E", "Enorm"))
+    {
+        std::cerr << "[PlotStandardViewsForPotentialAndEnorm] WARNING: "
+                     "failed to attach E/Enorm from V. |E| views may be skipped.\n";
+    }
+
+    const std::string xlab = "x [m]";
+    const std::string ylab = "y [m]";
+    const std::string zlab = "z [m]";
+
+    double full[6];
+    std::copy(std::begin(full_bounds), std::end(full_bounds), full);
+
+    double ymin = full_bounds[2];
+    double ymax = full_bounds[3];
+    double xmin = full_bounds[0];
+    double xmax = full_bounds[1];
+    double zmin = full_bounds[4];
+    double zmax = full_bounds[5];
+
+    double top[6]       = { xmin, xmax, -0.13,  0.07,  zmin, zmax };
+    double bottom[6]    = { xmin, xmax, -1.6,  -1.4,  zmin, zmax };
+    double right_bar[6] = { xmax - 0.1, xmax, -1.45, -0.05, zmin, zmax };
+
+    const int img_w = base_options.image_width;
+    const int img_h = base_options.image_height;
+
+    const int title_fs       = 32;
+    const int axis_title_fs  = 28;
+    const int axis_label_fs  = 22;
+    const int cbar_title_fs  = 28;
+    const int cbar_label_fs  = 22;
+    const int cbar_minmax_fs = 20;
+    const int cbar_labels    = 5;
+
+    // ---------------- V views ----------------
+        // --- Full-domain Potential V view ---------------------------------------
+    ScalarViewRequest r_full;
+    r_full.scalar_name           = "V";                     // dataset array to visualize
+    r_full.cbar_title            = "V";                     // title text shown above the colorbar
+    r_full.cbar_horizontal       = false;                   // colorbar orientation (vertical here)
+    r_full.title                 = "Potential V";           // plot title shown at top-left
+    r_full.x_label               = xlab;                    // axis label for X
+    r_full.y_label               = ylab;                    // axis label for Y
+    r_full.z_label               = zlab;                    // axis label for Z (unused in 2D)
+    r_full.color_map_name        = "viridis";               // LUT preset name
+    std::copy(full, full + 6, r_full.region_bounds);        // physical region plotted (full domain)
+    r_full.crop_to_region        = false;                   // do NOT crop mesh; full geometry visible
+    r_full.separate_cbar_viewport= true;                    // use dedicated viewport for colorbar
+    r_full.show_contours         = true;                    // overlay contour lines
+    r_full.show_streamlines      = false;                   // no streamlines for potential
+    r_full.n_contours            = 10;                      // number of contour isolines
+    r_full.output_path           = input.out_dir + "/V_full.png";  // output PNG path
+    r_full.image_width           = 1920;                    // final rendered image width  (px)
+    r_full.image_height          = 1080;                    // final rendered image height (px)
+    r_full.zoom_factor           = 0.5;                     // orthographic camera zoom (<1 = zoom in)
+    r_full.title_font_size       = 70;                      // title text size in pixels
+    r_full.axis_title_font_size  = 700;                      // axis title font size (X,Y,Z titles)
+    r_full.axis_label_font_size  = 700;                      // tick-label font size
+    r_full.cbar_title_font_size  = 20;                      // colorbar title font size
+    r_full.cbar_label_font_size  = 400;           // colorbar tick-label font size
+    r_full.cbar_minmax_font_size = cbar_minmax_fs;          // annotation font size for full min/max
+    r_full.cbar_num_labels       = cbar_labels;             // number of labels shown on the colorbar
+
+
+    ScalarViewRequest r_top = r_full;
+    r_top.cbar_horizontal       = true;
+    r_top.title                 = "Potential V (top stack)";
+    std::copy(top, top + 6, r_top.region_bounds);
+    r_top.crop_to_region        = true;
+    r_top.output_path           = input.out_dir + "/V_top.png";
+
+    ScalarViewRequest r_bottom = r_full;
+    r_bottom.cbar_horizontal    = true;
+    r_bottom.title              = "Potential V (bottom stack)";
+    std::copy(bottom, bottom + 6, r_bottom.region_bounds);
+    r_bottom.crop_to_region     = true;
+    r_bottom.output_path        = input.out_dir + "/V_bottom.png";
+
+    ScalarViewRequest r_bar = r_full;
+    r_bar.cbar_horizontal      = false;
+    r_bar.title                = "Potential V (Field Cage)";
+    std::copy(right_bar, right_bar + 6, r_bar.region_bounds);
+    r_bar.crop_to_region       = true;
+    r_bar.output_path          = input.out_dir + "/V_bar.png";
+
+    PlotScalarFieldView(grid, r_full,   base_options);
+    PlotScalarFieldView(grid, r_top,    base_options);
+    PlotScalarFieldView(grid, r_bottom, base_options);
+    PlotScalarFieldView(grid, r_bar,    base_options);
+
+    // ---------------- |E| views ----------------
+    StreamlineConfig stream_cfg; // placeholder, kept for signature
+
+    // Start from the V-views and override only what's different.
+
+    // Full |E|
+    ScalarViewRequest r_fullE = r_full;
+    r_fullE.scalar_name           = "Enorm";
+    r_fullE.cbar_title            = "E [V/m]";
+    r_fullE.title                 = "|E|";
+    r_fullE.show_contours         = false;
+    r_fullE.show_streamlines      = true;
+    r_fullE.n_contours            = 0;
+    r_fullE.output_path           = input.out_dir + "/Enorm_full.png";
+
+    // Top |E|
+    ScalarViewRequest r_topE = r_top;
+    r_topE.scalar_name           = "Enorm";
+    r_topE.cbar_title            = "E [V/m]";
+    r_topE.title                 = "|E| (top stack)";
+    r_topE.show_contours         = false;
+    r_topE.show_streamlines      = true;
+    r_topE.n_contours            = 0;
+    r_topE.output_path           = input.out_dir + "/Enorm_top.png";
+
+    // Bottom |E|
+    ScalarViewRequest r_bottomE = r_bottom;
+    r_bottomE.scalar_name           = "Enorm";
+    r_bottomE.cbar_title            = "E [V/m]";
+    r_bottomE.title                 = "|E| (bottom stack)";
+    r_bottomE.show_contours         = false;
+    r_bottomE.show_streamlines      = true;
+    r_bottomE.n_contours            = 0;
+    r_bottomE.output_path           = input.out_dir + "/Enorm_bottom.png";
+
+    // Field cage |E|
+    ScalarViewRequest r_barE = r_bar;
+    r_barE.scalar_name           = "Enorm";
+    r_barE.cbar_title            = "E [V/m]";
+    r_barE.title                 = "|E| (Field Cage)";
+    r_barE.show_contours         = false;
+    r_barE.show_streamlines      = true;
+    r_barE.n_contours            = 0;
+    r_barE.output_path           = input.out_dir + "/Enorm_bar.png";
+
+    PlotScalarFieldView(grid, r_fullE,   base_options, &stream_cfg);
+    PlotScalarFieldView(grid, r_topE,    base_options, &stream_cfg);
+    PlotScalarFieldView(grid, r_bottomE, base_options, &stream_cfg);
+    PlotScalarFieldView(grid, r_barE,    base_options, &stream_cfg);
+
+    std::cout << "Standard V / |E| views written to: " << input.out_dir << "\n";
+}
+
+static PlotInput PreparePlotInput(const char* raw_path)
+{
+    PlotInput R;
+
+    // --------------------------
+    // 1. Normalize input path
+    // --------------------------
+    std::string path = raw_path ? std::string(raw_path) : std::string();
+
+    // Expand '~'
     if (!path.empty() && path[0] == '~')
     {
         const char* home = std::getenv("HOME");
         if (!home)
         {
-            std::cerr << "Error: HOME environment variable not set.\n";
-            return 1;
+            std::cerr << "[PreparePlotInput] ERROR: HOME environment variable not set.\n";
+            std::exit(1);
         }
         path = std::string(home) + path.substr(1);
     }
 
+    // Strip trailing slashes
     while (!path.empty() && path.back() == '/')
         path.pop_back();
 
-    auto ends_with = [](const std::string& s, const std::string& suffix) {
-        return s.size() >= suffix.size() &&
-               s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+    auto ends_with = [](const std::string& s, const std::string& suf) {
+        return s.size() >= suf.size() &&
+               s.compare(s.size() - suf.size(), suf.size(), suf) == 0;
     };
 
     auto dirname_of = [](const std::string& s) -> std::string {
@@ -544,152 +1357,101 @@ int make_plots(int argc, char** argv)
         return s.substr(0, pos);
     };
 
-    // ---------------------------------------------------------------------
-    // 2. Determine which VTU file to load and where to put plots
-    // ---------------------------------------------------------------------
-    std::string vtu_file;
-    std::string base_dir;  // where plots will go
-
+    // --------------------------
+    // 2. Determine VTU + base dir
+    // --------------------------
     if (ends_with(path, ".pvd"))
     {
-        // MFEM ParaViewDataCollection layout:
-        //   <dir>/Simulation.pvd
-        //   <dir>/Cycle000000/proc000000.vtu
-        base_dir = dirname_of(path);  // e.g. .../Simulation
-        vtu_file = base_dir + "/Cycle000000/proc000000.vtu";
+        R.base_dir = dirname_of(path);
+        // This follows your previous convention; adjust if your directory
+        // layout changed.
+        R.vtu_file = R.base_dir + "/Cycle000000/proc000000.vtu";
     }
     else
     {
-        // Treat the argument as the actual VTU path
-        vtu_file = path;
-        base_dir = dirname_of(path);
+        R.vtu_file = path;
+        R.base_dir = dirname_of(path);
     }
 
-    std::cout << "Reading VTU: " << vtu_file << "\n";
+    std::cout << "[PreparePlotInput] Reading VTU: " << R.vtu_file << "\n";
 
-    auto grid = LoadGridFromVTU(vtu_file);
-    if (!grid)
+    // --------------------------
+    // 3. Load the grid
+    // --------------------------
+    R.grid = LoadGridFromVTU(R.vtu_file);
+    if (!R.grid)
     {
-        std::cerr << "Failed to load grid from " << vtu_file << "\n";
-        return 1;
+        std::cerr << "[PreparePlotInput] ERROR: Failed to load grid from "
+                  << R.vtu_file << "\n";
+        std::exit(1);
     }
 
-    // Output directory "plots" next to the data file
-    std::string out_dir = base_dir + "/plots";
+    // --------------------------
+    // 4. Prepare output directory
+    // --------------------------
+    R.out_dir = R.base_dir + "/plots";
 
     {
-        std::string cmd = "mkdir -p \"" + out_dir + "\"";
+        std::string cmd = "mkdir -p \"" + R.out_dir + "\"";
         int ret = std::system(cmd.c_str());
         if (ret != 0)
         {
-            std::cerr << "Failed to create output directory: "
-                      << out_dir << "\n";
-            return 1;
+            std::cerr << "[PreparePlotInput] ERROR: Failed to create output directory: "
+                      << R.out_dir << "\n";
+            std::exit(1);
         }
     }
 
-    // ---------------------------------------------------------------------
-    // 3. Full-domain potential renderer (scalar "V")
-    // ---------------------------------------------------------------------
-    const std::string potential_name = "V";
+    return R;
+}
 
-    auto r_full = CreatePotentialRenderer(grid, potential_name);
-    double full_bounds[6];
-    grid->GetBounds(full_bounds);
-    AddXYAxes(r_full, full_bounds, "x", "y", "z");
 
-    // ---------------------------------------------------------------------
-    // 4. Zoomed renderer (center 50%) with local color range
-    // ---------------------------------------------------------------------
-    double xmid = 0.5 * (full_bounds[0] + full_bounds[1]);
-    double ymid = 0.5 * (full_bounds[2] + full_bounds[3]);
-    double zmid = 0.5 * (full_bounds[4] + full_bounds[5]);
+}
 
-    double xhalf = 0.25 * (full_bounds[1] - full_bounds[0]);
-    double yhalf = 0.25 * (full_bounds[3] - full_bounds[2]);
-    double zhalf = 0.25 * (full_bounds[5] - full_bounds[4]);
-
-    double zoom_bounds[6] = {
-        xmid - xhalf, xmid + xhalf,
-        ymid - yhalf, ymid + yhalf,
-        zmid - zhalf, zmid + zhalf
-    };
-
-    auto r_zoom = CreateZoomedRenderer(grid, potential_name, zoom_bounds);
-    AddXYAxes(r_zoom, zoom_bounds, "x", "y", "z");
-
-    // ---------------------------------------------------------------------
-    // 5. Full-domain + streamlines computed from potential V
-    // ---------------------------------------------------------------------
-    auto r_stream = CreatePotentialRenderer(grid, potential_name);
-    AddXYAxes(r_stream, full_bounds, "x", "y", "z");
-
-    // Use VTK to compute E = -∇V on the points, then feed that to AddStreamlines
-    FEMPlot::Result res;
-    res.E_at_points.resize(static_cast<size_t>(grid->GetNumberOfPoints()));
-
-    // Gradient filter: input scalar "V" on points, output array "GradV"
-    auto grad = vtkSmartPointer<vtkGradientFilter>::New();
-    grad->SetInputData(grid);
-    grad->SetInputScalars(vtkDataObject::FIELD_ASSOCIATION_POINTS,
-                          potential_name.c_str());
-    grad->SetResultArrayName("GradV");
-    grad->Update();
-
-    vtkDataSet* ds = grad->GetOutput();
-    if (!ds)
+int make_plots(int argc, char** argv)
+{
+    if (argc < 2)
     {
-        std::cerr << "Error: vtkGradientFilter produced null output.\n";
+        std::cerr << "Usage: " << argv[0]
+                  << " <simulation .vtu or Simulation.pvd>\n";
+        return 1;
+    }
+    using namespace FEMPlot;
+
+    // ---------------------------------------------------------------------
+    // 1) Offscreen rendering backend (Mesa)
+    // ---------------------------------------------------------------------
+    vtkNew<vtkGraphicsFactory> graphics_factory;
+    graphics_factory->SetOffScreenOnlyMode(1);
+    graphics_factory->SetUseMesaClasses(1);
+
+    // ---------------------------------------------------------------------
+    // 2) Load grid and path handling
+    // ---------------------------------------------------------------------
+    // PreparePlotInput is already defined in FEMPlotVTK.cpp and returns
+    // a PlotInput with { base_dir, vtu_file, grid, out_dir }.
+    FEMPlot::PlotInput input = PreparePlotInput(argv[1]);
+
+    if (!input.grid)
+    {
+        std::cerr << "ERROR: grid is null after PreparePlotInput.\n";
         return 1;
     }
 
-    auto pd = ds->GetPointData();
-    auto gradArray = pd->GetArray("GradV");
-    if (!gradArray || gradArray->GetNumberOfComponents() < 3)
-    {
-        std::cerr << "Error: gradient array 'GradV' not found or invalid.\n";
-        return 1;
-    }
-
-    vtkIdType npts = ds->GetNumberOfPoints();
-    if (npts != static_cast<vtkIdType>(res.E_at_points.size()))
-    {
-        std::cerr << "Error: gradient output point count mismatch.\n";
-        return 1;
-    }
-
-    // Fill E(x) = -∇V into res.E_at_points
-    for (vtkIdType i = 0; i < npts; ++i)
-    {
-        double g[3];
-        gradArray->GetTuple(i, g); // g = ∇V
-        res.E_at_points[static_cast<size_t>(i)] = {
-            -g[0], -g[1], -g[2]
-        };
-    }
-
-    StreamlineConfig cfg; // defaults
-    AddStreamlines(grid, r_stream, res, cfg);
+    // ---------------------------------------------------------------------
+    // 3) Base plotting options (image size, edges, etc.)
+    // ---------------------------------------------------------------------
+    FEMPlot::PlottingOptions opt;
+    // You can tweak defaults here if desired, e.g.:
+    opt.image_width  = 3840;
+    opt.image_height = 2160;
+    // opt.show_edges   = false;
 
     // ---------------------------------------------------------------------
-    // 6. Save plots
+    // 4) Generate standard views for V and |E|
     // ---------------------------------------------------------------------
-    RenderOffscreenPNG(r_full,
-                       out_dir + "/potential_full.png",
-                       1920, 1080);
+    PlotStandardViewsForPotentialAndEnorm(input.grid, input, opt);
 
-    RenderOffscreenPNG(r_zoom,
-                       out_dir + "/potential_zoom.png",
-                       1920, 1080);
-
-    RenderOffscreenPNG(r_stream,
-                       out_dir + "/potential_streamlines.png",
-                       1920, 1080);
-
-    RenderThreeSideBySide(r_full, r_zoom, r_stream,
-                          out_dir + "/three_plots.png",
-                          2400, 800);
-
-    std::cout << "Saved plots to: " << out_dir << "\n";
+    std::cout << "Saved standard V / |E| plots to: " << input.out_dir << "\n";
     return 0;
 }

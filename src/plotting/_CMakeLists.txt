@@ -1,0 +1,41 @@
+cmake_minimum_required(VERSION 3.12 FATAL_ERROR)
+
+project(OffScreenRendering)
+
+# Path to vtk-config.cmake / VTKConfig.cmake
+set(VTK_DIR "$ENV{HOME}/vtk/install/lib/cmake/vtk-9.5" CACHE PATH "Path to VTK config")
+
+# Find VTK and the components we need
+find_package(VTK REQUIRED COMPONENTS
+  CommonColor
+  CommonCore
+  FiltersSources
+  IOImage
+  InteractionStyle
+  RenderingContextOpenGL2
+  RenderingCore
+  RenderingFreeType
+  RenderingGL2PSOpenGL2
+  RenderingOpenGL2
+)
+
+if (NOT VTK_FOUND)
+  message(FATAL_ERROR "OffScreenRendering: Unable to find the VTK build folder.")
+endif()
+
+# Your example source file
+add_executable(OffScreenRendering
+  main.cpp
+)
+
+# Old-style linking (matches the tutorial): use ${VTK_LIBRARIES}
+target_link_libraries(OffScreenRendering
+  PRIVATE
+    ${VTK_LIBRARIES}
+)
+
+# vtk_module_autoinit MUST come *after* the target is defined and linked
+vtk_module_autoinit(
+  TARGETS OffScreenRendering
+  MODULES ${VTK_LIBRARIES}
+)

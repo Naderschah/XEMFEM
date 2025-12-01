@@ -34,16 +34,6 @@ Array<int> GetDirichletAttributes(mfem::Mesh *mesh,
     // Convert to MFEM boundary marker array
     Array<int> ess = MakeBdrMarker(mesh, dirichlet_ids); // size = max bdr attr count
 
-    // --- The ONLY axisymmetric modification: remove the axis boundary ID ---
-    if (cfg->solver.axisymmetric)
-    {
-        int axis_id = cfg->solver.axisymmetric_r0_bd_attribute; // 1-based ID
-        if (axis_id > 0 && axis_id <= ess.Size())
-        {
-            ess[axis_id - 1] = 0;   // ← just kill it
-        }
-    }
-
     return ess;
 }
 
@@ -52,7 +42,7 @@ Array<int> GetDirichletAttributes(mfem::Mesh *mesh,
 void ApplyDirichletValues(GridFunction &V, const Array<int> &dirichlet_attr, const std::shared_ptr<const Config>& cfg)
 {
     Mesh *mesh = V.FESpace()->GetMesh();
-    if (cfg->debug.debug) std::cout << "[DEBUG:DirichletBC] \n";
+    if (cfg->debug.printBoundaryConditions) std::cout << "[DEBUG:DirichletBC] \n";
     // Iterate config elements with dirichlet attributes
     for (const auto& [name, bc] :cfg->boundaries)
     {
@@ -63,7 +53,7 @@ void ApplyDirichletValues(GridFunction &V, const Array<int> &dirichlet_attr, con
       {
         ConstantCoefficient Vcoef(bc.value);
         V.ProjectBdrCoefficient(Vcoef, marker);
-        if (cfg->debug.debug) {
+        if (cfg->debug.printBoundaryConditions) {
           std::cout << "\t\t" << name << " '(bdr_id = " << bc.bdr_id << ")'\n";
         }
       }

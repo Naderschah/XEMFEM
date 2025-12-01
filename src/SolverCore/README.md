@@ -8,7 +8,10 @@ Implements the main simulation suite, everything else is just wrappers
 
 
 
+### Computing the electric field
+The e field components are stored in an L2 field of polynomial degree p-1 with p the degree of the H1 space. 
 
+The electric field magnitude is stored in an L2 field with degree 0 (piecewise continuous) since otherwise we get negative values since this is exclusively used for visualization that is fine. 
 
 
 

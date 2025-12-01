@@ -1,12 +1,20 @@
+# src/SolverCore/CMakeLists.txt
 cmake_minimum_required(VERSION 3.15)
-project(SOLVER LANGUAGES CXX)
-
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # ---------------------------------------------------------
-# --- Third-party packages (found via hardcoded prefix) ---
+# --- Standalone or subproject detection ------------------
+# ---------------------------------------------------------
+set(IS_SOLVERCORE_TOPLEVEL OFF)
+if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    set(IS_SOLVERCORE_TOPLEVEL ON)
+    project(SolverCoreProj LANGUAGES CXX)
+
+    set(CMAKE_CXX_STANDARD 17)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+endif()
+
+# ---------------------------------------------------------
+# --- Third-party packages (needed in any mode) -----------
 # ---------------------------------------------------------
 find_package(yaml-cpp REQUIRED)
 find_package(MPI REQUIRED)
@@ -16,20 +24,20 @@ set(MFEM_DIR "/home/felix/mfem-install/lib/cmake/mfem")
 find_package(MFEM CONFIG REQUIRED)
 
 # ---------------------------------------------------------
-# --- Config (YAML loader) --------------------------------
+# --- Dependencies only when building SolverCore alone ----
 # ---------------------------------------------------------
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../config
-                 ${CMAKE_CURRENT_BINARY_DIR}/config)
+if (IS_SOLVERCORE_TOPLEVEL)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../config
+                     ${CMAKE_CURRENT_BINARY_DIR}/config)
 
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../cmdLineParser
-                 ${CMAKE_CURRENT_BINARY_DIR}/cmdLineParser)
-                 
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../cmdLineParser
+                     ${CMAKE_CURRENT_BINARY_DIR}/cmdLineParser)
+endif()
 
 # ---------------------------------------------------------
-# --- Solver executable (no geometry coupling) ------------
+# --- SolverCore library ----------------------------------
 # ---------------------------------------------------------
-add_executable(SOLVER
-  main.cpp
+add_library(SolverCore STATIC
   load_mesh.cpp
   parallelization.cpp
   boundary_conditions.cpp
@@ -38,16 +46,18 @@ add_executable(SOLVER
   ComputeElectricField.cpp
 )
 
-target_include_directories(SOLVER PRIVATE
-  ${CMAKE_SOURCE_DIR}
-  ${MFEM_INCLUDE_DIRS}
+target_include_directories(SolverCore
+  PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${MFEM_INCLUDE_DIRS}
 )
 
-target_link_libraries(SOLVER PRIVATE
-  mfem
-  config
-  cmdLineParser
-  yaml-cpp
-  MPI::MPI_CXX
-  OpenMP::OpenMP_CXX
+target_link_libraries(SolverCore
+  PUBLIC
+    mfem
+    config
+    cmdLineParser
+    yaml-cpp
+    MPI::MPI_CXX
+    OpenMP::OpenMP_CXX
 )

@@ -11,8 +11,6 @@ CreateSimulationDomain(const std::string &path,
                        MPI_Comm comm = MPI_COMM_WORLD
 );
 
-void CheckAxisymmetricMesh( const mfem::Mesh &mesh,
-                            int radial_coord_index,   // 0 = x, 1 = y
-                            int axis_bdr_attr);
+void CheckAxisymmetricMesh( const mfem::Mesh &mesh, int radial_coord_index);
 
 #endif

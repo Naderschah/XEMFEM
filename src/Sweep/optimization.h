@@ -31,6 +31,8 @@ enum class FieldLineDest {
     Other       // anything else (lost, ambiguous, etc.)
 };
 
+// Forward declare - act definition at the end of this file
+class OptimizationLogger;
 
 using ObjectiveFn = std::function<double(const OptimizationMetrics&)>;
 
@@ -38,16 +40,46 @@ void run_optimization(const Config &init_cfg);
 
 RunAndMetricsResult run_simulation_and_save(const Config &cfg, std::size_t eval_index);
 
-double evaluate_one_optimization_point(const Config &base_cfg, const OptimizationSettings &opt, const std::vector<double> &x, std::size_t eval_index, const ObjectiveFn &objective_fn, std::vector<OptRunRecord> &records);
+double evaluate_one_optimization_point(const Config &base_cfg, const OptimizationSettings &opt, const std::vector<double> &x, std::size_t eval_index, const ObjectiveFn &objective_fn, std::vector<OptRunRecord> &records, OptimizationLogger *logger);
 
 ObjectiveFn make_objective_function(const OptimizationSettings &opt);
 
 OptimizationMetrics compute_metrics(const Config &cfg, const SimulationResult &result);
 
-double compute_civ(const Config &cfg, const SimulationResult &result);
-
 void apply_opt_vars(Config &cfg, const OptimizationSettings &opt, const std::vector<double> &x);
 
 std::vector<std::pair<std::string, std::string>> make_var_list(const OptimizationSettings &opt, const std::vector<double> &x);
 
+// File writing
+
+// Called at very end (kept in case file somehow gets corrupted)
 void write_optimization_meta(const std::string &geometry_id, const std::filesystem::path &save_root, const std::vector<OptRunRecord> &records);
+
+// Writer during optimization
+void write_single_opt_record_block(std::ostream &meta, const std::filesystem::path &save_root, const OptRunRecord &rec);
+
+class OptimizationLogger {
+public:
+    OptimizationLogger(std::string geometry_id,
+                       std::filesystem::path save_root);
+
+    // Create directories and write the header (<geometry_id>\n\n)
+    void initialize();
+
+    // Append a single OptRunRecord block to meta.txt
+    void append_record(const OptRunRecord &rec);
+
+    // Expose it in case requireds
+    const std::filesystem::path &save_root() const {
+        return save_root_;
+    }
+
+private:
+    void ensure_initialized();
+
+    std::string geometry_id_;
+    std::filesystem::path save_root_;
+    bool initialized_ = false;
+};
+
+void run_metrics_only(const Config &cfg);

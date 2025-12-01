@@ -29,3 +29,5 @@ SimulationResult run_simulation(
 );
 
 void save_results(const SimulationResult &result, const std::filesystem::path &root_path);
+
+SimulationResult load_results(const Config &cfg, const std::filesystem::path &root_path);

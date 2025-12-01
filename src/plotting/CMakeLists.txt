@@ -1,13 +1,45 @@
+# src/plotting/CMakeLists.txt
 cmake_minimum_required(VERSION 3.15)
-project(PLOT LANGUAGES CXX)
 
-# Point CMake at your VTK install
-set(vtk_DIR "$ENV{HOME}/vtk/install/lib/cmake/vtk-9.5" CACHE PATH "Path to vtk-config.cmake")
+set(IS_PLOT_TOPLEVEL OFF)
+if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    set(IS_PLOT_TOPLEVEL ON)
+    project(PLOT LANGUAGES CXX)
 
-# Use the new-style config package "vtk"
-find_package(vtk CONFIG REQUIRED)
+    set(CMAKE_CXX_STANDARD 17)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+endif()
 
-# Library with your plotting implementation
+# Path to vtk-config.cmake / VTKConfig.cmake
+set(VTK_DIR "$ENV{HOME}/vtk/install/lib/cmake/vtk-9.5" CACHE PATH "Path to VTK config")
+
+find_package(VTK REQUIRED COMPONENTS
+    CommonCore
+    CommonColor
+    CommonDataModel
+    IOXML
+    IOImage
+    FiltersCore
+    FiltersGeneral
+    FiltersGeometry
+    FiltersExtraction
+    FiltersSources
+    FiltersFlowPaths
+    RenderingCore
+    RenderingOpenGL2
+    RenderingFreeType
+    RenderingContext2D
+    RenderingContextOpenGL2
+    RenderingAnnotation
+    ChartsCore
+    InteractionStyle
+    FiltersPoints
+)
+
+if (NOT VTK_FOUND)
+    message(FATAL_ERROR "PLOT: Unable to find the VTK build folder.")
+endif()
+
 add_library(plotting STATIC
     FEMPlotVTK.cpp
 )
@@ -17,30 +49,11 @@ target_include_directories(plotting
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-# Link against the VTK imported targets you actually use.
-# Make sure these match the modules you enabled when building VTK.
 target_link_libraries(plotting
     PUBLIC
-        vtk::CommonCore
-        vtk::CommonDataModel
-        vtk::IOXML
-        vtk::IOImage
-        vtk::FiltersCore
-        vtk::FiltersGeneral
-        vtk::FiltersGeometry
-        vtk::FiltersSources
-        vtk::FiltersFlowPaths
-        vtk::RenderingCore
-        vtk::RenderingOpenGL2
-        vtk::RenderingFreeType
-        vtk::RenderingContext2D
-        vtk::RenderingContextOpenGL2
-        vtk::RenderingAnnotation
-        vtk::ChartsCore
-        vtk::InteractionStyle
+        ${VTK_LIBRARIES}
 )
 
-# Executable that uses the plotting library
 add_executable(PLOT
     main.cpp
 )
@@ -48,4 +61,9 @@ add_executable(PLOT
 target_link_libraries(PLOT
     PRIVATE
         plotting
+)
+
+vtk_module_autoinit(
+    TARGETS PLOT plotting
+    MODULES ${VTK_LIBRARIES}
 )
