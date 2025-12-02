@@ -129,8 +129,12 @@ struct OptimizationSettings {
 
     // Optimization target
     std::string objective;
-    // Weights if objective = weighted
-    double w_CIV         = 1.0;
+
+    // Evaluation domain
+    double r_min          = 0.0;
+    double r_max          = 0.664;
+    double z_min          = -1.5028;
+    double z_max          = 0.004;
 
     // Variables to tune:
     std::vector<OptimizeVar> variables;
@@ -177,11 +181,8 @@ struct ElectronTraceParams
     double adapt_grow     = 1.5;   // max step growth per acceptance
     double adapt_shrink   = 0.25;   // min shrink factor on rejection
     double tol_rel        = 1e-3;  // relative position error tolerance
-    // Bounds over which to evaluate CIV / tracing domain
-    double r_min          = 0.0;
-    double r_max          = 0.664;
-    double z_min          = -1.5028;
-    double z_max          = 0.004;
+    // tracing maximum
+    double tracing_z_max = 0.004;
     // If true, treat r <= geom_tol as an exit condition 
     bool   terminate_on_axis = true;
     int    num_seed_elements = 0;  // <= 0 means "use all elements"
@@ -189,6 +190,13 @@ struct ElectronTraceParams
 
     // Parameters specific to informed sweep
     bool dump_civ_boundary = true;
+
+    // TODO This should not be here 
+    // It is only kept as i need to clean up CIV Tracing
+    double r_min          = 0.0;
+    double r_max          = 0.664;
+    double z_min          = -1.5028;
+    double z_max          = 0.004;
 };
 
 // ------------------------- Actual Config Struct -------------------------------

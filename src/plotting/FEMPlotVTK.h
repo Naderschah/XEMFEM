@@ -244,9 +244,35 @@ void PlotStandardViewsForPotentialAndEnorm(vtkUnstructuredGrid* grid,
                                            const PlotInput& input,
                                            const PlottingOptions& base_options);
 
-// -----------------------------------------------------------------------------
-// Example driver (used by your existing main)
-// -----------------------------------------------------------------------------
+// New Things 
+struct ViewportRect
+{
+    // Normalized coordinates: [0,1] in the full render window
+    double x0 = 0.0;
+    double y0 = 0.0;
+    double x1 = 1.0;
+    double y1 = 1.0;
+};
+struct PlotViewLayout
+{
+    // The overall region this plot occupies in the render window
+    ViewportRect plot;        // usually {0,0,1,1} for now
+
+    // Main components inside that plot
+    ViewportRect field;       // main scalar field view
+    ViewportRect cbar;        // colorbar
+    ViewportRect title;       // plot title area
+    ViewportRect cbarTitle;   // colorbar title area
+
+    // Optional labels around colorbar (above/below or left/right)
+    ViewportRect cbarLabelTopOrLeft;
+    ViewportRect cbarLabelBottomOrRight;
+
+    // Convenience: is colorbar horizontal?
+    bool cbarHorizontal = true;
+};
+PlotViewLayout MakeDefaultPlotViewLayout(bool cbarHorizontal,
+                                         bool separateCbarViewport);
 
 
 } // namespace

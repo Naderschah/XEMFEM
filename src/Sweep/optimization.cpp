@@ -24,6 +24,7 @@ No built in bounds or constraints -> We need to handle these manually
 #include "config_modification.h"
 #include "optimization.h"
 #include "trace_fieldlines.h"
+#include "field_spread.h"
 
 #include "nelder-mead.h" 
 
@@ -237,14 +238,27 @@ ObjectiveFn make_objective_function(const OptimizationSettings &opt)
             return m.CIV;
         };
     }
-
-    if (name == "weighted") {
-        const double wC = opt.w_CIV;
-
-        return [wC](const OptimizationMetrics &m) {
-            return wC * m.CIV;
+    if (name == "FieldSpread") {
+      return [](const OptimizationMetrics &m) {
+            return m.FieldSpread;
         };
     }
+
+
+    if (name == "self_weighting") {
+        return [CIV0 = 0.0, FS0 = 0.0]
+              (const OptimizationMetrics &m) mutable
+        {
+            if (CIV0 == 0.0) CIV0 = m.CIV;
+            if (FS0  == 0.0) FS0  = m.FieldSpread;
+
+            const double CIV_hat = m.CIV / CIV0;
+            const double FS_hat  = m.FieldSpread / FS0;
+
+            return CIV_hat + FS_hat;
+        };
+    }
+
 
     // Default / unknown objective: error
     throw std::runtime_error("Unknown optimization objective: '" + name + "'");
@@ -259,6 +273,12 @@ OptimizationMetrics compute_metrics(const Config &cfg, const SimulationResult &r
     if (cfg.optimize.print_results)
     {
         std::cout << "[OPT] CIV: " << m.CIV << std::endl;
+    }
+
+    m.FieldSpread = computeFieldSpreadMetric(cfg, result);
+    if (cfg.optimize.print_results)
+    {
+        std::cout << "[OPT] FieldSpread: " << m.FieldSpread << std::endl;
     }
 
     return m;

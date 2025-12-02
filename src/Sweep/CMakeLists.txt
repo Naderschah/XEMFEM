@@ -46,6 +46,7 @@ add_executable(SWEEP
   config_modification.cpp
   optimization.cpp
   trace_fieldlines.cpp
+  field_spread.cpp
 )
 
 # ------ Nelder Mead (header-only) ---------------------------

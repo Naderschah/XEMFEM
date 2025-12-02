@@ -278,13 +278,15 @@ static void parse_optimization(Config &cfg, const YAML::Node &root)
     cfg.optimize.objective =
         O["print_results"].as<bool>(cfg.optimize.print_results);
 
+    // Domain bounds
+    cfg.optimize.r_min = O["r_min"].as<double>(cfg.optimize.r_min);
+    cfg.optimize.r_max = O["r_max"].as<double>(cfg.optimize.r_max);
+    cfg.optimize.z_min = O["z_min"].as<double>(cfg.optimize.z_min);
+    cfg.optimize.z_max = O["z_max"].as<double>(cfg.optimize.z_max);
+
     // Objective name (string keyword)
     cfg.optimize.objective =
         O["objective"].as<std::string>(cfg.optimize.objective);
-
-    // Optional weights for weighted objectives
-    cfg.optimize.w_CIV =
-        O["w_CIV"].as<double>(cfg.optimize.w_CIV);
 
     // NM controls (names mapped from your YAML)
     cfg.optimize.max_fun_evals =
@@ -361,11 +363,14 @@ static void parse_trace_params(Config &cfg, const YAML::Node &root)
         return n ? n.as<bool>(cur) : cur;
     };
 
-    // Domain bounds
-    params.r_min = get_d("r_min", params.r_min);
-    params.r_max = get_d("r_max", params.r_max);
-    params.z_min = get_d("z_min", params.z_min);
-    params.z_max = get_d("z_max", params.z_max);
+   
+    params.tracing_z_max = get_d("tracing_z_max", params.tracing_z_max);
+    
+    // TODO Clean this up currently this is carried twice internaly
+    params.r_min = cfg.optimize.r_min;
+    params.r_max = cfg.optimize.r_max;
+    params.z_min = cfg.optimize.z_min;
+    params.z_max = cfg.optimize.z_max;
 
     // Main controls
     params.max_steps     = get_i("max_steps",     params.max_steps);

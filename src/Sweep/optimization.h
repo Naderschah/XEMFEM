@@ -9,6 +9,7 @@
 // Holds the optimization metrics
 struct OptimizationMetrics {
     double CIV = 0.0;          // Charge Insensitive Volume
+    double FieldSpread = 0.0; 
 };
 // For writing the meta file 
 struct OptRunRecord

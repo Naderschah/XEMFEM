@@ -868,7 +868,7 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
     }
 
     // ---------------------------------------------------------------------
-    // 2) Scalar statistics and LUT (color map)
+    // 1) Scalar statistics and LUT
     // ---------------------------------------------------------------------
     ScalarStats stats;
     if (request.crop_to_region)
@@ -882,14 +882,12 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
         stats = ComputeScalarStats(dataset_to_plot, request.scalar_name);
     }
 
-    
-
     auto lut = BuildLookupTable(request.color_map_name,
                                 stats.min_used,
                                 stats.max_used);
 
     // ---------------------------------------------------------------------
-    // 3) Mapper and mesh actor (with optional clipping planes)
+    // 2) Mapper and mesh actor (with optional clipping planes)
     // ---------------------------------------------------------------------
     auto mapper = vtkSmartPointer<vtkDataSetMapper>::New();
     mapper->SetInputData(dataset_to_plot);
@@ -938,7 +936,7 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
                                       plotting.edge_width);
 
     // ---------------------------------------------------------------------
-    // 4) Renderer(s) and render window
+    // 3) Render window + layout + renderers
     // ---------------------------------------------------------------------
     int img_w = (request.image_width  > 0) ? request.image_width  : plotting.image_width;
     int img_h = (request.image_height > 0) ? request.image_height : plotting.image_height;
@@ -949,181 +947,167 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
     renderWindow->SetMultiSamples(0);
     renderWindow->SetSize(img_w, img_h);
 
-    auto field_renderer = vtkSmartPointer<vtkRenderer>::New();
-    field_renderer->SetBackground(1.0, 1.0, 1.0);
-    field_renderer->SetBackground2(1.0, 1.0, 1.0);
-    field_renderer->GradientBackgroundOff();
+    // Layout for this plot
+    PlotViewLayout layout = MakeDefaultPlotViewLayout(
+        request.cbar_horizontal,
+        request.separate_cbar_viewport);
+
+    auto makeRenderer = [&](const ViewportRect& r) {
+        auto ren = vtkSmartPointer<vtkRenderer>::New();
+        ren->SetBackground(1.0, 1.0, 1.0);
+        ren->SetBackground2(1.0, 1.0, 1.0);
+        ren->GradientBackgroundOff();
+        ren->SetViewport(r.x0, r.y0, r.x1, r.y1);
+        renderWindow->AddRenderer(ren);
+        return ren;
+    };
+
+    // Main field renderer
+    vtkSmartPointer<vtkRenderer> field_renderer = makeRenderer(layout.field);
     field_renderer->AddActor(mesh_actor);
 
-    vtkSmartPointer<vtkRenderer> cbar_renderer;
-
-    if (request.separate_cbar_viewport)
-    {
-        if (request.cbar_horizontal)
-        {
-            // Field on top 80%, cbar bottom 20%
-            field_renderer->SetViewport(0.0, 0.2, 1.0, 1.0);
-            renderWindow->AddRenderer(field_renderer);
-
-            cbar_renderer = vtkSmartPointer<vtkRenderer>::New();
-            cbar_renderer->SetBackground(1.0, 1.0, 1.0);
-            cbar_renderer->SetBackground2(1.0, 1.0, 1.0);
-            cbar_renderer->GradientBackgroundOff();
-            cbar_renderer->SetViewport(0.0, 0.0, 1.0, 0.2);
-            renderWindow->AddRenderer(cbar_renderer);
-        }
-        else
-        {
-            // Field left 80%, cbar right 20%
-            field_renderer->SetViewport(0.0, 0.0, 0.8, 1.0);
-            renderWindow->AddRenderer(field_renderer);
-
-            cbar_renderer = vtkSmartPointer<vtkRenderer>::New();
-            cbar_renderer->SetBackground(1.0, 1.0, 1.0);
-            cbar_renderer->SetBackground2(1.0, 1.0, 1.0);
-            cbar_renderer->GradientBackgroundOff();
-            cbar_renderer->SetViewport(0.8, 0.0, 1.0, 1.0);
-            renderWindow->AddRenderer(cbar_renderer);
-        }
-    }
-    else
-    {
-        field_renderer->SetViewport(0.0, 0.0, 1.0, 1.0);
-        renderWindow->AddRenderer(field_renderer);
-    }
+    // Title / cbar / label renderers
+    vtkSmartPointer<vtkRenderer> title_renderer           = makeRenderer(layout.title);
+    vtkSmartPointer<vtkRenderer> cbar_renderer            = makeRenderer(layout.cbar);
+    vtkSmartPointer<vtkRenderer> cbar_title_renderer      = makeRenderer(layout.cbarTitle);
+    vtkSmartPointer<vtkRenderer> cbar_label_top_renderer  = makeRenderer(layout.cbarLabelTopOrLeft);
+    vtkSmartPointer<vtkRenderer> cbar_label_bot_renderer  = makeRenderer(layout.cbarLabelBottomOrRight);
 
     // ---------------------------------------------------------------------
-    // 5) Axes and title on field renderer
+    // 4) Axes (remain inside field viewport)
     // ---------------------------------------------------------------------
     AddXYAxes(field_renderer, request.region_bounds,
               request.x_label, request.y_label, request.z_label,
               request.axis_title_font_size,
               request.axis_label_font_size);
 
+    // ---------------------------------------------------------------------
+    // 5) Plot title in its own viewport
+    // ---------------------------------------------------------------------
+    if (!request.title.empty())
     {
         auto titleActor = vtkSmartPointer<vtkTextActor>::New();
         titleActor->SetInput(request.title.c_str());
+
         auto tprop = titleActor->GetTextProperty();
         tprop->SetFontFamilyToArial();
         tprop->SetFontSize(request.title_font_size);
         tprop->SetColor(0.0, 0.0, 0.0);
+        tprop->SetJustificationToCentered();
+        tprop->SetVerticalJustificationToCentered();
 
-        auto pos = titleActor->GetPositionCoordinate();
-        pos->SetCoordinateSystemToNormalizedViewport();
-        titleActor->SetPosition(0.02, 0.95);  // 2% from left, 94% up
+        titleActor->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();
+        titleActor->SetPosition(0.5, 0.5);  // centered in title viewport
 
-        field_renderer->AddActor2D(titleActor);
+        title_renderer->AddActor2D(titleActor);
     }
-    
 
     // ---------------------------------------------------------------------
-    // 6) Scalar bar
+    // 6) Scalar bar (colorbar viewport)
     // ---------------------------------------------------------------------
     auto scalar_bar = CreateScalarBar(
         lut,
-        request.cbar_title,
+        "",  // we show the title in a separate viewport below
         request.cbar_title_font_size,
         request.cbar_label_font_size,
         request.cbar_num_labels);
-    
+
+    if (request.cbar_horizontal)
+    {
+        scalar_bar->SetOrientationToHorizontal();
+        scalar_bar->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();
+        scalar_bar->GetPositionCoordinate()->SetValue(0.10, 0.25);
+        scalar_bar->SetWidth(0.80);
+        scalar_bar->SetHeight(0.5);
+    }
+    else
+    {
+        scalar_bar->SetOrientationToVertical();
+        scalar_bar->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();
+        scalar_bar->GetPositionCoordinate()->SetValue(0.35, 0.05);
+        scalar_bar->SetWidth(0.30);
+        scalar_bar->SetHeight(0.90);
+    }
 
     if (request.show_contours)
     {
-        
+        // Placeholder: contour-aligned labels could be set here later.
+        scalar_bar->UseCustomLabelsOff();
     }
     else
     {
-        // Default: evenly spaced labels
         scalar_bar->UseCustomLabelsOff();
     }
 
+    cbar_renderer->AddActor2D(scalar_bar);
 
-    if (request.separate_cbar_viewport && cbar_renderer)
+    // ---------------------------------------------------------------------
+    // 7) Colorbar title in its own viewport
+    // ---------------------------------------------------------------------
+    if (!request.cbar_title.empty())
     {
-        if (request.cbar_horizontal)
-        {
-            scalar_bar->SetOrientationToHorizontal();
-            scalar_bar->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();
-            scalar_bar->GetPositionCoordinate()->SetValue(0.15, 0.3);
-            scalar_bar->SetWidth(0.7);
-            scalar_bar->SetHeight(0.4);
-        }
-        else
-        {
-            scalar_bar->SetOrientationToVertical();
-            scalar_bar->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();
-            scalar_bar->GetPositionCoordinate()->SetValue(0.25, 0.15);
-            scalar_bar->SetWidth(0.5);
-            scalar_bar->SetHeight(0.7);
-        }
+        auto cbarTitleActor = vtkSmartPointer<vtkTextActor>::New();
+        cbarTitleActor->SetInput(request.cbar_title.c_str());
 
-        cbar_renderer->AddActor2D(scalar_bar);
-    }
-    else
-    {
-        field_renderer->AddActor2D(scalar_bar);
+        auto tprop = cbarTitleActor->GetTextProperty();
+        tprop->SetFontFamilyToArial();
+        tprop->SetFontSize(request.cbar_title_font_size);
+        tprop->SetColor(0.0, 0.0, 0.0);
+        tprop->SetJustificationToCentered();
+        tprop->SetVerticalJustificationToCentered();
+
+        cbarTitleActor->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();
+        cbarTitleActor->SetPosition(0.5, 0.5);  // centered in cbarTitle viewport
+
+        cbar_title_renderer->AddActor2D(cbarTitleActor);
     }
 
     // ---------------------------------------------------------------------
-    // 7) True min/max annotations
+    // 8) True min/max annotations in dedicated label viewports
     // ---------------------------------------------------------------------
-    if (request.separate_cbar_viewport && cbar_renderer)
+    if (stats.min_used > stats.min_roi)
     {
-        if (stats.min_used > stats.min_roi)
-        {
-            auto txt = vtkSmartPointer<vtkTextActor>::New();
-            std::ostringstream ss;
-            ss << "min = " << stats.min_roi;
-            txt->SetInput(ss.str().c_str());
+        auto txt = vtkSmartPointer<vtkTextActor>::New();
+        std::ostringstream ss;
+        ss << "min = " << stats.min_roi;
+        txt->SetInput(ss.str().c_str());
 
-            auto tp = txt->GetTextProperty();
-            tp->SetFontFamilyToArial();
-            tp->SetFontSize(request.cbar_minmax_font_size);
-            tp->SetColor(0.0, 0.0, 0.0);
+        auto tp = txt->GetTextProperty();
+        tp->SetFontFamilyToArial();
+        tp->SetFontSize(request.cbar_minmax_font_size);
+        tp->SetColor(0.0, 0.0, 0.0);
+        tp->SetJustificationToCentered();
+        tp->SetVerticalJustificationToCentered();
 
-            txt->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();
+        txt->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();
+        txt->SetPosition(0.5, 0.5);
 
-            if (request.cbar_horizontal)
-            {
-                txt->SetPosition(0.15, 0.10);
-            }
-            else
-            {
-                txt->SetPosition(0.10, 0.05);
-            }
-
-            cbar_renderer->AddActor2D(txt);
-        }
-
-        if (stats.max_used < stats.max_roi)
-        {
-            auto txt = vtkSmartPointer<vtkTextActor>::New();
-            std::ostringstream ss;
-            ss << "max = " << stats.max_roi;
-            txt->SetInput(ss.str().c_str());
-
-            auto tp = txt->GetTextProperty();
-            tp->SetFontFamilyToArial();
-            tp->SetFontSize(request.cbar_minmax_font_size);
-            tp->SetColor(0.0, 0.0, 0.0);
-
-            txt->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();
-
-            if (request.cbar_horizontal)
-            {
-                txt->SetPosition(0.75, 0.10);
-            }
-            else
-            {
-                txt->SetPosition(0.10, 0.85);
-            }
-
-            cbar_renderer->AddActor2D(txt);
-        }
+        cbar_label_bot_renderer->AddActor2D(txt);
     }
 
-    
-    // 9) Streamlines — left as future work
+    if (stats.max_used < stats.max_roi)
+    {
+        auto txt = vtkSmartPointer<vtkTextActor>::New();
+        std::ostringstream ss;
+        ss << "max = " << stats.max_roi;
+        txt->SetInput(ss.str().c_str());
+
+        auto tp = txt->GetTextProperty();
+        tp->SetFontFamilyToArial();
+        tp->SetFontSize(request.cbar_minmax_font_size);
+        tp->SetColor(0.0, 0.0, 0.0);
+        tp->SetJustificationToCentered();
+        tp->SetVerticalJustificationToCentered();
+
+        txt->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();
+        txt->SetPosition(0.5, 0.5);
+
+        cbar_label_top_renderer->AddActor2D(txt);
+    }
+
+    // ---------------------------------------------------------------------
+    // 9) Streamlines (not yet wired in this refactor)
+    // ---------------------------------------------------------------------
     if (request.show_streamlines)
     {
         std::cerr << "[PlotScalarFieldView] NOTE: show_streamlines requested "
@@ -1132,7 +1116,7 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
     }
 
     // ---------------------------------------------------------------------
-    // 10) Camera setup and zoom
+    // 10) Camera setup and zoom for field renderer
     // ---------------------------------------------------------------------
     double b[6];
     std::copy(std::begin(request.region_bounds),
@@ -1404,6 +1388,149 @@ static PlotInput PreparePlotInput(const char* raw_path)
 
     return R;
 }
+
+
+//------------------------- New Things ------------------------------ 
+
+
+PlotViewLayout MakeDefaultPlotViewLayout(bool cbarHorizontal,
+                                         bool separateCbarViewport)
+{
+    PlotViewLayout layout;
+    layout.cbarHorizontal = cbarHorizontal;
+
+    // For now each plot uses the full window.
+    layout.plot = {0.0, 0.0, 1.0, 1.0};
+
+    if (cbarHorizontal)
+    {
+        // Horizontal cbar at the bottom.
+        const double titleHeight = 0.10;                         // top band
+        const double cbarHeight  = separateCbarViewport ? 0.18 : 0.12;
+        const double gap         = 0.02;
+
+        double px0 = layout.plot.x0;
+        double py0 = layout.plot.y0;
+        double px1 = layout.plot.x1;
+        double py1 = layout.plot.y1;
+
+        // Title band across the top
+        layout.title = { px0, py1 - titleHeight, px1, py1 };
+
+        // Colorbar band at the bottom (short, centered)
+        layout.cbar = {
+            px0 + 0.10,
+            py0 + 0.02,
+            px1 - 0.10,
+            py0 + 0.02 + cbarHeight
+        };
+
+        // Colorbar title band above the bar
+        layout.cbarTitle = {
+            layout.cbar.x0,
+            layout.cbar.y1 + gap,
+            layout.cbar.x1,
+            layout.cbar.y1 + gap + 0.06
+        };
+
+        // Labels just below and above the bar (for min/max etc.)
+        layout.cbarLabelBottomOrRight = {
+            layout.cbar.x0,
+            layout.cbar.y0 - 0.06,
+            layout.cbar.x1,
+            layout.cbar.y0
+        };
+
+        layout.cbarLabelTopOrLeft = {
+            layout.cbar.x0,
+            layout.cbar.y1,
+            layout.cbar.x1,
+            layout.cbar.y1 + 0.06
+        };
+
+        // Field occupies the remaining area between cbar and title
+        layout.field = {
+            px0,
+            layout.cbar.y1 + gap,
+            px1,
+            layout.title.y0 - gap
+        };
+    }
+    else
+    {
+        // Vertical cbar on the right.
+        const double titleHeight = 0.10;
+        const double cbarWidth   = separateCbarViewport ? 0.18 : 0.12;
+        const double sideMargin  = 0.04;
+        const double gap         = 0.02;
+
+        double px0 = layout.plot.x0;
+        double py0 = layout.plot.y0;
+        double px1 = layout.plot.x1;
+        double py1 = layout.plot.y1;
+
+        // Title band across the top
+        layout.title = { px0, py1 - titleHeight, px1, py1 };
+
+        // Colorbar band on the right, leaving some margin at top/bottom
+        layout.cbar = {
+            px1 - cbarWidth,
+            py0 + sideMargin,
+            px1 - sideMargin,
+            py1 - titleHeight - sideMargin
+        };
+
+        // Colorbar title band above the cbar
+        layout.cbarTitle = {
+            layout.cbar.x0,
+            layout.cbar.y1 + gap,
+            layout.cbar.x1,
+            layout.cbar.y1 + gap + 0.06
+        };
+
+        // Labels to left/right of cbar
+        layout.cbarLabelTopOrLeft = {
+            layout.cbar.x0 - 0.06,
+            layout.cbar.y0,
+            layout.cbar.x0,
+            layout.cbar.y1
+        };
+
+        layout.cbarLabelBottomOrRight = {
+            layout.cbar.x1,
+            layout.cbar.y0,
+            layout.cbar.x1 + 0.06,
+            layout.cbar.y1
+        };
+
+        // Field: everything left of cbar and below title
+        layout.field = {
+            px0,
+            py0,
+            layout.cbar.x0 - gap,
+            layout.title.y0 - gap
+        };
+    }
+
+    // Clamp to [0,1] just in case
+    auto clampRect = [](ViewportRect& r) {
+        r.x0 = std::max(0.0, std::min(1.0, r.x0));
+        r.y0 = std::max(0.0, std::min(1.0, r.y0));
+        r.x1 = std::max(0.0, std::min(1.0, r.x1));
+        r.y1 = std::max(0.0, std::min(1.0, r.y1));
+    };
+
+    clampRect(layout.plot);
+    clampRect(layout.field);
+    clampRect(layout.cbar);
+    clampRect(layout.title);
+    clampRect(layout.cbarTitle);
+    clampRect(layout.cbarLabelTopOrLeft);
+    clampRect(layout.cbarLabelBottomOrRight);
+
+    return layout;
+}
+
 
 
 }

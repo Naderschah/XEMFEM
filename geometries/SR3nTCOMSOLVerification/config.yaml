@@ -51,21 +51,23 @@ optimize:
   metrics_only: false
   print_results: true
 
-  objective: "CIV" 
+  objective: "self_weighting" 
 
   max_evals: 1
   max_iters: 1
   rel_tol_f: 1.0e-3
   rel_tol_x: 1.0e-3
   adaptive:  true     # FIXME What did this do? 
+
+  r_min: 0.0         
+  r_max: 0.664       # PanelRadialPosition
+  z_min: -1.5025     # CathodeVerticalPosition + CathodeWireDiameter
+  z_max: 0.004
+
   # Parameters for field line tracing (Used by CIV)
   trace_params:
-    # TODO Clean this up half of this is used by methods that dont work at the moment
-    r_min: 0.0         
-    r_max: 0.664       # PanelRadialPosition
-    z_min: -1.5025     # CathodeVerticalPosition + CathodeWireDiameter
     # TODO Handle that this changes the final CIV 
-    z_max: -0.75       # LiquidLevel = 0.004 <= Reduce RK4 integration time works if we assume no dead volume above this point (tracing at electrodes is much more expensive)
+    tracing_z_max: -0.75 # Reduce RK4 integration time, works if we assume no dead volume above this point (tracing at electrodes is much more expensive)
     # The following three parameters determine the integration timestep relative to the average mesh element height
     max_steps: 1000000  # Maximum Integration Steps
     c_cfl: 0.25        # Courant–Friedrichs–Lewy condition for timestep computation - used if with the computed timestep the simulation domain can be traversed at least 1.5 times
