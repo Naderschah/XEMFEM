@@ -5,82 +5,407 @@
 #include "FEMPlotVTK.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
-#include <iostream>
-#include <cstdlib>  
+#include <cstdlib>
 #include <cstring>
+#include <iostream>
+#include <limits>
+#include <string>
+#include <vector>
 
-// VTK includes
-#include <vtkPlane.h>
-#include <vtkPlanes.h>
-#include <vtkTextProperty.h>
-#include <vtkPlanes.h>
-#include <vtkTextActor.h>
-#include <vtkTextProperty.h>
-#include <vtkXMLUnstructuredGridReader.h>
-#include <vtkUnstructuredGrid.h>
-#include <vtkPointData.h>
-#include <vtkDataArray.h>
-#include <vtkDataSetMapper.h>
+#include <fstream>
+#include <sstream>
+#include <cctype>
+
+// Mappers and Actors
 #include <vtkActor.h>
-#include <vtkRenderer.h>
-#include <vtkRenderWindow.h>
-#include <vtkWindowToImageFilter.h>
-#include <vtkPNGWriter.h>
-#include <vtkCubeAxesActor.h>
-#include <vtkCamera.h>
-#include <vtkActorCollection.h>
-#include <vtkActor2DCollection.h>
-#include <vtkScalarBarActor.h>
-#include <vtkProperty.h>
-#include <vtkDoubleArray.h>
-#include <vtkPointSource.h>
-#include <vtkRungeKutta4.h>
-#include <vtkStreamTracer.h>
+#include <vtkDataSetMapper.h>
 #include <vtkPolyDataMapper.h>
-#include <vtkTubeFilter.h>
-#include <vtkGradientFilter.h>
-#include <vtkDataObject.h>
+
+#include <vtkActor2DCollection.h>
+#include <vtkActorCollection.h>
+#include <vtkBoundedPointSource.h>
+#include <vtkBox.h>
+#include <vtkProperty2D.h>
+#include <vtkCamera.h>
+#include <vtkCubeAxesActor.h>
+#include <vtkDataArray.h>
 #include <vtkDataSet.h>
+#include <vtkExtractGeometry.h>
+#include <vtkGradientFilter.h>
 #include <vtkImageData.h>
 #include <vtkLookupTable.h>
-#include <vtkColorTransferFunction.h>
-#include <vtkScalarBarActor.h>
-#include <vtkCubeAxesActor.h>
-#include <vtkContourFilter.h>
-#include <vtkColorSeries.h>
-#include <vtkPolyData.h>
-#include <vtkPolyDataMapper.h>
-#include <vtkRenderWindowInteractor.h>
-#include <vtkCellArray.h>
-#include <vtkPoints.h>
-#include <vtkGraphicsFactory.h>
-#include <vtkActor.h>
-#include <vtkGraphicsFactory.h>
-#include <vtkNamedColors.h>
 #include <vtkNew.h>
 #include <vtkPNGWriter.h>
-#include <vtkPolyDataMapper.h>
+#include <vtkPlane.h>
+#include <vtkPointData.h>
 #include <vtkProperty.h>
 #include <vtkRenderWindow.h>
 #include <vtkRenderer.h>
-#include <vtkSphereSource.h>
-#include <vtkWindowToImageFilter.h>
-#include <vtkDataSetMapper.h>
-#include <vtkClipDataSet.h>
-#include <vtkBox.h>
-#include <vtkExtractGeometry.h>
-// Mesh IO
-#include <vtkXMLUnstructuredGridReader.h>
+#include <vtkRungeKutta4.h>
+#include <vtkScalarBarActor.h>
+#include <vtkStreamTracer.h>
+#include <vtkTextActor.h>
+#include <vtkTextProperty.h>
+#include <vtkTubeFilter.h>
 #include <vtkUnstructuredGrid.h>
-// Scalars
-#include <vtkPointData.h>
-#include <vtkDataArray.h>
-// Seeding for Streamlines
-#include <vtkBoundedPointSource.h>
+#include <vtkWindowToImageFilter.h>
+#include <vtkXMLUnstructuredGridReader.h>
 
 namespace FEMPlot
 {
+
+// -----------------------------------------------------------------------------
+// Plot config loading (simple INI-style)
+// -----------------------------------------------------------------------------
+
+// -----------------------------------------------------------------------------
+// Plot config loading (INI-style)
+// -----------------------------------------------------------------------------
+
+namespace
+{
+
+    static LayoutConfig g_layoutCfg;
+
+    std::string GetSourceDir()
+    {
+        std::string f = __FILE__;
+        std::size_t pos = f.find_last_of("/\\");
+        if (pos == std::string::npos)
+            return ".";
+        return f.substr(0, pos);
+    }
+    inline void Trim(std::string& s)
+    {
+        auto is_space = [](unsigned char c){ return std::isspace(c); };
+        auto it = std::find_if_not(s.begin(), s.end(), is_space);
+        s.erase(s.begin(), it);
+        auto rit = std::find_if_not(s.rbegin(), s.rend(), is_space);
+        s.erase(rit.base(), s.end());
+    }
+
+    inline void StripComment(std::string& s)
+    {
+        std::size_t pos = s.find_first_of("#;");
+        if (pos != std::string::npos)
+            s.erase(pos);
+    }
+
+    inline bool ParseBool(const std::string& v, bool& out)
+    {
+        if (v.empty()) return false;
+        if (v == "0") { out = false; return true; }
+        if (v == "1") { out = true;  return true; }
+        std::string low = v;
+        std::transform(low.begin(), low.end(), low.begin(),
+                       [](unsigned char c){ return std::tolower(c); });
+        if (low == "true" || low == "yes" || low == "on")
+        {
+            out = true; return true;
+        }
+        if (low == "false" || low == "no" || low == "off")
+        {
+            out = false; return true;
+        }
+        return false;
+    }
+
+    enum class SectionKind
+    {
+        None,
+        FrameFull,
+        FrameStack,
+        FrameBar,
+        ContentV,
+        ContentE,
+        Axes,
+        Text,
+        Regions,
+        LayoutHorizontal,
+        LayoutVertical
+    };
+
+    SectionKind SectionFromName(const std::string& name)
+    {
+        if (name == "frame.full")   return SectionKind::FrameFull;
+        if (name == "frame.stack")  return SectionKind::FrameStack;
+        if (name == "frame.bar")    return SectionKind::FrameBar;
+        if (name == "content.V")    return SectionKind::ContentV;
+        if (name == "content.E")    return SectionKind::ContentE;
+        if (name == "axes")         return SectionKind::Axes;
+        if (name == "text")         return SectionKind::Text;
+        if (name == "regions")      return SectionKind::Regions;
+        if (name == "layout.horizontal")return SectionKind::LayoutHorizontal;
+        if (name == "layout.vertical")  return SectionKind::LayoutVertical;
+        return SectionKind::None;
+    }
+
+} // anonymous namespace
+
+bool LoadPlotConfig(const std::string& path, PlotConfig& cfg)
+{
+    std::ifstream in(path);
+    if (!in)
+    {
+        std::cerr << "[LoadPlotConfig] INFO: could not open '" << path
+                  << "', using compiled defaults.\n";
+        return false;
+    }
+
+    SectionKind section = SectionKind::None;
+    std::string line;
+
+    while (std::getline(in, line))
+    {
+        StripComment(line);
+        Trim(line);
+        if (line.empty())
+            continue;
+
+        // Section header: [name]
+        if (line.front() == '[' && line.back() == ']')
+        {
+            std::string sec = line.substr(1, line.size() - 2);
+            Trim(sec);
+            section = SectionFromName(sec);
+            continue;
+        }
+
+        std::size_t eq = line.find('=');
+        if (eq == std::string::npos)
+            continue;
+
+        std::string key = line.substr(0, eq);
+        std::string val = line.substr(eq + 1);
+        Trim(key);
+        Trim(val);
+        if (key.empty() || val.empty())
+            continue;
+
+        std::istringstream iss(val);
+
+        switch (section)
+        {
+        case SectionKind::FrameFull:
+        case SectionKind::FrameStack:
+        case SectionKind::FrameBar:
+        {
+            FrameConfig* fc = nullptr;
+            if (section == SectionKind::FrameFull)  fc = &cfg.frame_full;
+            if (section == SectionKind::FrameStack) fc = &cfg.frame_stack;
+            if (section == SectionKind::FrameBar)   fc = &cfg.frame_bar;
+            if (!fc) break;
+
+            if (key == "image_width")
+            {
+                iss >> fc->image_width;
+            }
+            else if (key == "image_height")
+            {
+                iss >> fc->image_height;
+            }
+            else if (key == "zoom_factor")
+            {
+                iss >> fc->zoom_factor;
+            }
+            else if (key == "cbar_horizontal")
+            {
+                bool b; if (ParseBool(val, b)) fc->cbar_horizontal = b;
+            }
+            else if (key == "crop_to_region")
+            {
+                bool b; if (ParseBool(val, b)) fc->crop_to_region = b;
+            }
+            else if (key == "separate_cbar_viewport")
+            {
+                bool b; if (ParseBool(val, b)) fc->separate_cbar_viewport = b;
+            }
+            else if (key == "title_font_size")
+            {
+                iss >> fc->text.title_font_size;
+            }
+            else if (key == "axis_title_font_size")
+            {
+                iss >> fc->text.axis_title_font_size;
+            }
+            else if (key == "axis_label_font_size")
+            {
+                iss >> fc->text.axis_label_font_size;
+            }
+            else if (key == "cbar_title_font_size")
+            {
+                iss >> fc->text.cbar_title_font_size;
+            }
+            else if (key == "cbar_label_font_size")
+            {
+                iss >> fc->text.cbar_label_font_size;
+            }
+            else if (key == "cbar_minmax_font_size")
+            {
+                iss >> fc->text.cbar_minmax_font_size;
+            }
+            else if (key == "cbar_num_labels")
+            {
+                int iv = 0;
+                iss >> iv;
+                if (iv > 0) fc->text.cbar_num_labels = iv;
+            }
+            else if (key == "x_num_labels")
+            {
+                int iv = 0;
+                iss >> iv;
+                if (iv > 0) fc->x_num_labels = iv;
+            }
+            break;
+        }
+
+        case SectionKind::ContentV:
+        case SectionKind::ContentE:
+        {
+            ContentConfig* cc =
+                (section == SectionKind::ContentV) ? &cfg.content_V : &cfg.content_E;
+
+            if (key == "scalar_name")
+            {
+                cc->scalar_name = val;
+            }
+            else if (key == "cbar_title")
+            {
+                cc->cbar_title = val;
+            }
+            else if (key == "color_map")
+            {
+                cc->color_map_name = val;
+            }
+            else if (key == "show_contours")
+            {
+                bool b; if (ParseBool(val, b)) cc->show_contours = b;
+            }
+            else if (key == "show_streamlines")
+            {
+                bool b; if (ParseBool(val, b)) cc->show_streamlines = b;
+            }
+            else if (key == "n_contours")
+            {
+                iss >> cc->n_contours;
+            }
+            else if (key == "title_full")
+            {
+                cc->title_full = val;
+            }
+            else if (key == "title_stack_top")
+            {
+                cc->title_stack_top = val;
+            }
+            else if (key == "title_stack_bottom")
+            {
+                cc->title_stack_bottom = val;
+            }
+            else if (key == "title_bar")
+            {
+                cc->title_bar = val;
+            }
+            break;
+        }
+
+        case SectionKind::Axes:
+        {
+            if (key == "x_label")      cfg.axes.x_label = val;
+            else if (key == "y_label") cfg.axes.y_label = val;
+            else if (key == "z_label") cfg.axes.z_label = val;
+            break;
+        }
+
+        case SectionKind::Text:
+        {
+            int iv = 0;
+            if (key == "title_font_size")
+            {
+                iss >> cfg.text.title_font_size;
+            }
+            else if (key == "axis_title_font_size")
+            {
+                iss >> cfg.text.axis_title_font_size;
+            }
+            else if (key == "axis_label_font_size")
+            {
+                iss >> cfg.text.axis_label_font_size;
+            }
+            else if (key == "cbar_title_font_size")
+            {
+                iss >> cfg.text.cbar_title_font_size;
+            }
+            else if (key == "cbar_label_font_size")
+            {
+                iss >> cfg.text.cbar_label_font_size;
+            }
+            else if (key == "cbar_minmax_font_size")
+            {
+                iss >> cfg.text.cbar_minmax_font_size;
+            }
+            else if (key == "cbar_num_labels")
+            {
+                iss >> iv;
+                if (iv > 0) cfg.text.cbar_num_labels = iv;
+            }
+            break;
+        }
+
+        case SectionKind::Regions:
+        {
+            if (key == "top_ymin")      iss >> cfg.regions.top_ymin;
+            else if (key == "top_ymax") iss >> cfg.regions.top_ymax;
+            else if (key == "bottom_ymin") iss >> cfg.regions.bottom_ymin;
+            else if (key == "bottom_ymax") iss >> cfg.regions.bottom_ymax;
+            else if (key == "bar_dx")      iss >> cfg.regions.bar_dx;
+            else if (key == "bar_ymin")    iss >> cfg.regions.bar_ymin;
+            else if (key == "bar_ymax")    iss >> cfg.regions.bar_ymax;
+            break;
+        }
+        case SectionKind::LayoutHorizontal:
+        {
+            // Horizontal layout: bottom→top bands + cbar horizontal extent
+            if (key == "label_y0")      iss >> cfg.layout.h_label_y0;
+            else if (key == "label_y1") iss >> cfg.layout.h_label_y1;
+            else if (key == "cbar_y0")  iss >> cfg.layout.h_cbar_y0;
+            else if (key == "cbar_y1")  iss >> cfg.layout.h_cbar_y1;
+            else if (key == "ctitle_y0")iss >> cfg.layout.h_ctitle_y0;
+            else if (key == "ctitle_y1")iss >> cfg.layout.h_ctitle_y1;
+            else if (key == "field_y0") iss >> cfg.layout.h_field_y0;
+            else if (key == "field_y1") iss >> cfg.layout.h_field_y1;
+            else if (key == "title_y0") iss >> cfg.layout.h_title_y0;
+            else if (key == "title_y1") iss >> cfg.layout.h_title_y1;
+            else if (key == "cbar_x0")  iss >> cfg.layout.h_cbar_x0;
+            else if (key == "cbar_x1")  iss >> cfg.layout.h_cbar_x1;
+            break;
+        }
+        case SectionKind::LayoutVertical:
+        {
+            // Vertical layout: left/right + bottom→top bands
+            if (key == "field_x0")         iss >> cfg.layout.v_field_x0;
+            else if (key == "field_x1")    iss >> cfg.layout.v_field_x1;
+            else if (key == "label_bot_y0")iss >> cfg.layout.v_label_bot_y0;
+            else if (key == "label_bot_y1")iss >> cfg.layout.v_label_bot_y1;
+            else if (key == "cbar_y0")     iss >> cfg.layout.v_cbar_y0;
+            else if (key == "cbar_y1")     iss >> cfg.layout.v_cbar_y1;
+            else if (key == "label_top_y0")iss >> cfg.layout.v_label_top_y0;
+            else if (key == "label_top_y1")iss >> cfg.layout.v_label_top_y1;
+            else if (key == "title_y0")    iss >> cfg.layout.v_title_y0;
+            else if (key == "title_y1")    iss >> cfg.layout.v_title_y1;
+            else if (key == "cbar_x0")     iss >> cfg.layout.v_cbar_x0;
+            else if (key == "cbar_x1")     iss >> cfg.layout.v_cbar_x1;
+            break;
+        }
+        default:
+            break;
+        }
+    }
+
+    std::cerr << "[LoadPlotConfig] Loaded plot config from '" << path << "'.\n";
+    return true;
+} // namespace
 
 
 // -----------------------------------------------------------------------------
@@ -102,12 +427,106 @@ LoadGridFromVTU(const std::string& filename)
         return nullptr;
     }
 
-    // Wrap in smart pointer explicitly (reader owns it internally, but this
-    // pattern is what we already use elsewhere).
     auto result = vtkSmartPointer<vtkUnstructuredGrid>::New();
     result->ShallowCopy(ug);
     return result;
 }
+
+// -----------------------------------------------------------------------------
+// Viewport layout
+// -----------------------------------------------------------------------------
+
+PlotViewLayout MakeDefaultPlotViewLayout(bool cbarHorizontal,
+                                         bool /*separateCbarViewport*/)
+{
+    PlotViewLayout layout;
+    layout.cbarHorizontal = cbarHorizontal;
+
+    layout.plot = {0.0, 0.0, 1.0, 1.0};
+
+    if (cbarHorizontal)
+    {
+        // Horizontal colorbar at the bottom; all bands from INI / defaults
+        const double y0_label = g_layoutCfg.h_label_y0;
+        const double y1_label = g_layoutCfg.h_label_y1;
+        const double y0_cbar  = g_layoutCfg.h_cbar_y0;
+        const double y1_cbar  = g_layoutCfg.h_cbar_y1;
+        const double y0_ctit  = g_layoutCfg.h_ctitle_y0;
+        const double y1_ctit  = g_layoutCfg.h_ctitle_y1;
+        const double y0_field = g_layoutCfg.h_field_y0;
+        const double y1_field = g_layoutCfg.h_field_y1;
+        const double y0_title = g_layoutCfg.h_title_y0;
+        const double y1_title = g_layoutCfg.h_title_y1;
+
+        const double x_cbar0  = g_layoutCfg.h_cbar_x0;
+        const double x_cbar1  = g_layoutCfg.h_cbar_x1;
+
+        // bottom band: left half=min, right half=max
+        layout.cbarLabelBottomOrRight = {0.0,  y0_label, 0.5,  y1_label}; // min
+        layout.cbarLabelTopOrLeft     = {0.5,  y0_label, 1.0,  y1_label}; // max
+
+        // colorbar itself
+        layout.cbar = {x_cbar0, y0_cbar,
+                       x_cbar1, y1_cbar};
+
+        // colorbar title above the bar
+        layout.cbarTitle = {x_cbar0, y0_ctit,
+                            x_cbar1, y1_ctit};
+
+        // field and plot title
+        layout.field = {0.0,  y0_field,
+                        1.0,  y1_field};
+
+        layout.title = {0.0,  y0_title,
+                        1.0,  y1_title};
+    }
+    else
+    {
+        // Vertical colorbar on the right; all bands from INI / defaults
+        const double x_field0 = g_layoutCfg.v_field_x0;
+        const double x_field1 = g_layoutCfg.v_field_x1;
+
+        const double x_cbar0  = g_layoutCfg.v_cbar_x0;
+        const double x_cbar1  = g_layoutCfg.v_cbar_x1;
+
+        const double y0_label_bot = g_layoutCfg.v_label_bot_y0;
+        const double y1_label_bot = g_layoutCfg.v_label_bot_y1;
+        const double y0_cbar      = g_layoutCfg.v_cbar_y0;
+        const double y1_cbar      = g_layoutCfg.v_cbar_y1;
+        const double y0_label_top = g_layoutCfg.v_label_top_y0;
+        const double y1_label_top = g_layoutCfg.v_label_top_y1;
+        const double y0_titleBand = g_layoutCfg.v_title_y0;
+        const double y1_titleBand = g_layoutCfg.v_title_y1;
+
+        // field on the left
+        layout.field = {x_field0, 0.0,
+                        x_field1, 1.0};
+
+        // colorbar
+        layout.cbar = {x_cbar0, y0_cbar,
+                       x_cbar1, y1_cbar};
+
+        // labels below / above bar
+        layout.cbarLabelBottomOrRight = {x_cbar0, y0_label_bot,
+                                         x_cbar1, y1_label_bot}; // min
+        layout.cbarLabelTopOrLeft     = {x_cbar0, y0_label_top,
+                                         x_cbar1, y1_label_top}; // max
+
+        // plot title across full width at top
+        layout.title = {0.0,        y0_titleBand,
+                        1.0,        y1_titleBand};
+
+        // cbar title, aligned with cbar, in same top band
+        layout.cbarTitle = {x_cbar0, y0_titleBand,
+                            x_cbar1, y1_titleBand};
+    }
+
+    return layout;
+}
+
+
+
+
 
 // -----------------------------------------------------------------------------
 // Geometry clipping (ROI support)
@@ -128,8 +547,6 @@ ClipToBox(vtkUnstructuredGrid* grid, const double bounds[6])
         bounds[4], bounds[5]
     };
 
-    // If this is effectively a 2D slice in z, give it a tiny thickness so
-    // VTK filters don't get confused by zero extent.
     if (b[4] == b[5])
     {
         const double dz = 1e-6 * std::max({b[1] - b[0], b[3] - b[2], 1.0});
@@ -138,12 +555,12 @@ ClipToBox(vtkUnstructuredGrid* grid, const double bounds[6])
     }
 
     vtkNew<vtkBox> box;
-    box->SetBounds(b); // xmin,xmax, ymin,ymax, zmin,zmax
+    box->SetBounds(b);
 
     vtkNew<vtkExtractGeometry> extract;
     extract->SetInputData(grid);
     extract->SetImplicitFunction(box);
-    extract->ExtractInsideOn();         // keep cells inside the box
+    extract->ExtractInsideOn();
     extract->ExtractBoundaryCellsOn();
     extract->Update();
 
@@ -156,11 +573,10 @@ ClipToBox(vtkUnstructuredGrid* grid, const double bounds[6])
 // Streamlines overlay
 // -----------------------------------------------------------------------------
 
-void AddStreamlines(
-    vtkDataSet* dataset,               // MUST contain the geometry
-    vtkRenderer* renderer,
-    const Result& result,              // E-field at VTK points
-    const StreamlineConfig& cfg)
+void AddStreamlines(vtkDataSet* dataset,
+                    vtkRenderer* renderer,
+                    const Result& result,
+                    const StreamlineConfig& cfg)
 {
     if (!dataset || !renderer)
     {
@@ -184,9 +600,7 @@ void AddStreamlines(
         return;
     }
 
-    // ---------------------------------------------------------------------
     // 1) Attach / update vector field E(x) on the dataset
-    // ---------------------------------------------------------------------
     auto pd = dataset->GetPointData();
     if (!pd)
     {
@@ -199,7 +613,6 @@ void AddStreamlines(
 
     if (existingE)
     {
-        // Reuse existing array if it is 3-component and same size.
         if (existingE->GetNumberOfComponents() == 3 &&
             existingE->GetNumberOfTuples() == npts)
         {
@@ -207,7 +620,6 @@ void AddStreamlines(
         }
         else
         {
-            // Replace with a fresh, correctly-sized array.
             evec = vtkSmartPointer<vtkDoubleArray>::New();
             evec->SetName("E");
             evec->SetNumberOfComponents(3);
@@ -234,31 +646,24 @@ void AddStreamlines(
 
     pd->SetActiveVectors("E");
 
-    // ---------------------------------------------------------------------
-    // 2) Compute bounding box → characteristic radius for tube radius
-    // ---------------------------------------------------------------------
+    // 2) Bounding box → characteristic radius for tube radius
     double bounds[6];
     dataset->GetBounds(bounds);
-
     const double dx = bounds[1] - bounds[0];
     const double dy = bounds[3] - bounds[2];
     const double dz = bounds[5] - bounds[4];
     const double radius = 0.5 * std::max({dx, dy, dz, 1e-6});
 
-    // ---------------------------------------------------------------------
-    // 3) Seed generator (within dataset bounds or, after clipping, within ROI)
-    // ---------------------------------------------------------------------
+    // 3) Seed generator within dataset bounds
     auto seeds = vtkSmartPointer<vtkBoundedPointSource>::New();
     seeds->SetNumberOfPoints(cfg.n_seeds);
-    seeds->SetBounds(bounds);         // current dataset bounding box
+    seeds->SetBounds(bounds);
 
-    // ---------------------------------------------------------------------
     // 4) Stream tracer
-    // ---------------------------------------------------------------------
     auto rk4 = vtkSmartPointer<vtkRungeKutta4>::New();
 
     auto tracer = vtkSmartPointer<vtkStreamTracer>::New();
-    tracer->SetInputData(dataset);            // dataset WITH vectors
+    tracer->SetInputData(dataset);
     tracer->SetSourceConnection(seeds->GetOutputPort());
     tracer->SetIntegrator(rk4);
     tracer->SetIntegrationDirectionToBoth();
@@ -267,23 +672,19 @@ void AddStreamlines(
     tracer->SetMinimumIntegrationStep(cfg.min_step);
     tracer->SetMaximumIntegrationStep(cfg.max_step);
     tracer->SetMaximumNumberOfSteps(cfg.max_steps);
-    tracer->SetComputeVorticity(false);       // avoid extra computation
+    tracer->SetComputeVorticity(false);
 
-    // ---------------------------------------------------------------------
     // 5) Tubes
-    // ---------------------------------------------------------------------
     auto tubes = vtkSmartPointer<vtkTubeFilter>::New();
     tubes->SetInputConnection(tracer->GetOutputPort());
     tubes->SetRadius(radius * cfg.tube_radius_rel);
     tubes->SetNumberOfSides(10);
     tubes->CappingOn();
 
-    // ---------------------------------------------------------------------
     // 6) Mapper + Actor
-    // ---------------------------------------------------------------------
     auto mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
     mapper->SetInputConnection(tubes->GetOutputPort());
-    mapper->ScalarVisibilityOff();            // plain-colored tubes
+    mapper->ScalarVisibilityOff();
 
     auto actor = vtkSmartPointer<vtkActor>::New();
     actor->SetMapper(mapper);
@@ -298,8 +699,7 @@ void AddStreamlines(
 // Offscreen rendering
 // -----------------------------------------------------------------------------
 
-// New, more general overload for a pre-configured render window.
-// This will be used later for multi-viewport layouts (field + colorbar).
+// Render an already-configured render window.
 static void RenderOffscreenPNG(vtkRenderWindow* renderWindow,
                                const std::string& filename)
 {
@@ -309,13 +709,11 @@ static void RenderOffscreenPNG(vtkRenderWindow* renderWindow,
         return;
     }
 
-    // Ensure offscreen mode and render
     renderWindow->SetOffScreenRendering(1);
     renderWindow->Render();
 
     vtkNew<vtkWindowToImageFilter> windowToImageFilter;
     windowToImageFilter->SetInput(renderWindow);
-    //windowToImageFilter->SetInputBufferTypeToRGBA();
     windowToImageFilter->ReadFrontBufferOff();
     windowToImageFilter->Update();
 
@@ -333,8 +731,7 @@ static void RenderOffscreenPNG(vtkRenderWindow* renderWindow,
     writer->Write();
 }
 
-// Backwards-compatible wrapper for the existing single-renderer usage.
-// Internally forwards to the window-based overload above.
+// Wrapper for single-renderer usage.
 void RenderOffscreenPNG(vtkRenderer* renderer,
                         const std::string& filename,
                         int width,
@@ -346,7 +743,6 @@ void RenderOffscreenPNG(vtkRenderer* renderer,
         return;
     }
 
-    // If renderer is already attached to some window, detach it first.
     if (renderer->GetRenderWindow())
     {
         std::cerr << "RenderOffscreenPNG(renderer): renderer already "
@@ -358,15 +754,15 @@ void RenderOffscreenPNG(vtkRenderer* renderer,
     renderWindow->SetOffScreenRendering(1);
     renderWindow->SetSize(width, height);
     renderWindow->AddRenderer(renderer);
-    // Ensure the window background is white as well
 
-    // Use the new, window-based helper
     RenderOffscreenPNG(renderWindow, filename);
 
-    // Detach the renderer so it is in a clean state if you ever reuse it.
     renderWindow->RemoveRenderer(renderer);
 }
 
+// -----------------------------------------------------------------------------
+// Mesh/axes helpers
+// -----------------------------------------------------------------------------
 
 vtkSmartPointer<vtkActor>
 CreateMeshActor(vtkSmartPointer<vtkDataSetMapper> mapper,
@@ -380,9 +776,6 @@ CreateMeshActor(vtkSmartPointer<vtkDataSetMapper> mapper,
     prop->SetEdgeVisibility(show_edges ? 1 : 0);
     prop->SetLineWidth(line_width);
 
-    // Optionally tweak surface appearance here if needed, e.g.:
-    // prop->SetInterpolationToPhong();
-
     return actor;
 }
 
@@ -392,7 +785,8 @@ void AddXYAxes(vtkRenderer* renderer,
                const std::string& y_label,
                const std::string& z_label,
                int axis_title_font_size,
-               int axis_label_font_size)
+               int axis_label_font_size,
+               int x_num_labels)
 {
     if (!renderer)
         return;
@@ -412,11 +806,13 @@ void AddXYAxes(vtkRenderer* renderer,
     axes->ZAxisLabelVisibilityOn();
 
     axes->SetFlyModeToClosestTriad();
-
-    // Symmetric tick marks (both sides)
     axes->SetTickLocation(vtkCubeAxesActor::VTK_TICKS_BOTH);
 
-    // Text styling for all axes with per-view font sizes
+    // TODO These methods dont exist
+    //if (x_num_labels > 0)
+    //    axes->SetNumberOfLabels(x_num_labels);
+
+    // text styling as before...
     for (int i = 0; i < 3; ++i)
     {
         if (auto tprop = axes->GetTitleTextProperty(i))
@@ -440,20 +836,11 @@ void AddXYAxes(vtkRenderer* renderer,
     renderer->AddActor(axes);
 }
 
-// Adjust image width/height so that the FIELD viewport has roughly the same
-// aspect ratio as the physical region, while reserving some room for title
-// and colorbar. The longest side is capped to 3840 pixels.
-static PlottingOptions
-FitPlottingOptionsToRegion(const PlottingOptions& base,
-                           const double[6],
-                           bool)
-{
-    return base;  // fixed resolution for all plots
-}
 
-// Compute scalar statistics on the given dataset for the given array name.
-// Currently: uses all points of the dataset; the "ROI" is whatever dataset
-// you pass (so if you cropped first, this is already local).
+// -----------------------------------------------------------------------------
+// Scalar statistics + LUT
+// -----------------------------------------------------------------------------
+
 static ScalarStats ComputeScalarStats(vtkDataSet* ds,
                                       const std::string& scalar_name)
 {
@@ -505,8 +892,6 @@ static ScalarStats ComputeScalarStats(vtkDataSet* ds,
     stats.min_roi = minv;
     stats.max_roi = maxv;
 
-    // Percentile-based clipping to avoid tiny outliers dominating the colorbar.
-    // Use 2%–98% as a first reasonable default.
     std::sort(vals.begin(), vals.end());
 
     auto get_percentile = [&](double p) -> double {
@@ -523,7 +908,6 @@ static ScalarStats ComputeScalarStats(vtkDataSet* ds,
     double p_low  = get_percentile(5.0);
     double p_high = get_percentile(95.0);
 
-    // If the spread is too small, fall back to full min/max.
     const double eps = 1e-12;
     if (std::fabs(p_high - p_low) < eps)
     {
@@ -538,6 +922,7 @@ static ScalarStats ComputeScalarStats(vtkDataSet* ds,
 
     return stats;
 }
+
 static ScalarStats ComputeScalarStatsInBounds(vtkDataSet* ds,
                                               const std::string& scalar_name,
                                               const double bounds[6])
@@ -637,8 +1022,7 @@ static ScalarStats ComputeScalarStatsInBounds(vtkDataSet* ds,
     return stats;
 }
 
-// Basic LUT builder. Right now we support a few simple "names";
-// otherwise we fall back to a default blue-red like map.
+// Basic LUT builder.
 static vtkSmartPointer<vtkLookupTable>
 BuildLookupTable(const std::string& color_map_name,
                  double range_min,
@@ -648,30 +1032,26 @@ BuildLookupTable(const std::string& color_map_name,
     lut->SetNumberOfTableValues(256);
     lut->SetRange(range_min, range_max);
 
-    // Simple hard-coded styles for now.
-    // You can refine this later with vtkColorSeries, etc.
     if (color_map_name == "gray" || color_map_name == "grey")
     {
-        lut->SetHueRange(0.0, 0.0);      // no hue
+        lut->SetHueRange(0.0, 0.0);
         lut->SetSaturationRange(0.0, 0.0);
-        lut->SetValueRange(0.0, 1.0);    // black -> white
+        lut->SetValueRange(0.0, 1.0);
     }
     else if (color_map_name == "blue-red" || color_map_name == "coolwarm")
     {
-        lut->SetHueRange(0.6667, 0.0);   // blue -> red
+        lut->SetHueRange(0.6667, 0.0);
         lut->SetSaturationRange(1.0, 1.0);
         lut->SetValueRange(1.0, 1.0);
     }
     else if (color_map_name == "viridis")
     {
-        // Approximate "viridis"-like (greenish-blue to yellowish).
         lut->SetHueRange(0.7, 0.1);
         lut->SetSaturationRange(1.0, 1.0);
         lut->SetValueRange(0.3, 1.0);
     }
     else
     {
-        // Default: VTK classic (blue->red)
         lut->SetHueRange(0.6667, 0.0);
         lut->SetSaturationRange(1.0, 1.0);
         lut->SetValueRange(1.0, 1.0);
@@ -681,7 +1061,6 @@ BuildLookupTable(const std::string& color_map_name,
     return lut;
 }
 
-// Helper to create a scalar bar actor for a given lookup table and title.
 static vtkSmartPointer<vtkScalarBarActor>
 CreateScalarBar(vtkLookupTable* lut,
                 const std::string& title,
@@ -704,7 +1083,14 @@ CreateScalarBar(vtkLookupTable* lut,
     lprop->SetFontSize(label_font_size);
     lprop->SetColor(0.0, 0.0, 0.0);
 
-    // Default geometry (overridden when using separate cbar viewport)
+    // Generic white background behind the bar + labels
+    scalar_bar->DrawBackgroundOn();
+    scalar_bar->GetBackgroundProperty()->SetColor(1.0, 1.0, 1.0);
+    scalar_bar->GetBackgroundProperty()->SetOpacity(1.0);
+    // Optional: drop the frame if you don't want a box
+    scalar_bar->DrawFrameOff();
+
+    // Default geometry (overridden in PlotScalarFieldView)
     scalar_bar->SetWidth(0.1);
     scalar_bar->SetHeight(0.7);
     scalar_bar->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();
@@ -712,6 +1098,11 @@ CreateScalarBar(vtkLookupTable* lut,
 
     return scalar_bar;
 }
+
+// -----------------------------------------------------------------------------
+// Gradient-based E and |E| attachment
+// -----------------------------------------------------------------------------
+
 bool AttachGradientEAndMagnitude(vtkUnstructuredGrid* grid,
                                  const std::string& potential_array_name,
                                  const std::string& e_array_name,
@@ -746,9 +1137,6 @@ bool AttachGradientEAndMagnitude(vtkUnstructuredGrid* grid,
         return false;
     }
 
-    // ---------------------------------------------------------------------
-    // 1) Compute gradient of potential with vtkGradientFilter
-    // ---------------------------------------------------------------------
     auto grad = vtkSmartPointer<vtkGradientFilter>::New();
     grad->SetInputData(grid);
     grad->SetInputScalars(vtkDataObject::FIELD_ASSOCIATION_POINTS,
@@ -796,9 +1184,6 @@ bool AttachGradientEAndMagnitude(vtkUnstructuredGrid* grid,
         return false;
     }
 
-    // ---------------------------------------------------------------------
-    // 2) Build E = -∇V as a vector array on the original grid
-    // ---------------------------------------------------------------------
     auto evec = vtkSmartPointer<vtkDoubleArray>::New();
     evec->SetName(e_array_name.c_str());
     evec->SetNumberOfComponents(3);
@@ -811,7 +1196,6 @@ bool AttachGradientEAndMagnitude(vtkUnstructuredGrid* grid,
         for (int c = 0; c < ncopy; ++c)
             g[c] = gradArray->GetComponent(i, c);
 
-        // E = -∇V
         double e[3] = { -g[0], -g[1], -g[2] };
         evec->SetTuple(i, e);
     }
@@ -819,9 +1203,6 @@ bool AttachGradientEAndMagnitude(vtkUnstructuredGrid* grid,
     pd->AddArray(evec);
     pd->SetActiveVectors(e_array_name.c_str());
 
-    // ---------------------------------------------------------------------
-    // 3) Build |E| as scalar
-    // ---------------------------------------------------------------------
     auto emag = vtkSmartPointer<vtkDoubleArray>::New();
     emag->SetName(emag_array_name.c_str());
     emag->SetNumberOfComponents(1);
@@ -839,6 +1220,11 @@ bool AttachGradientEAndMagnitude(vtkUnstructuredGrid* grid,
 
     return true;
 }
+
+// -----------------------------------------------------------------------------
+// Main scalar-field view (viewport-based)
+// -----------------------------------------------------------------------------
+
 void PlotScalarFieldView(vtkUnstructuredGrid* grid,
                          const ScalarViewRequest& request,
                          const PlottingOptions& plotting,
@@ -867,9 +1253,7 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
         return;
     }
 
-    // ---------------------------------------------------------------------
     // 1) Scalar statistics and LUT
-    // ---------------------------------------------------------------------
     ScalarStats stats;
     if (request.crop_to_region)
     {
@@ -886,9 +1270,7 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
                                 stats.min_used,
                                 stats.max_used);
 
-    // ---------------------------------------------------------------------
     // 2) Mapper and mesh actor (with optional clipping planes)
-    // ---------------------------------------------------------------------
     auto mapper = vtkSmartPointer<vtkDataSetMapper>::New();
     mapper->SetInputData(dataset_to_plot);
     mapper->SetScalarModeToUsePointFieldData();
@@ -897,6 +1279,7 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
     mapper->SetLookupTable(lut);
     mapper->ScalarVisibilityOn();
 
+    // Clean way to not plot out of bounds of interest 
     if (request.crop_to_region)
     {
         double xmin = request.region_bounds[0];
@@ -935,9 +1318,7 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
                                       plotting.show_edges,
                                       plotting.edge_width);
 
-    // ---------------------------------------------------------------------
-    // 3) Render window + layout + renderers
-    // ---------------------------------------------------------------------
+    // 3) Render window + layout
     int img_w = (request.image_width  > 0) ? request.image_width  : plotting.image_width;
     int img_h = (request.image_height > 0) ? request.image_height : plotting.image_height;
 
@@ -947,10 +1328,33 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
     renderWindow->SetMultiSamples(0);
     renderWindow->SetSize(img_w, img_h);
 
-    // Layout for this plot
     PlotViewLayout layout = MakeDefaultPlotViewLayout(
         request.cbar_horizontal,
         request.separate_cbar_viewport);
+
+    auto autoFont = [&](int requested,
+                        const ViewportRect& r,
+                        double fracOfHeight) -> int
+    {
+        if (requested > 0)
+            return requested;
+
+        double hnorm = (r.y1 - r.y0);
+        int h = static_cast<int>(hnorm * img_h + 0.5);
+        if (h < 1) h = 1;
+
+        int fs = static_cast<int>(h * fracOfHeight + 0.5);
+        if (fs < 6)  fs = 6;
+        if (fs > 72) fs = 72;
+        return fs;
+    };
+
+    int titleFS      = autoFont(request.title_font_size,       layout.title,               0.50);
+    int axisTitleFS  = autoFont(request.axis_title_font_size,  layout.field,               0.08);
+    int axisLabelFS  = autoFont(request.axis_label_font_size,  layout.field,               0.06);
+    int cbarTitleFS  = autoFont(request.cbar_title_font_size,  layout.cbarTitle,           0.50);
+    int cbarLabelFS  = autoFont(request.cbar_label_font_size,  layout.cbar,                0.25);
+    int cbarMinMaxFS = autoFont(request.cbar_minmax_font_size, layout.cbarLabelBottomOrRight, 0.45);
 
     auto makeRenderer = [&](const ViewportRect& r) {
         auto ren = vtkSmartPointer<vtkRenderer>::New();
@@ -962,28 +1366,26 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
         return ren;
     };
 
-    // Main field renderer
-    vtkSmartPointer<vtkRenderer> field_renderer = makeRenderer(layout.field);
+    vtkSmartPointer<vtkRenderer> field_renderer          = makeRenderer(layout.field);
+    vtkSmartPointer<vtkRenderer> title_renderer          = makeRenderer(layout.title);
+    vtkSmartPointer<vtkRenderer> cbar_renderer           = makeRenderer(layout.cbar);
+    vtkSmartPointer<vtkRenderer> cbar_title_renderer     = makeRenderer(layout.cbarTitle);
+    vtkSmartPointer<vtkRenderer> cbar_label_top_renderer = makeRenderer(layout.cbarLabelTopOrLeft);
+    vtkSmartPointer<vtkRenderer> cbar_label_bot_renderer = makeRenderer(layout.cbarLabelBottomOrRight);
+
     field_renderer->AddActor(mesh_actor);
 
-    // Title / cbar / label renderers
-    vtkSmartPointer<vtkRenderer> title_renderer           = makeRenderer(layout.title);
-    vtkSmartPointer<vtkRenderer> cbar_renderer            = makeRenderer(layout.cbar);
-    vtkSmartPointer<vtkRenderer> cbar_title_renderer      = makeRenderer(layout.cbarTitle);
-    vtkSmartPointer<vtkRenderer> cbar_label_top_renderer  = makeRenderer(layout.cbarLabelTopOrLeft);
-    vtkSmartPointer<vtkRenderer> cbar_label_bot_renderer  = makeRenderer(layout.cbarLabelBottomOrRight);
-
-    // ---------------------------------------------------------------------
-    // 4) Axes (remain inside field viewport)
-    // ---------------------------------------------------------------------
+    // 4) Axes
     AddXYAxes(field_renderer, request.region_bounds,
-              request.x_label, request.y_label, request.z_label,
-              request.axis_title_font_size,
-              request.axis_label_font_size);
+            request.x_label, request.y_label, request.z_label,
+            request.axis_title_font_size,
+            request.axis_label_font_size,
+            request.x_num_labels);
 
-    // ---------------------------------------------------------------------
-    // 5) Plot title in its own viewport
-    // ---------------------------------------------------------------------
+
+
+
+    // 5) Plot title
     if (!request.title.empty())
     {
         auto titleActor = vtkSmartPointer<vtkTextActor>::New();
@@ -991,59 +1393,48 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
 
         auto tprop = titleActor->GetTextProperty();
         tprop->SetFontFamilyToArial();
-        tprop->SetFontSize(request.title_font_size);
+        tprop->SetFontSize(titleFS);
         tprop->SetColor(0.0, 0.0, 0.0);
         tprop->SetJustificationToCentered();
         tprop->SetVerticalJustificationToCentered();
 
         titleActor->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();
-        titleActor->SetPosition(0.5, 0.5);  // centered in title viewport
+        titleActor->SetPosition(0.5, 0.5);
 
-        title_renderer->AddActor2D(titleActor);
+        title_renderer->AddViewProp(titleActor);
     }
 
-    // ---------------------------------------------------------------------
-    // 6) Scalar bar (colorbar viewport)
-    // ---------------------------------------------------------------------
+    // 6) Scalar bar
     auto scalar_bar = CreateScalarBar(
         lut,
-        "",  // we show the title in a separate viewport below
-        request.cbar_title_font_size,
-        request.cbar_label_font_size,
+        "",
+        cbarTitleFS,
+        cbarLabelFS,
         request.cbar_num_labels);
 
     if (request.cbar_horizontal)
     {
+        // Horizontal bar: fill the entire cbar viewport
         scalar_bar->SetOrientationToHorizontal();
         scalar_bar->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();
-        scalar_bar->GetPositionCoordinate()->SetValue(0.10, 0.25);
-        scalar_bar->SetWidth(0.80);
-        scalar_bar->SetHeight(0.5);
+        scalar_bar->GetPositionCoordinate()->SetValue(0.0, 0.0);
+        scalar_bar->SetWidth(1.0);
+        scalar_bar->SetHeight(1.0);
     }
     else
     {
+        // Vertical bar: fill the entire cbar viewport
         scalar_bar->SetOrientationToVertical();
         scalar_bar->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();
-        scalar_bar->GetPositionCoordinate()->SetValue(0.35, 0.05);
-        scalar_bar->SetWidth(0.30);
-        scalar_bar->SetHeight(0.90);
+        scalar_bar->GetPositionCoordinate()->SetValue(0.0, 0.0);
+        scalar_bar->SetWidth(1.0);
+        scalar_bar->SetHeight(1.0);
     }
 
-    if (request.show_contours)
-    {
-        // Placeholder: contour-aligned labels could be set here later.
-        scalar_bar->UseCustomLabelsOff();
-    }
-    else
-    {
-        scalar_bar->UseCustomLabelsOff();
-    }
+    scalar_bar->UseCustomLabelsOff();
+    cbar_renderer->AddViewProp(scalar_bar);
 
-    cbar_renderer->AddActor2D(scalar_bar);
-
-    // ---------------------------------------------------------------------
-    // 7) Colorbar title in its own viewport
-    // ---------------------------------------------------------------------
+    // 7) Colorbar title actor
     if (!request.cbar_title.empty())
     {
         auto cbarTitleActor = vtkSmartPointer<vtkTextActor>::New();
@@ -1051,20 +1442,18 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
 
         auto tprop = cbarTitleActor->GetTextProperty();
         tprop->SetFontFamilyToArial();
-        tprop->SetFontSize(request.cbar_title_font_size);
+        tprop->SetFontSize(cbarTitleFS);
         tprop->SetColor(0.0, 0.0, 0.0);
         tprop->SetJustificationToCentered();
         tprop->SetVerticalJustificationToCentered();
 
         cbarTitleActor->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();
-        cbarTitleActor->SetPosition(0.5, 0.5);  // centered in cbarTitle viewport
+        cbarTitleActor->SetPosition(0.5, 0.5);
 
-        cbar_title_renderer->AddActor2D(cbarTitleActor);
+        cbar_title_renderer->AddViewProp(cbarTitleActor);
     }
 
-    // ---------------------------------------------------------------------
-    // 8) True min/max annotations in dedicated label viewports
-    // ---------------------------------------------------------------------
+    // 8) True min/max annotations
     if (stats.min_used > stats.min_roi)
     {
         auto txt = vtkSmartPointer<vtkTextActor>::New();
@@ -1074,7 +1463,7 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
 
         auto tp = txt->GetTextProperty();
         tp->SetFontFamilyToArial();
-        tp->SetFontSize(request.cbar_minmax_font_size);
+        tp->SetFontSize(cbarMinMaxFS);
         tp->SetColor(0.0, 0.0, 0.0);
         tp->SetJustificationToCentered();
         tp->SetVerticalJustificationToCentered();
@@ -1082,7 +1471,7 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
         txt->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();
         txt->SetPosition(0.5, 0.5);
 
-        cbar_label_bot_renderer->AddActor2D(txt);
+        cbar_label_bot_renderer->AddViewProp(txt);
     }
 
     if (stats.max_used < stats.max_roi)
@@ -1094,7 +1483,7 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
 
         auto tp = txt->GetTextProperty();
         tp->SetFontFamilyToArial();
-        tp->SetFontSize(request.cbar_minmax_font_size);
+        tp->SetFontSize(cbarMinMaxFS);
         tp->SetColor(0.0, 0.0, 0.0);
         tp->SetJustificationToCentered();
         tp->SetVerticalJustificationToCentered();
@@ -1102,22 +1491,17 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
         txt->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();
         txt->SetPosition(0.5, 0.5);
 
-        cbar_label_top_renderer->AddActor2D(txt);
+        cbar_label_top_renderer->AddViewProp(txt);
     }
 
-    // ---------------------------------------------------------------------
-    // 9) Streamlines (not yet wired in this refactor)
-    // ---------------------------------------------------------------------
+    // 9) Streamlines — not yet wired into new pipeline
     if (request.show_streamlines)
     {
         std::cerr << "[PlotScalarFieldView] NOTE: show_streamlines requested "
-                     "but streamlines are not yet wired into the new view "
-                     "pipeline.\n";
+                     "but streamlines are not yet wired into the new view pipeline.\n";
     }
 
-    // ---------------------------------------------------------------------
-    // 10) Camera setup and zoom for field renderer
-    // ---------------------------------------------------------------------
+    // 10) Camera setup and zoom
     double b[6];
     std::copy(std::begin(request.region_bounds),
               std::end(request.region_bounds), b);
@@ -1141,11 +1525,13 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
         cam->SetParallelScale(ps * zf);
     }
 
-    // ---------------------------------------------------------------------
     // 11) Render and write PNG
-    // ---------------------------------------------------------------------
     RenderOffscreenPNG(renderWindow, request.output_path);
 }
+
+// -----------------------------------------------------------------------------
+// High-level standard views
+// -----------------------------------------------------------------------------
 
 void PlotStandardViewsForPotentialAndEnorm(vtkUnstructuredGrid* grid,
                                            const PlotInput& input,
@@ -1163,138 +1549,282 @@ void PlotStandardViewsForPotentialAndEnorm(vtkUnstructuredGrid* grid,
     if (!AttachGradientEAndMagnitude(grid, "V", "E", "Enorm"))
     {
         std::cerr << "[PlotStandardViewsForPotentialAndEnorm] WARNING: "
-                     "failed to attach E/Enorm from V. |E| views may be skipped.\n";
+                     "failed to attach E/Enorm from V.\n";
     }
 
-    const std::string xlab = "x [m]";
-    const std::string ylab = "y [m]";
-    const std::string zlab = "z [m]";
+    // ---------------------------------------------------------------------
+    // Load configuration (optional)
+    // ---------------------------------------------------------------------
+    PlotConfig cfg;
+    const std::string cfg_path = GetSourceDir() + "/plot_config.ini";
+    bool have_cfg = LoadPlotConfig(cfg_path, cfg);
+
+    // After defaults / INI fixups:
+    g_layoutCfg = cfg.layout;
+
+    // Defaults if config does not specify values
+    if (cfg.axes.x_label.empty()) cfg.axes.x_label = "x [m]";
+    if (cfg.axes.y_label.empty()) cfg.axes.y_label = "y [m]";
+    if (cfg.axes.z_label.empty()) cfg.axes.z_label = "z [m]";
+
+    // Text defaults
+    if (cfg.text.cbar_num_labels <= 0) cfg.text.cbar_num_labels = 5;
+
+    // Frame defaults (if ini missing, keep legacy behavior)
+    if (!have_cfg)
+    {
+        // full frame
+        cfg.frame_full.image_width           = base_options.image_width;
+        cfg.frame_full.image_height          = base_options.image_height;
+        cfg.frame_full.zoom_factor           = 1.0;
+        cfg.frame_full.cbar_horizontal       = false;
+        cfg.frame_full.crop_to_region        = false;
+        cfg.frame_full.separate_cbar_viewport= true;
+
+        // stack frame (top/bottom)
+        cfg.frame_stack = cfg.frame_full;
+        cfg.frame_stack.cbar_horizontal = true;
+        cfg.frame_stack.crop_to_region  = true;
+
+        // bar frame
+        cfg.frame_bar = cfg.frame_full;
+        cfg.frame_bar.cbar_horizontal = false;
+        cfg.frame_bar.crop_to_region  = true;
+
+        // Regions (legacy constants)
+        cfg.regions.top_ymin    = -0.13;
+        cfg.regions.top_ymax    =  0.07;
+        cfg.regions.bottom_ymin = -1.6;
+        cfg.regions.bottom_ymax = -1.4;
+        cfg.regions.bar_dx      =  0.1;
+        cfg.regions.bar_ymin    = -1.45;
+        cfg.regions.bar_ymax    = -0.05;
+
+        // Content defaults for V
+        cfg.content_V.scalar_name        = "V";
+        cfg.content_V.cbar_title         = "V";
+        cfg.content_V.color_map_name     = "viridis";
+        cfg.content_V.show_contours      = true;
+        cfg.content_V.show_streamlines   = false;
+        cfg.content_V.n_contours         = 10;
+        cfg.content_V.title_full         = "Potential V";
+        cfg.content_V.title_stack_top    = "Potential V (top stack)";
+        cfg.content_V.title_stack_bottom = "Potential V (bottom stack)";
+        cfg.content_V.title_bar          = "Potential V (Field Cage)";
+
+        // Content defaults for E
+        cfg.content_E.scalar_name        = "Enorm";
+        cfg.content_E.cbar_title         = "E [V/m]";
+        cfg.content_E.color_map_name     = "viridis";
+        cfg.content_E.show_contours      = false;
+        cfg.content_E.show_streamlines   = true;
+        cfg.content_E.n_contours         = 0;
+        cfg.content_E.title_full         = "|E|";
+        cfg.content_E.title_stack_top    = "|E| (top stack)";
+        cfg.content_E.title_stack_bottom = "|E| (bottom stack)";
+        cfg.content_E.title_bar          = "|E| (Field Cage)";
+    }
+    else
+    {
+        // If image sizes or zoom are still 0, fall back to base_options/1.0
+        if (cfg.frame_full.image_width  <= 0) cfg.frame_full.image_width  = base_options.image_width;
+        if (cfg.frame_full.image_height <= 0) cfg.frame_full.image_height = base_options.image_height;
+        if (cfg.frame_full.zoom_factor  <= 0.0) cfg.frame_full.zoom_factor = 1.0;
+
+        if (cfg.frame_stack.image_width  <= 0) cfg.frame_stack.image_width  = cfg.frame_full.image_width;
+        if (cfg.frame_stack.image_height <= 0) cfg.frame_stack.image_height = cfg.frame_full.image_height;
+        if (cfg.frame_stack.zoom_factor  <= 0.0) cfg.frame_stack.zoom_factor = cfg.frame_full.zoom_factor;
+
+        if (cfg.frame_bar.image_width  <= 0) cfg.frame_bar.image_width  = cfg.frame_full.image_width;
+        if (cfg.frame_bar.image_height <= 0) cfg.frame_bar.image_height = cfg.frame_full.image_height;
+        if (cfg.frame_bar.zoom_factor  <= 0.0) cfg.frame_bar.zoom_factor = cfg.frame_full.zoom_factor;
+    }
+
+    // ---------------------------------------------------------------------
+    // Regions (combine config with grid bounds)
+    // ---------------------------------------------------------------------
+    double xmin = full_bounds[0];
+    double xmax = full_bounds[1];
+    double ymin = full_bounds[2];
+    double ymax = full_bounds[3];
+    double zmin = full_bounds[4];
+    double zmax = full_bounds[5];
 
     double full[6];
     std::copy(std::begin(full_bounds), std::end(full_bounds), full);
 
-    double ymin = full_bounds[2];
-    double ymax = full_bounds[3];
-    double xmin = full_bounds[0];
-    double xmax = full_bounds[1];
-    double zmin = full_bounds[4];
-    double zmax = full_bounds[5];
+    double top[6]    = { xmin, xmax,
+                         cfg.regions.top_ymin, cfg.regions.top_ymax,
+                         zmin, zmax };
 
-    double top[6]       = { xmin, xmax, -0.13,  0.07,  zmin, zmax };
-    double bottom[6]    = { xmin, xmax, -1.6,  -1.4,  zmin, zmax };
-    double right_bar[6] = { xmax - 0.1, xmax, -1.45, -0.05, zmin, zmax };
+    double bottom[6] = { xmin, xmax,
+                         cfg.regions.bottom_ymin, cfg.regions.bottom_ymax,
+                         zmin, zmax };
 
-    const int img_w = base_options.image_width;
-    const int img_h = base_options.image_height;
+    double right_bar[6] = { xmax - cfg.regions.bar_dx, xmax,
+                            cfg.regions.bar_ymin, cfg.regions.bar_ymax,
+                            zmin, zmax };
 
-    const int title_fs       = 32;
-    const int axis_title_fs  = 28;
-    const int axis_label_fs  = 22;
-    const int cbar_title_fs  = 28;
-    const int cbar_label_fs  = 22;
-    const int cbar_minmax_fs = 20;
-    const int cbar_labels    = 5;
+    // ---------------------------------------------------------------------
+    // Helper lambda to fill common text options from cfg.text
+    // ---------------------------------------------------------------------
+    auto apply_text_cfg = [&](ScalarViewRequest& r, const FrameConfig& fc)
+    {
+        r.title_font_size       = cfg.text.title_font_size;
+        r.axis_title_font_size  = cfg.text.axis_title_font_size;
+        r.axis_label_font_size  = cfg.text.axis_label_font_size;
+        r.cbar_title_font_size  = cfg.text.cbar_title_font_size;
+        r.cbar_label_font_size  = cfg.text.cbar_label_font_size;
+        r.cbar_minmax_font_size = cfg.text.cbar_minmax_font_size;
+        r.cbar_num_labels       = cfg.text.cbar_num_labels;
 
-    // ---------------- V views ----------------
-        // --- Full-domain Potential V view ---------------------------------------
+        if (fc.text.title_font_size       > 0) r.title_font_size       = fc.text.title_font_size;
+        if (fc.text.axis_title_font_size  > 0) r.axis_title_font_size  = fc.text.axis_title_font_size;
+        if (fc.text.axis_label_font_size  > 0) r.axis_label_font_size  = fc.text.axis_label_font_size;
+        if (fc.text.cbar_title_font_size  > 0) r.cbar_title_font_size  = fc.text.cbar_title_font_size;
+        if (fc.text.cbar_label_font_size  > 0) r.cbar_label_font_size  = fc.text.cbar_label_font_size;
+        if (fc.text.cbar_minmax_font_size > 0) r.cbar_minmax_font_size = fc.text.cbar_minmax_font_size;
+        if (fc.text.cbar_num_labels       > 0) r.cbar_num_labels       = fc.text.cbar_num_labels;
+    };
+
+    // ---------------------------------------------------------------------
+    // V views
+    // ---------------------------------------------------------------------
+    const ContentConfig& cv = cfg.content_V;
+
+    // Full-domain V
     ScalarViewRequest r_full;
-    r_full.scalar_name           = "V";                     // dataset array to visualize
-    r_full.cbar_title            = "V";                     // title text shown above the colorbar
-    r_full.cbar_horizontal       = false;                   // colorbar orientation (vertical here)
-    r_full.title                 = "Potential V";           // plot title shown at top-left
-    r_full.x_label               = xlab;                    // axis label for X
-    r_full.y_label               = ylab;                    // axis label for Y
-    r_full.z_label               = zlab;                    // axis label for Z (unused in 2D)
-    r_full.color_map_name        = "viridis";               // LUT preset name
-    std::copy(full, full + 6, r_full.region_bounds);        // physical region plotted (full domain)
-    r_full.crop_to_region        = false;                   // do NOT crop mesh; full geometry visible
-    r_full.separate_cbar_viewport= true;                    // use dedicated viewport for colorbar
-    r_full.show_contours         = true;                    // overlay contour lines
-    r_full.show_streamlines      = false;                   // no streamlines for potential
-    r_full.n_contours            = 10;                      // number of contour isolines
-    r_full.output_path           = input.out_dir + "/V_full.png";  // output PNG path
-    r_full.image_width           = 1920;                    // final rendered image width  (px)
-    r_full.image_height          = 1080;                    // final rendered image height (px)
-    r_full.zoom_factor           = 0.5;                     // orthographic camera zoom (<1 = zoom in)
-    r_full.title_font_size       = 70;                      // title text size in pixels
-    r_full.axis_title_font_size  = 700;                      // axis title font size (X,Y,Z titles)
-    r_full.axis_label_font_size  = 700;                      // tick-label font size
-    r_full.cbar_title_font_size  = 20;                      // colorbar title font size
-    r_full.cbar_label_font_size  = 400;           // colorbar tick-label font size
-    r_full.cbar_minmax_font_size = cbar_minmax_fs;          // annotation font size for full min/max
-    r_full.cbar_num_labels       = cbar_labels;             // number of labels shown on the colorbar
+    r_full.scalar_name            = cv.scalar_name.empty() ? "V" : cv.scalar_name;
+    r_full.cbar_title             = cv.cbar_title.empty() ? "V" : cv.cbar_title;
+    r_full.cbar_horizontal        = cfg.frame_full.cbar_horizontal;
+    r_full.title                  = cv.title_full.empty() ? "Potential V" : cv.title_full;
+    r_full.x_label                = cfg.axes.x_label;
+    r_full.y_label                = cfg.axes.y_label;
+    r_full.z_label                = cfg.axes.z_label;
+    r_full.color_map_name         = cv.color_map_name.empty() ? "viridis" : cv.color_map_name;
+    std::copy(full, full + 6, r_full.region_bounds);
+    r_full.crop_to_region         = cfg.frame_full.crop_to_region;
+    r_full.separate_cbar_viewport = cfg.frame_full.separate_cbar_viewport;
+    r_full.show_contours          = cv.show_contours;
+    r_full.show_streamlines       = cv.show_streamlines;
+    r_full.n_contours             = cv.n_contours;
+    r_full.output_path            = input.out_dir + "/V_full.png";
+    r_full.image_width            = cfg.frame_full.image_width;
+    r_full.image_height           = cfg.frame_full.image_height;
+    r_full.zoom_factor            = cfg.frame_full.zoom_factor;
+    apply_text_cfg(r_full, cfg.frame_full);
+    r_full.x_num_labels = cfg.frame_full.x_num_labels;
 
-
+    // Top V (stack)
     ScalarViewRequest r_top = r_full;
-    r_top.cbar_horizontal       = true;
-    r_top.title                 = "Potential V (top stack)";
+    r_top.cbar_horizontal        = cfg.frame_stack.cbar_horizontal;
+    r_top.title                  = cv.title_stack_top.empty()
+                                   ? "Potential V (top stack)"
+                                   : cv.title_stack_top;
     std::copy(top, top + 6, r_top.region_bounds);
-    r_top.crop_to_region        = true;
-    r_top.output_path           = input.out_dir + "/V_top.png";
+    r_top.crop_to_region         = cfg.frame_stack.crop_to_region;
+    r_top.separate_cbar_viewport = cfg.frame_stack.separate_cbar_viewport;
+    r_top.output_path            = input.out_dir + "/V_top.png";
+    r_top.image_width            = cfg.frame_stack.image_width;
+    r_top.image_height           = cfg.frame_stack.image_height;
+    r_top.zoom_factor            = cfg.frame_stack.zoom_factor;
+    apply_text_cfg(r_top, cfg.frame_stack);
+    r_top.x_num_labels = cfg.frame_stack.x_num_labels;
 
+    // Bottom V (stack)
     ScalarViewRequest r_bottom = r_full;
-    r_bottom.cbar_horizontal    = true;
-    r_bottom.title              = "Potential V (bottom stack)";
+    r_bottom.cbar_horizontal        = cfg.frame_stack.cbar_horizontal;
+    r_bottom.title                  = cv.title_stack_bottom.empty()
+                                      ? "Potential V (bottom stack)"
+                                      : cv.title_stack_bottom;
     std::copy(bottom, bottom + 6, r_bottom.region_bounds);
-    r_bottom.crop_to_region     = true;
-    r_bottom.output_path        = input.out_dir + "/V_bottom.png";
+    r_bottom.crop_to_region         = cfg.frame_stack.crop_to_region;
+    r_bottom.separate_cbar_viewport = cfg.frame_stack.separate_cbar_viewport;
+    r_bottom.output_path            = input.out_dir + "/V_bottom.png";
+    r_bottom.image_width            = cfg.frame_stack.image_width;
+    r_bottom.image_height           = cfg.frame_stack.image_height;
+    r_bottom.zoom_factor            = cfg.frame_stack.zoom_factor;
+    apply_text_cfg(r_bottom, cfg.frame_stack);
+    r_bottom.x_num_labels = cfg.frame_stack.x_num_labels;
 
+    // Bar V (field cage)
     ScalarViewRequest r_bar = r_full;
-    r_bar.cbar_horizontal      = false;
-    r_bar.title                = "Potential V (Field Cage)";
+    r_bar.cbar_horizontal        = cfg.frame_bar.cbar_horizontal;
+    r_bar.title                  = cv.title_bar.empty()
+                                   ? "Potential V (Field Cage)"
+                                   : cv.title_bar;
     std::copy(right_bar, right_bar + 6, r_bar.region_bounds);
-    r_bar.crop_to_region       = true;
-    r_bar.output_path          = input.out_dir + "/V_bar.png";
+    r_bar.crop_to_region         = cfg.frame_bar.crop_to_region;
+    r_bar.separate_cbar_viewport = cfg.frame_bar.separate_cbar_viewport;
+    r_bar.output_path            = input.out_dir + "/V_bar.png";
+    r_bar.image_width            = cfg.frame_bar.image_width;
+    r_bar.image_height           = cfg.frame_bar.image_height;
+    r_bar.zoom_factor            = cfg.frame_bar.zoom_factor;
+    apply_text_cfg(r_bar, cfg.frame_bar);
+    r_bar.x_num_labels = cfg.frame_bar.x_num_labels;
 
     PlotScalarFieldView(grid, r_full,   base_options);
     PlotScalarFieldView(grid, r_top,    base_options);
     PlotScalarFieldView(grid, r_bottom, base_options);
     PlotScalarFieldView(grid, r_bar,    base_options);
 
-    // ---------------- |E| views ----------------
-    StreamlineConfig stream_cfg; // placeholder, kept for signature
+    // ---------------------------------------------------------------------
+    // |E| views (same frames, different content config)
+    // ---------------------------------------------------------------------
+    const ContentConfig& ce = cfg.content_E;
+    StreamlineConfig stream_cfg; // still placeholder, but needed for signature
 
-    // Start from the V-views and override only what's different.
-
-    // Full |E|
     ScalarViewRequest r_fullE = r_full;
-    r_fullE.scalar_name           = "Enorm";
-    r_fullE.cbar_title            = "E [V/m]";
-    r_fullE.title                 = "|E|";
-    r_fullE.show_contours         = false;
-    r_fullE.show_streamlines      = true;
-    r_fullE.n_contours            = 0;
-    r_fullE.output_path           = input.out_dir + "/Enorm_full.png";
+    r_fullE.scalar_name       = ce.scalar_name.empty() ? "Enorm" : ce.scalar_name;
+    r_fullE.cbar_title        = ce.cbar_title.empty() ? "E [V/m]" : ce.cbar_title;
+    r_fullE.title             = ce.title_full.empty() ? "|E|"     : ce.title_full;
+    r_fullE.color_map_name    = ce.color_map_name.empty()
+                                ? r_full.color_map_name
+                                : ce.color_map_name;
+    r_fullE.show_contours     = ce.show_contours;
+    r_fullE.show_streamlines  = ce.show_streamlines;
+    r_fullE.n_contours        = ce.n_contours;
+    r_fullE.output_path       = input.out_dir + "/Enorm_full.png";
+    apply_text_cfg(r_fullE, cfg.frame_full);
 
-    // Top |E|
     ScalarViewRequest r_topE = r_top;
-    r_topE.scalar_name           = "Enorm";
-    r_topE.cbar_title            = "E [V/m]";
-    r_topE.title                 = "|E| (top stack)";
-    r_topE.show_contours         = false;
-    r_topE.show_streamlines      = true;
-    r_topE.n_contours            = 0;
-    r_topE.output_path           = input.out_dir + "/Enorm_top.png";
+    r_topE.scalar_name       = r_fullE.scalar_name;
+    r_topE.cbar_title        = r_fullE.cbar_title;
+    r_topE.title             = ce.title_stack_top.empty()
+                               ? "|E| (top stack)"
+                               : ce.title_stack_top;
+    r_topE.color_map_name    = r_fullE.color_map_name;
+    r_topE.show_contours     = ce.show_contours;
+    r_topE.show_streamlines  = ce.show_streamlines;
+    r_topE.n_contours        = ce.n_contours;
+    r_topE.output_path       = input.out_dir + "/Enorm_top.png";
+    apply_text_cfg(r_topE, cfg.frame_full);
 
-    // Bottom |E|
     ScalarViewRequest r_bottomE = r_bottom;
-    r_bottomE.scalar_name           = "Enorm";
-    r_bottomE.cbar_title            = "E [V/m]";
-    r_bottomE.title                 = "|E| (bottom stack)";
-    r_bottomE.show_contours         = false;
-    r_bottomE.show_streamlines      = true;
-    r_bottomE.n_contours            = 0;
-    r_bottomE.output_path           = input.out_dir + "/Enorm_bottom.png";
+    r_bottomE.scalar_name       = r_fullE.scalar_name;
+    r_bottomE.cbar_title        = r_fullE.cbar_title;
+    r_bottomE.title             = ce.title_stack_bottom.empty()
+                                  ? "|E| (bottom stack)"
+                                  : ce.title_stack_bottom;
+    r_bottomE.color_map_name    = r_fullE.color_map_name;
+    r_bottomE.show_contours     = ce.show_contours;
+    r_bottomE.show_streamlines  = ce.show_streamlines;
+    r_bottomE.n_contours        = ce.n_contours;
+    r_bottomE.output_path       = input.out_dir + "/Enorm_bottom.png";
+    apply_text_cfg(r_bottomE, cfg.frame_full);
 
-    // Field cage |E|
     ScalarViewRequest r_barE = r_bar;
-    r_barE.scalar_name           = "Enorm";
-    r_barE.cbar_title            = "E [V/m]";
-    r_barE.title                 = "|E| (Field Cage)";
-    r_barE.show_contours         = false;
-    r_barE.show_streamlines      = true;
-    r_barE.n_contours            = 0;
-    r_barE.output_path           = input.out_dir + "/Enorm_bar.png";
+    r_barE.scalar_name       = r_fullE.scalar_name;
+    r_barE.cbar_title        = r_fullE.cbar_title;
+    r_barE.title             = ce.title_bar.empty()
+                               ? "|E| (Field Cage)"
+                               : ce.title_bar;
+    r_barE.color_map_name    = r_fullE.color_map_name;
+    r_barE.show_contours     = ce.show_contours;
+    r_barE.show_streamlines  = ce.show_streamlines;
+    r_barE.n_contours        = ce.n_contours;
+    r_barE.output_path       = input.out_dir + "/Enorm_bar.png";
+    apply_text_cfg(r_barE, cfg.frame_full);
 
     PlotScalarFieldView(grid, r_fullE,   base_options, &stream_cfg);
     PlotScalarFieldView(grid, r_topE,    base_options, &stream_cfg);
@@ -1304,28 +1834,28 @@ void PlotStandardViewsForPotentialAndEnorm(vtkUnstructuredGrid* grid,
     std::cout << "Standard V / |E| views written to: " << input.out_dir << "\n";
 }
 
-static PlotInput PreparePlotInput(const char* raw_path)
+
+// -----------------------------------------------------------------------------
+// Input preparation
+// -----------------------------------------------------------------------------
+
+PlotInput PreparePlotInput(const char* raw_path)
 {
     PlotInput R;
 
-    // --------------------------
-    // 1. Normalize input path
-    // --------------------------
     std::string path = raw_path ? std::string(raw_path) : std::string();
 
-    // Expand '~'
     if (!path.empty() && path[0] == '~')
     {
         const char* home = std::getenv("HOME");
         if (!home)
         {
-            std::cerr << "[PreparePlotInput] ERROR: HOME environment variable not set.\n";
+            std::cerr << "[PreparePlotInput] ERROR: HOME not set.\n";
             std::exit(1);
         }
         path = std::string(home) + path.substr(1);
     }
 
-    // Strip trailing slashes
     while (!path.empty() && path.back() == '/')
         path.pop_back();
 
@@ -1341,14 +1871,9 @@ static PlotInput PreparePlotInput(const char* raw_path)
         return s.substr(0, pos);
     };
 
-    // --------------------------
-    // 2. Determine VTU + base dir
-    // --------------------------
     if (ends_with(path, ".pvd"))
     {
         R.base_dir = dirname_of(path);
-        // This follows your previous convention; adjust if your directory
-        // layout changed.
         R.vtu_file = R.base_dir + "/Cycle000000/proc000000.vtu";
     }
     else
@@ -1359,9 +1884,6 @@ static PlotInput PreparePlotInput(const char* raw_path)
 
     std::cout << "[PreparePlotInput] Reading VTU: " << R.vtu_file << "\n";
 
-    // --------------------------
-    // 3. Load the grid
-    // --------------------------
     R.grid = LoadGridFromVTU(R.vtu_file);
     if (!R.grid)
     {
@@ -1370,9 +1892,6 @@ static PlotInput PreparePlotInput(const char* raw_path)
         std::exit(1);
     }
 
-    // --------------------------
-    // 4. Prepare output directory
-    // --------------------------
     R.out_dir = R.base_dir + "/plots";
 
     {
@@ -1389,196 +1908,25 @@ static PlotInput PreparePlotInput(const char* raw_path)
     return R;
 }
 
+} // namespace FEMPlot
 
-//------------------------- New Things ------------------------------ 
-
-
-PlotViewLayout MakeDefaultPlotViewLayout(bool cbarHorizontal,
-                                         bool separateCbarViewport)
-{
-    PlotViewLayout layout;
-    layout.cbarHorizontal = cbarHorizontal;
-
-    // For now each plot uses the full window.
-    layout.plot = {0.0, 0.0, 1.0, 1.0};
-
-    if (cbarHorizontal)
-    {
-        // Horizontal cbar at the bottom.
-        const double titleHeight = 0.10;                         // top band
-        const double cbarHeight  = separateCbarViewport ? 0.18 : 0.12;
-        const double gap         = 0.02;
-
-        double px0 = layout.plot.x0;
-        double py0 = layout.plot.y0;
-        double px1 = layout.plot.x1;
-        double py1 = layout.plot.y1;
-
-        // Title band across the top
-        layout.title = { px0, py1 - titleHeight, px1, py1 };
-
-        // Colorbar band at the bottom (short, centered)
-        layout.cbar = {
-            px0 + 0.10,
-            py0 + 0.02,
-            px1 - 0.10,
-            py0 + 0.02 + cbarHeight
-        };
-
-        // Colorbar title band above the bar
-        layout.cbarTitle = {
-            layout.cbar.x0,
-            layout.cbar.y1 + gap,
-            layout.cbar.x1,
-            layout.cbar.y1 + gap + 0.06
-        };
-
-        // Labels just below and above the bar (for min/max etc.)
-        layout.cbarLabelBottomOrRight = {
-            layout.cbar.x0,
-            layout.cbar.y0 - 0.06,
-            layout.cbar.x1,
-            layout.cbar.y0
-        };
-
-        layout.cbarLabelTopOrLeft = {
-            layout.cbar.x0,
-            layout.cbar.y1,
-            layout.cbar.x1,
-            layout.cbar.y1 + 0.06
-        };
-
-        // Field occupies the remaining area between cbar and title
-        layout.field = {
-            px0,
-            layout.cbar.y1 + gap,
-            px1,
-            layout.title.y0 - gap
-        };
-    }
-    else
-    {
-        // Vertical cbar on the right.
-        const double titleHeight = 0.10;
-        const double cbarWidth   = separateCbarViewport ? 0.18 : 0.12;
-        const double sideMargin  = 0.04;
-        const double gap         = 0.02;
-
-        double px0 = layout.plot.x0;
-        double py0 = layout.plot.y0;
-        double px1 = layout.plot.x1;
-        double py1 = layout.plot.y1;
-
-        // Title band across the top
-        layout.title = { px0, py1 - titleHeight, px1, py1 };
-
-        // Colorbar band on the right, leaving some margin at top/bottom
-        layout.cbar = {
-            px1 - cbarWidth,
-            py0 + sideMargin,
-            px1 - sideMargin,
-            py1 - titleHeight - sideMargin
-        };
-
-        // Colorbar title band above the cbar
-        layout.cbarTitle = {
-            layout.cbar.x0,
-            layout.cbar.y1 + gap,
-            layout.cbar.x1,
-            layout.cbar.y1 + gap + 0.06
-        };
-
-        // Labels to left/right of cbar
-        layout.cbarLabelTopOrLeft = {
-            layout.cbar.x0 - 0.06,
-            layout.cbar.y0,
-            layout.cbar.x0,
-            layout.cbar.y1
-        };
-
-        layout.cbarLabelBottomOrRight = {
-            layout.cbar.x1,
-            layout.cbar.y0,
-            layout.cbar.x1 + 0.06,
-            layout.cbar.y1
-        };
-
-        // Field: everything left of cbar and below title
-        layout.field = {
-            px0,
-            py0,
-            layout.cbar.x0 - gap,
-            layout.title.y0 - gap
-        };
-    }
-
-    // Clamp to [0,1] just in case
-    auto clampRect = [](ViewportRect& r) {
-        r.x0 = std::max(0.0, std::min(1.0, r.x0));
-        r.y0 = std::max(0.0, std::min(1.0, r.y0));
-        r.x1 = std::max(0.0, std::min(1.0, r.x1));
-        r.y1 = std::max(0.0, std::min(1.0, r.y1));
-    };
-
-    clampRect(layout.plot);
-    clampRect(layout.field);
-    clampRect(layout.cbar);
-    clampRect(layout.title);
-    clampRect(layout.cbarTitle);
-    clampRect(layout.cbarLabelTopOrLeft);
-    clampRect(layout.cbarLabelBottomOrRight);
-
-    return layout;
-}
-
-
-
-}
+// -----------------------------------------------------------------------------
+// Example standalone main entry
+// -----------------------------------------------------------------------------
 
 int make_plots(int argc, char** argv)
 {
     if (argc < 2)
     {
-        std::cerr << "Usage: " << argv[0]
-                  << " <simulation .vtu or Simulation.pvd>\n";
-        return 1;
-    }
-    using namespace FEMPlot;
-
-    // ---------------------------------------------------------------------
-    // 1) Offscreen rendering backend (Mesa)
-    // ---------------------------------------------------------------------
-    vtkNew<vtkGraphicsFactory> graphics_factory;
-    graphics_factory->SetOffScreenOnlyMode(1);
-    graphics_factory->SetUseMesaClasses(1);
-
-    // ---------------------------------------------------------------------
-    // 2) Load grid and path handling
-    // ---------------------------------------------------------------------
-    // PreparePlotInput is already defined in FEMPlotVTK.cpp and returns
-    // a PlotInput with { base_dir, vtu_file, grid, out_dir }.
-    FEMPlot::PlotInput input = PreparePlotInput(argv[1]);
-
-    if (!input.grid)
-    {
-        std::cerr << "ERROR: grid is null after PreparePlotInput.\n";
+        std::cerr << "Usage: " << (argc > 0 ? argv[0] : "make_plots")
+                  << " <path-to.vtu|.pvd>\n";
         return 1;
     }
 
-    // ---------------------------------------------------------------------
-    // 3) Base plotting options (image size, edges, etc.)
-    // ---------------------------------------------------------------------
-    FEMPlot::PlottingOptions opt;
-    // You can tweak defaults here if desired, e.g.:
-    opt.image_width  = 3840;
-    opt.image_height = 2160;
-    // opt.show_edges   = false;
+    auto input = FEMPlot::PreparePlotInput(argv[1]);
 
-    // ---------------------------------------------------------------------
-    // 4) Generate standard views for V and |E|
-    // ---------------------------------------------------------------------
-    PlotStandardViewsForPotentialAndEnorm(input.grid, input, opt);
+    FEMPlot::PlottingOptions opts;
+    FEMPlot::PlotStandardViewsForPotentialAndEnorm(input.grid, input, opts);
 
-    std::cout << "Saved standard V / |E| plots to: " << input.out_dir << "\n";
     return 0;
 }
