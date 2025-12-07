@@ -3359,7 +3359,7 @@ if __name__ == '__main__':
     LXe_group.result().setName("LXe")
 
     # Make PTFE submesh group
-    ptfe_names = ["GateInsulatingFrameOGGroup","AnodeInsulatingFrameOGGroup","CathodeInsulatingFrameOGGroup","TopScreenInsulatingFrameOGGroup","BottomStackInsulationOGGroup","BottomPMTReflectorsOGGroup","TopPMTReflectorsOGGroup","WallPTFEOGGroup","BottomScreenHolderPinOGGroup", "CopperRingInsulationOGGroup"]
+    ptfe_names = ["GateInsulatingFrameOGGroup","AnodeInsulatingFrameOGGroup","CathodeInsulatingFrameOGGroup","TopScreenInsulatingFrameOGGroup","BottomStackInsulationOGGroup","BottomPMTReflectorsOGGroup","TopPMTReflectorsOGGroup","WallPTFEOGGroup","BottomScreenHolderPin", "CopperRingInsulation"]
     # Select PTFE based item names in the generated names in partitions
     ptfe_selec_names = [i for i in names_in_partition if any(j for j in ptfe_names if j in i)]
     PTFE_faces = [
