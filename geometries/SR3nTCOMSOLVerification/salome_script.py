@@ -2081,11 +2081,12 @@ def build_copper_ring_insulating_frame(part_doc, p, makeface, Sketch = None):
       Sketch.setName("CopperRingInsulation")
     else:
       dont_return = True
+    tmp_eps = 0
     pts = [
-        [p.CopperRingInsulationRadialPosition, p.CopperRingInsulationVerticalPosition],
-        [p.CopperRingInsulationRadialPosition + p.CopperRingInsulationWidth, p.CopperRingInsulationVerticalPosition],
-        [p.CopperRingInsulationRadialPosition + p.CopperRingInsulationWidth, p.CopperRingInsulationVerticalPosition - p.CopperRingInsulationHeight],
-        [p.CopperRingInsulationRadialPosition, p.CopperRingInsulationVerticalPosition - p.CopperRingInsulationHeight],
+        [p.CopperRingInsulationRadialPosition, p.CopperRingInsulationVerticalPosition - tmp_eps],
+        [p.CopperRingInsulationRadialPosition + p.CopperRingInsulationWidth, p.CopperRingInsulationVerticalPosition - tmp_eps],
+        [p.CopperRingInsulationRadialPosition + p.CopperRingInsulationWidth, p.CopperRingInsulationVerticalPosition - p.CopperRingInsulationHeight + tmp_eps],
+        [p.CopperRingInsulationRadialPosition, p.CopperRingInsulationVerticalPosition - p.CopperRingInsulationHeight + tmp_eps],
     ]
     lines = create_polygon_from_corners(Sketch, pts)
 
@@ -3334,8 +3335,7 @@ if __name__ == '__main__':
     partition.result().subResult(162 -1).setName("LXeVol1") # Main Vol
     partition.result().subResult(404 -1).setName("PTFECutByInterface2")
     partition.result().subResult(480 -1).setName("LXeVol2") # Above Cathode
-    partition.result().subResult(549 -1).setName("LXeVol3") # Bell in LXe
-    partition.result().subResult(550 -1).setName("Bell2") # Bell in LXe
+    partition.result().subResult(549 -1).setName("Bell2") # Bell in LXe
     print("Manually renamed 10")
     ### --------------------------   Make Meshing Groups -----------------------------
     # Make GXe submesh group
@@ -3353,7 +3353,6 @@ if __name__ == '__main__':
     LXe_faces = [
         model.selection("FACE", "LXeVol1"),
         model.selection("FACE", "LXeVol2"),
-        model.selection("FACE", "LXeVol3"),
     ]
     LXe_group = model.addGroup(Cryostat_doc, "FACE", LXe_faces)
     LXe_group.setName("LXe")
@@ -3553,17 +3552,17 @@ if __name__ == '__main__':
     # Min and max edge lengths
     NETGEN_2D_Params.SetMaxSize(p.PanelHeight / 100) # 1/100 of our largest part
     NETGEN_2D_Params.SetMinSize(0)        # Dont set a minimum
-    NETGEN_2D_Params.SetGrowthRate(0.2)  # Mesh element growth rate relative to one another 
+    NETGEN_2D_Params.SetGrowthRate(0.1)  # Mesh element growth rate relative to one another 
     # --- Curvature-driven sizing ---
     # Lots of curves we want to optimize against
     NETGEN_2D_Params.SetUseSurfaceCurvature(1)
     # Minimum segments per topological edge
-    NETGEN_2D_Params.SetNbSegPerEdge(1)
+    NETGEN_2D_Params.SetNbSegPerEdge(2)
     # For a circle the local target size is radius / N
     # Number of segments on a circle then 2piR / (R/N) = 2piN
     # So with N NbSegPerRadius we get ~2piN segments around the circle
     # So for 12 edges on a circle we want ~2=N
-    NETGEN_2D_Params.SetNbSegPerRadius(1) # FIXME Debug use 4 at least on default
+    NETGEN_2D_Params.SetNbSegPerRadius(8) # FIXME Debug use 4 at least on default
     # Alternatively we can use this with a maximum allowed deviation - not enabled
     NETGEN_2D_Params.SetChordalErrorEnabled(0)
     NETGEN_2D_Params.SetChordalError(p.TopStackWireDiameter * 0.1)
@@ -3572,7 +3571,7 @@ if __name__ == '__main__':
     # A source file can also be used
     #NETGEN_2D_Params.SetLocalSizeOnShape
     # --- Advanced Quality Algorithms ---
-    NETGEN_2D_Params.SetElemSizeWeight(0.3) # Prioritize mesh quality over accuracy
+    NETGEN_2D_Params.SetElemSizeWeight(0.5) # Prioritize mesh quality over accuracy
     NETGEN_2D_Params.SetUseDelauney(1) # advancing front is a bit more fragile but sometimes nicer mesh
     NETGEN_2D_Params.SetCheckOverlapping(1) # Surface elements cant overlap
     NETGEN_2D_Params.SetCheckChartBoundary(2) # Strict checking
@@ -3620,7 +3619,7 @@ if __name__ == '__main__':
     mesh.RemoveGroup(free_border_edges)
     base_path = "/home/felix/MFEMElectrostatics/geometries/SR3nTCOMSOLVerification/"
     mesh.ExportMED(
-        "mesh.med",
+        base_path + "mesh.med",
         auto_groups=False,   # you control groups explicitly
         minor=42,            # MED 4.2
     )

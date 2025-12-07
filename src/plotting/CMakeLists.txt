@@ -34,6 +34,8 @@ find_package(VTK REQUIRED COMPONENTS
     ChartsCore
     InteractionStyle
     FiltersPoints
+    RenderingGridAxes
+    FiltersExtraction
 )
 
 if (NOT VTK_FOUND)

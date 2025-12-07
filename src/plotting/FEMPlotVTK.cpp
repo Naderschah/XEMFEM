@@ -22,6 +22,22 @@
 #include <vtkActor.h>
 #include <vtkDataSetMapper.h>
 #include <vtkPolyDataMapper.h>
+#include <vtkAppendPolyData.h>
+
+#include <vtkGridAxesActor3D.h>
+#include <vtkGridAxesHelper.h>
+#include <vtkPolyDataConnectivityFilter.h>
+#include <vtkCellData.h>
+
+#include <vtkContourFilter.h>
+#include <vtkPolyDataMapper.h>
+#include <vtkDoubleArray.h>
+#include <vtkDataSetSurfaceFilter.h>
+#include <vtkCleanPolyData.h>
+#include <vtkPolyDataMapper2D.h>
+#include <vtkActor2D.h>
+#include <vtkLineSource.h>
+#include <vtkCoordinate.h>
 
 #include <vtkActor2DCollection.h>
 #include <vtkActorCollection.h>
@@ -517,8 +533,9 @@ PlotViewLayout MakeDefaultPlotViewLayout(bool cbarHorizontal,
                         1.0,        y1_titleBand};
 
         // cbar title, aligned with cbar, in same top band
-        layout.cbarTitle = {x_cbar0, y0_titleBand,
-                            x_cbar1, y1_titleBand};
+        // TODO Add config entry 
+        layout.cbarTitle = {x_cbar0, y0_titleBand -0.13,
+                            x_cbar1, y1_titleBand -0.13};
     }
 
     return layout;
@@ -785,56 +802,85 @@ void AddXYAxes(vtkRenderer* renderer,
                const std::string& y_label,
                const std::string& z_label,
                int axis_title_font_size,
-               int axis_label_font_size,
-               int x_num_labels)
+               int axis_label_font_size)
 {
     if (!renderer)
         return;
 
-    auto axes = vtkSmartPointer<vtkCubeAxesActor>::New();
-    axes->SetBounds(bounds);
-    axes->SetCamera(renderer->GetActiveCamera());
+    auto axes = vtkSmartPointer<vtkGridAxesActor3D>::New();
 
-    axes->SetScreenSize(15.0);
+    // Use your physical region as grid bounds
+    double b[6] = {
+        bounds[0], bounds[1],
+        bounds[2], bounds[3],
+        bounds[4], bounds[5]
+    };
 
-    axes->SetXTitle(x_label.c_str());
-    axes->SetYTitle(y_label.c_str());
-    axes->SetZTitle(z_label.c_str());
+    // If this is effectively 2D in Z, give it a tiny thickness
+    if (b[4] == b[5])
+    {
+        const double dz = 1e-6 * std::max({b[1] - b[0], b[3] - b[2], 1.0});
+        b[4] -= 0.5 * dz;
+        b[5] += 0.5 * dz;
+    }
 
-    axes->XAxisLabelVisibilityOn();
-    axes->YAxisLabelVisibilityOn();
-    axes->ZAxisLabelVisibilityOn();
+    axes->SetGridBounds(b);
 
-    axes->SetFlyModeToClosestTriad();
-    axes->SetTickLocation(vtkCubeAxesActor::VTK_TICKS_BOTH);
+    // Only a single XY face (2D view) – no extra axes floating around.
+    axes->SetFaceMask(vtkGridAxesHelper::MIN_XY);
 
-    // TODO These methods dont exist
-    //if (x_num_labels > 0)
-    //    axes->SetNumberOfLabels(x_num_labels);
+    // We want ONLY axes/edges/ticks, NO interior grid planes.
+    axes->SetGenerateGrid(false);   // disable interior grid
+    axes->SetGenerateEdges(true);   // keep the box edges
+    axes->SetGenerateTicks(true);   // keep tick markers
 
-    // text styling as before...
+    // Make axes lines clearly visible (black on white background)
+    axes->GetProperty()->SetColor(0.0, 0.0, 0.0);
+    axes->GetProperty()->SetLineWidth(1.0);
+
+    // Titles: only X and Y; hide Z to avoid a third axis in a 2D plot.
+    axes->SetXTitle(x_label);
+    axes->SetYTitle(y_label + "  ");
+    axes->SetZTitle("");  // hide Z-axis title completely
+
+    // Text properties
     for (int i = 0; i < 3; ++i)
     {
         if (auto tprop = axes->GetTitleTextProperty(i))
         {
             tprop->SetFontFamilyToArial();
             tprop->SetColor(0.0, 0.0, 0.0);
-            tprop->SetFontSize(axis_title_font_size);
+            if (axis_title_font_size > 0)
+                tprop->SetFontSize(axis_title_font_size);
         }
         if (auto lprop = axes->GetLabelTextProperty(i))
         {
             lprop->SetFontFamilyToArial();
             lprop->SetColor(0.0, 0.0, 0.0);
-            lprop->SetFontSize(axis_label_font_size);
+            if (axis_label_font_size > 0)
+                lprop->SetFontSize(axis_label_font_size);
         }
     }
 
-    axes->GetXAxesLinesProperty()->SetColor(0.0, 0.0, 0.0);
-    axes->GetYAxesLinesProperty()->SetColor(0.0, 0.0, 0.0);
-    axes->GetZAxesLinesProperty()->SetColor(0.0, 0.0, 0.0);
+    // Labels only on bottom X and left Y edges:
+    // use vtkGridAxesHelper::LabelMasks bits: MIN_X and MIN_Y.
+    unsigned int labelMask = 0;
+    labelMask |= vtkGridAxesHelper::MIN_X;  // left vertical edge
+    labelMask |= vtkGridAxesHelper::MIN_Y;  // bottom horizontal edge
+    axes->SetLabelMask(labelMask);
+
+    // Ensure we don’t suppress those edges’ labels
+    axes->SetLabelUniqueEdgesOnly(true);
 
     renderer->AddActor(axes);
 }
+
+
+
+
+
+
+
 
 
 // -----------------------------------------------------------------------------
@@ -1061,6 +1107,62 @@ BuildLookupTable(const std::string& color_map_name,
     return lut;
 }
 
+static vtkSmartPointer<vtkDoubleArray>
+MakeNiceScalarBarLabels(double vmin, double vmax, int n_desired)
+{
+    auto labels = vtkSmartPointer<vtkDoubleArray>::New();
+
+    if (!std::isfinite(vmin) || !std::isfinite(vmax) || vmin == vmax)
+    {
+        labels->InsertNextValue(vmin);
+        return labels;
+    }
+
+    if (n_desired < 2)
+        n_desired = 2;
+
+    if (vmax < vmin)
+        std::swap(vmin, vmax);
+
+    double range = vmax - vmin;
+
+    auto niceNum = [](double x, bool round) -> double {
+        double expv  = std::floor(std::log10(x));
+        double frac  = x / std::pow(10.0, expv);
+        double niceFrac;
+
+        if (round)
+        {
+            if (frac < 1.5)      niceFrac = 1.0;
+            else if (frac < 3.0) niceFrac = 2.0;
+            else if (frac < 7.0) niceFrac = 5.0;
+            else                 niceFrac = 10.0;
+        }
+        else
+        {
+            if (frac <= 1.0)      niceFrac = 1.0;
+            else if (frac <= 2.0) niceFrac = 2.0;
+            else if (frac <= 5.0) niceFrac = 5.0;
+            else                  niceFrac = 10.0;
+        }
+
+        return niceFrac * std::pow(10.0, expv);
+    };
+
+    // "Nice" step size
+    double step = niceNum(range / (n_desired - 1), true);
+
+    // Extend to nice min/max that still cover [vmin, vmax]
+    double nice_min = std::floor(vmin / step) * step;
+    double nice_max = std::ceil (vmax / step) * step;
+
+    // Build labels
+    for (double v = nice_min; v <= nice_max + 0.5 * step; v += step)
+        labels->InsertNextValue(v);
+
+    return labels;
+}
+
 static vtkSmartPointer<vtkScalarBarActor>
 CreateScalarBar(vtkLookupTable* lut,
                 const std::string& title,
@@ -1072,6 +1174,7 @@ CreateScalarBar(vtkLookupTable* lut,
     scalar_bar->SetLookupTable(lut);
     scalar_bar->SetTitle(title.c_str());
     scalar_bar->SetNumberOfLabels(num_labels > 0 ? num_labels : 5);
+    scalar_bar->SetLabelFormat("%.0f");
 
     auto tprop = scalar_bar->GetTitleTextProperty();
     tprop->SetFontFamilyToArial();
@@ -1372,15 +1475,14 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
     vtkSmartPointer<vtkRenderer> cbar_title_renderer     = makeRenderer(layout.cbarTitle);
     vtkSmartPointer<vtkRenderer> cbar_label_top_renderer = makeRenderer(layout.cbarLabelTopOrLeft);
     vtkSmartPointer<vtkRenderer> cbar_label_bot_renderer = makeRenderer(layout.cbarLabelBottomOrRight);
-
+    
     field_renderer->AddActor(mesh_actor);
 
     // 4) Axes
     AddXYAxes(field_renderer, request.region_bounds,
             request.x_label, request.y_label, request.z_label,
             request.axis_title_font_size,
-            request.axis_label_font_size,
-            request.x_num_labels);
+            request.axis_label_font_size);
 
 
 
@@ -1431,8 +1533,115 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
         scalar_bar->SetHeight(1.0);
     }
 
-    scalar_bar->UseCustomLabelsOff();
+    // Decide how many contour/label levels we want
+    int n_for_levels = (request.n_contours > 0)
+                        ? request.n_contours
+                        : (request.cbar_num_labels > 0 ? request.cbar_num_labels : 5);
+
+    // Build "nice" rounded levels over the clipped range
+    auto levelValues = MakeNiceScalarBarLabels(
+        stats.min_used,
+        stats.max_used,
+        n_for_levels);
+
+    // Drive scalar bar labels from these values
+    if (levelValues && levelValues->GetNumberOfTuples() > 0)
+    {
+        scalar_bar->SetNumberOfLabels(levelValues->GetNumberOfTuples());
+        scalar_bar->SetCustomLabels(levelValues);
+        scalar_bar->UseCustomLabelsOn();
+    }
+    else
+    {
+        scalar_bar->UseCustomLabelsOff();
+    }
+
     cbar_renderer->AddViewProp(scalar_bar);
+
+    // 7) Contour lines in the field view (same levels as scalar bar)
+    if (request.show_contours && levelValues && levelValues->GetNumberOfTuples() > 0)
+    {
+        auto surface = vtkSmartPointer<vtkDataSetSurfaceFilter>::New();
+        surface->SetInputData(dataset_to_plot);
+
+        // Append polydata to collect cleaned contours from all levels
+        auto appendAll = vtkSmartPointer<vtkAppendPolyData>::New();
+
+        const int nLevels = static_cast<int>(levelValues->GetNumberOfTuples());
+
+        for (int i = 0; i < nLevels; ++i)
+        {
+            double v = levelValues->GetValue(i);
+
+            // Contour this single level
+            auto contour = vtkSmartPointer<vtkContourFilter>::New();
+            contour->SetInputConnection(surface->GetOutputPort());
+            contour->SetInputArrayToProcess(
+                0, 0, 0,
+                vtkDataObject::FIELD_ASSOCIATION_POINTS,
+                request.scalar_name.c_str());
+            contour->SetNumberOfContours(1);
+            contour->SetValue(0, v);
+
+            // Connectivity: keep only the largest region for this level
+            auto conn = vtkSmartPointer<vtkPolyDataConnectivityFilter>::New();
+            conn->SetInputConnection(contour->GetOutputPort());
+            conn->SetExtractionModeToLargestRegion();
+            conn->Update();
+
+            vtkPolyData* connOut = conn->GetOutput();
+            if (connOut && connOut->GetNumberOfCells() > 0)
+            {
+                appendAll->AddInputConnection(conn->GetOutputPort());
+            }
+        }
+
+        appendAll->Update();
+
+        auto contourMapper = vtkSmartPointer<vtkPolyDataMapper>::New();
+        contourMapper->SetInputConnection(appendAll->GetOutputPort());
+        contourMapper->ScalarVisibilityOff();   // uniform color for all lines
+
+        if (request.crop_to_region)
+        {
+            double xmin = request.region_bounds[0];
+            double xmax = request.region_bounds[1];
+            double ymin = request.region_bounds[2];
+            double ymax = request.region_bounds[3];
+
+            contourMapper->RemoveAllClippingPlanes();
+
+            vtkNew<vtkPlane> pxMin;
+            pxMin->SetOrigin(xmin, 0.0, 0.0);
+            pxMin->SetNormal(1.0, 0.0, 0.0);
+            contourMapper->AddClippingPlane(pxMin);
+
+            vtkNew<vtkPlane> pxMax;
+            pxMax->SetOrigin(xmax, 0.0, 0.0);
+            pxMax->SetNormal(-1.0, 0.0, 0.0);
+            contourMapper->AddClippingPlane(pxMax);
+
+            vtkNew<vtkPlane> pyMin;
+            pyMin->SetOrigin(0.0, ymin, 0.0);
+            pyMin->SetNormal(0.0, 1.0, 0.0);
+            contourMapper->AddClippingPlane(pyMin);
+
+            vtkNew<vtkPlane> pyMax;
+            pyMax->SetOrigin(0.0, ymax, 0.0);
+            pyMax->SetNormal(0.0, -1.0, 0.0);
+            contourMapper->AddClippingPlane(pyMax);
+        }
+
+        auto contourActor = vtkSmartPointer<vtkActor>::New();
+        contourActor->SetMapper(contourMapper);
+
+        // Visually distinct from viridis
+        contourActor->GetProperty()->SetColor(1.0, 0.0, 1.0); // magenta
+        contourActor->GetProperty()->SetLineWidth(1.0);
+        contourActor->GetProperty()->SetOpacity(1.0);
+
+        field_renderer->AddActor(contourActor);
+    }
 
     // 7) Colorbar title actor
     if (!request.cbar_title.empty())
@@ -1442,6 +1651,7 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
 
         auto tprop = cbarTitleActor->GetTextProperty();
         tprop->SetFontFamilyToArial();
+        tprop->SetBold(1);
         tprop->SetFontSize(cbarTitleFS);
         tprop->SetColor(0.0, 0.0, 0.0);
         tprop->SetJustificationToCentered();
@@ -1532,7 +1742,6 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
 // -----------------------------------------------------------------------------
 // High-level standard views
 // -----------------------------------------------------------------------------
-
 void PlotStandardViewsForPotentialAndEnorm(vtkUnstructuredGrid* grid,
                                            const PlotInput& input,
                                            const PlottingOptions& base_options)
@@ -1546,10 +1755,76 @@ void PlotStandardViewsForPotentialAndEnorm(vtkUnstructuredGrid* grid,
     double full_bounds[6];
     grid->GetBounds(full_bounds);
 
-    if (!AttachGradientEAndMagnitude(grid, "V", "E", "Enorm"))
+    // ---------------------------------------------------------------------
+    // Detect which scalar array to treat as the potential V
+    // ---------------------------------------------------------------------
+    vtkPointData* pd = grid->GetPointData();
+    if (!pd)
     {
-        std::cerr << "[PlotStandardViewsForPotentialAndEnorm] WARNING: "
-                     "failed to attach E/Enorm from V.\n";
+        std::cerr << "[PlotStandardViewsForPotentialAndEnorm] ERROR: no point data on grid.\n";
+        return;
+    }
+
+    std::string potentialName;
+    int scalarCandidateCount = 0;
+    std::string lastScalarCandidateName;
+
+    const int nArrays = pd->GetNumberOfArrays();
+    for (int i = 0; i < nArrays; ++i)
+    {
+        vtkDataArray* arr = pd->GetArray(i);
+        if (!arr)
+            continue;
+
+        if (arr->GetNumberOfComponents() != 1)
+            continue; // only scalar arrays
+
+        const char* cname = arr->GetName();
+        if (!cname || !*cname)
+            continue;
+
+        std::string name(cname);
+        ++scalarCandidateCount;
+        lastScalarCandidateName = name;
+
+        if (name == "V")
+            potentialName = "V";
+        else if (name == "Electric_potential")
+            potentialName = "Electric_potential";
+    }
+
+    if (potentialName.empty() && scalarCandidateCount == 1)
+    {
+        // Only one scalar present → assume it's the potential
+        potentialName = lastScalarCandidateName;
+    }
+
+    if (potentialName.empty())
+    {
+        std::cerr << "[PlotStandardViewsForPotentialAndEnorm] ERROR: "
+                     "could not identify a potential scalar array "
+                     "(no V, no Electric_potential, and not exactly one scalar array).\n";
+        return;
+    }
+
+    std::cout << "[PlotStandardViewsForPotentialAndEnorm] Using scalar '"
+              << potentialName << "' as potential.\n";
+
+    // ---------------------------------------------------------------------
+    // Compute E and Enorm from the chosen potential (if not already present)
+    // ---------------------------------------------------------------------
+    bool haveEnorm = (pd->GetArray("Enorm") != nullptr);
+    if (!haveEnorm)
+    {
+        if (!AttachGradientEAndMagnitude(grid, potentialName, "E", "Enorm"))
+        {
+            std::cerr << "[PlotStandardViewsForPotentialAndEnorm] WARNING: "
+                         "failed to attach E/Enorm from '" << potentialName << "'.\n";
+        }
+        else
+        {
+            haveEnorm = true;
+        }
     }
 
     // ---------------------------------------------------------------------
@@ -1559,7 +1834,7 @@ void PlotStandardViewsForPotentialAndEnorm(vtkUnstructuredGrid* grid,
     const std::string cfg_path = GetSourceDir() + "/plot_config.ini";
     bool have_cfg = LoadPlotConfig(cfg_path, cfg);
 
-    // After defaults / INI fixups:
+    // Layout config becomes global
     g_layoutCfg = cfg.layout;
 
     // Defaults if config does not specify values
@@ -1574,12 +1849,12 @@ void PlotStandardViewsForPotentialAndEnorm(vtkUnstructuredGrid* grid,
     if (!have_cfg)
     {
         // full frame
-        cfg.frame_full.image_width           = base_options.image_width;
-        cfg.frame_full.image_height          = base_options.image_height;
-        cfg.frame_full.zoom_factor           = 1.0;
-        cfg.frame_full.cbar_horizontal       = false;
-        cfg.frame_full.crop_to_region        = false;
-        cfg.frame_full.separate_cbar_viewport= true;
+        cfg.frame_full.image_width            = base_options.image_width;
+        cfg.frame_full.image_height           = base_options.image_height;
+        cfg.frame_full.zoom_factor            = 1.0;
+        cfg.frame_full.cbar_horizontal        = false;
+        cfg.frame_full.crop_to_region         = false;
+        cfg.frame_full.separate_cbar_viewport = true;
 
         // stack frame (top/bottom)
         cfg.frame_stack = cfg.frame_full;
@@ -1601,7 +1876,7 @@ void PlotStandardViewsForPotentialAndEnorm(vtkUnstructuredGrid* grid,
         cfg.regions.bar_ymax    = -0.05;
 
         // Content defaults for V
-        cfg.content_V.scalar_name        = "V";
+        cfg.content_V.scalar_name        = "";          // auto → potentialName
         cfg.content_V.cbar_title         = "V";
         cfg.content_V.color_map_name     = "viridis";
         cfg.content_V.show_contours      = true;
@@ -1613,7 +1888,7 @@ void PlotStandardViewsForPotentialAndEnorm(vtkUnstructuredGrid* grid,
         cfg.content_V.title_bar          = "Potential V (Field Cage)";
 
         // Content defaults for E
-        cfg.content_E.scalar_name        = "Enorm";
+        cfg.content_E.scalar_name        = "";          // auto → "Enorm"
         cfg.content_E.cbar_title         = "E [V/m]";
         cfg.content_E.color_map_name     = "viridis";
         cfg.content_E.show_contours      = false;
@@ -1688,13 +1963,36 @@ void PlotStandardViewsForPotentialAndEnorm(vtkUnstructuredGrid* grid,
     };
 
     // ---------------------------------------------------------------------
-    // V views
+    // Decide which scalar name to use for V plots:
+    //  - If cfg.content_V.scalar_name exists on the dataset, use it.
+    //  - Otherwise, always fall back to the detected potentialName.
     // ---------------------------------------------------------------------
     const ContentConfig& cv = cfg.content_V;
 
+    std::string vScalarName;
+    if (!cv.scalar_name.empty() && pd->GetArray(cv.scalar_name.c_str()))
+    {
+        vScalarName = cv.scalar_name;
+    }
+    else
+    {
+        if (!cv.scalar_name.empty() && !pd->GetArray(cv.scalar_name.c_str()))
+        {
+            std::cerr << "[PlotStandardViewsForPotentialAndEnorm] WARNING: "
+                         "content_V.scalar_name='" << cv.scalar_name
+                      << "' not found on dataset; using detected potential '"
+                      << potentialName << "' instead.\n";
+        }
+        vScalarName = potentialName;
+    }
+
+    // ---------------------------------------------------------------------
+    // V views
+    // ---------------------------------------------------------------------
+
     // Full-domain V
     ScalarViewRequest r_full;
-    r_full.scalar_name            = cv.scalar_name.empty() ? "V" : cv.scalar_name;
+    r_full.scalar_name            = vScalarName;
     r_full.cbar_title             = cv.cbar_title.empty() ? "V" : cv.cbar_title;
     r_full.cbar_horizontal        = cfg.frame_full.cbar_horizontal;
     r_full.title                  = cv.title_full.empty() ? "Potential V" : cv.title_full;
@@ -1769,70 +2067,84 @@ void PlotStandardViewsForPotentialAndEnorm(vtkUnstructuredGrid* grid,
     PlotScalarFieldView(grid, r_bar,    base_options);
 
     // ---------------------------------------------------------------------
-    // |E| views (same frames, different content config)
+    // |E| views – only if Enorm is available
     // ---------------------------------------------------------------------
-    const ContentConfig& ce = cfg.content_E;
-    StreamlineConfig stream_cfg; // still placeholder, but needed for signature
+    if (haveEnorm)
+    {
+        const ContentConfig& ce = cfg.content_E;
+        StreamlineConfig stream_cfg; // placeholder
 
-    ScalarViewRequest r_fullE = r_full;
-    r_fullE.scalar_name       = ce.scalar_name.empty() ? "Enorm" : ce.scalar_name;
-    r_fullE.cbar_title        = ce.cbar_title.empty() ? "E [V/m]" : ce.cbar_title;
-    r_fullE.title             = ce.title_full.empty() ? "|E|"     : ce.title_full;
-    r_fullE.color_map_name    = ce.color_map_name.empty()
-                                ? r_full.color_map_name
-                                : ce.color_map_name;
-    r_fullE.show_contours     = ce.show_contours;
-    r_fullE.show_streamlines  = ce.show_streamlines;
-    r_fullE.n_contours        = ce.n_contours;
-    r_fullE.output_path       = input.out_dir + "/Enorm_full.png";
-    apply_text_cfg(r_fullE, cfg.frame_full);
+        std::string eScalarName = !ce.scalar_name.empty()
+                                  ? ce.scalar_name
+                                  : std::string("Enorm");
 
-    ScalarViewRequest r_topE = r_top;
-    r_topE.scalar_name       = r_fullE.scalar_name;
-    r_topE.cbar_title        = r_fullE.cbar_title;
-    r_topE.title             = ce.title_stack_top.empty()
-                               ? "|E| (top stack)"
-                               : ce.title_stack_top;
-    r_topE.color_map_name    = r_fullE.color_map_name;
-    r_topE.show_contours     = ce.show_contours;
-    r_topE.show_streamlines  = ce.show_streamlines;
-    r_topE.n_contours        = ce.n_contours;
-    r_topE.output_path       = input.out_dir + "/Enorm_top.png";
-    apply_text_cfg(r_topE, cfg.frame_full);
+        ScalarViewRequest r_fullE = r_full;
+        r_fullE.scalar_name       = eScalarName;
+        r_fullE.cbar_title        = ce.cbar_title.empty() ? "E [V/m]" : ce.cbar_title;
+        r_fullE.title             = ce.title_full.empty() ? "|E|"     : ce.title_full;
+        r_fullE.color_map_name    = ce.color_map_name.empty()
+                                    ? r_full.color_map_name
+                                    : ce.color_map_name;
+        r_fullE.show_contours     = ce.show_contours;
+        r_fullE.show_streamlines  = ce.show_streamlines;
+        r_fullE.n_contours        = ce.n_contours;
+        r_fullE.output_path       = input.out_dir + "/Enorm_full.png";
+        apply_text_cfg(r_fullE, cfg.frame_full);
 
-    ScalarViewRequest r_bottomE = r_bottom;
-    r_bottomE.scalar_name       = r_fullE.scalar_name;
-    r_bottomE.cbar_title        = r_fullE.cbar_title;
-    r_bottomE.title             = ce.title_stack_bottom.empty()
-                                  ? "|E| (bottom stack)"
-                                  : ce.title_stack_bottom;
-    r_bottomE.color_map_name    = r_fullE.color_map_name;
-    r_bottomE.show_contours     = ce.show_contours;
-    r_bottomE.show_streamlines  = ce.show_streamlines;
-    r_bottomE.n_contours        = ce.n_contours;
-    r_bottomE.output_path       = input.out_dir + "/Enorm_bottom.png";
-    apply_text_cfg(r_bottomE, cfg.frame_full);
+        ScalarViewRequest r_topE = r_top;
+        r_topE.scalar_name       = eScalarName;
+        r_topE.cbar_title        = r_fullE.cbar_title;
+        r_topE.title             = ce.title_stack_top.empty()
+                                   ? "|E| (top stack)"
+                                   : ce.title_stack_top;
+        r_topE.color_map_name    = r_fullE.color_map_name;
+        r_topE.show_contours     = ce.show_contours;
+        r_topE.show_streamlines  = ce.show_streamlines;
+        r_topE.n_contours        = ce.n_contours;
+        r_topE.output_path       = input.out_dir + "/Enorm_top.png";
+        apply_text_cfg(r_topE, cfg.frame_stack);
 
-    ScalarViewRequest r_barE = r_bar;
-    r_barE.scalar_name       = r_fullE.scalar_name;
-    r_barE.cbar_title        = r_fullE.cbar_title;
-    r_barE.title             = ce.title_bar.empty()
-                               ? "|E| (Field Cage)"
-                               : ce.title_bar;
-    r_barE.color_map_name    = r_fullE.color_map_name;
-    r_barE.show_contours     = ce.show_contours;
-    r_barE.show_streamlines  = ce.show_streamlines;
-    r_barE.n_contours        = ce.n_contours;
-    r_barE.output_path       = input.out_dir + "/Enorm_bar.png";
-    apply_text_cfg(r_barE, cfg.frame_full);
+        ScalarViewRequest r_bottomE = r_bottom;
+        r_bottomE.scalar_name       = eScalarName;
+        r_bottomE.cbar_title        = r_fullE.cbar_title;
+        r_bottomE.title             = ce.title_stack_bottom.empty()
+                                      ? "|E| (bottom stack)"
+                                      : ce.title_stack_bottom;
+        r_bottomE.color_map_name    = r_fullE.color_map_name;
+        r_bottomE.show_contours     = ce.show_contours;
+        r_bottomE.show_streamlines  = ce.show_streamlines;
+        r_bottomE.n_contours        = ce.n_contours;
+        r_bottomE.output_path       = input.out_dir + "/Enorm_bottom.png";
+        apply_text_cfg(r_bottomE, cfg.frame_stack);
 
-    PlotScalarFieldView(grid, r_fullE,   base_options, &stream_cfg);
-    PlotScalarFieldView(grid, r_topE,    base_options, &stream_cfg);
-    PlotScalarFieldView(grid, r_bottomE, base_options, &stream_cfg);
-    PlotScalarFieldView(grid, r_barE,    base_options, &stream_cfg);
+        ScalarViewRequest r_barE = r_bar;
+        r_barE.scalar_name       = eScalarName;
+        r_barE.cbar_title        = r_fullE.cbar_title;
+        r_barE.title             = ce.title_bar.empty()
+                                   ? "|E| (Field Cage)"
+                                   : ce.title_bar;
+        r_barE.color_map_name    = r_fullE.color_map_name;
+        r_barE.show_contours     = ce.show_contours;
+        r_barE.show_streamlines  = ce.show_streamlines;
+        r_barE.n_contours        = ce.n_contours;
+        r_barE.output_path       = input.out_dir + "/Enorm_bar.png";
+        apply_text_cfg(r_barE, cfg.frame_bar);
 
-    std::cout << "Standard V / |E| views written to: " << input.out_dir << "\n";
+        PlotScalarFieldView(grid, r_fullE,   base_options, &stream_cfg);
+        PlotScalarFieldView(grid, r_topE,    base_options, &stream_cfg);
+        PlotScalarFieldView(grid, r_bottomE, base_options, &stream_cfg);
+        PlotScalarFieldView(grid, r_barE,    base_options, &stream_cfg);
+
+        std::cout << "Standard V / |E| views written to: " << input.out_dir << "\n";
+    }
+    else
+    {
+        std::cerr << "[PlotStandardViewsForPotentialAndEnorm] NOTE: Enorm not available; "
+                     "only V views were written.\n";
+        std::cout << "Standard V views written to: " << input.out_dir << "\n";
+    }
 }
+
 
 
 // -----------------------------------------------------------------------------
