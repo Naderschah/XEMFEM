@@ -29,6 +29,14 @@
 #include <vtkPolyDataConnectivityFilter.h>
 #include <vtkCellData.h>
 
+
+#include <vtkPolyData.h>
+#include <vtkSmartPointer.h>
+#include <vtkCellArray.h>
+#include <vtkPoints.h>
+#include <vtkMath.h>
+#include <vtkStripper.h>
+
 #include <vtkContourFilter.h>
 #include <vtkPolyDataMapper.h>
 #include <vtkDoubleArray.h>
@@ -38,7 +46,12 @@
 #include <vtkActor2D.h>
 #include <vtkLineSource.h>
 #include <vtkCoordinate.h>
-
+#include <vtkPolyData.h>
+#include <vtkSmartPointer.h>
+#include <vtkCellArray.h>
+#include <vtkPoints.h>
+#include <vtkCell.h>
+#include <vtkMath.h>
 #include <vtkActor2DCollection.h>
 #include <vtkActorCollection.h>
 #include <vtkBoundedPointSource.h>
@@ -796,6 +809,92 @@ CreateMeshActor(vtkSmartPointer<vtkDataSetMapper> mapper,
     return actor;
 }
 
+inline double NiceStep(double x)
+{
+    if (x <= 0.0)
+        return 0.0;
+
+    const double expv = std::floor(std::log10(x));
+    const double f    = x / std::pow(10.0, expv);
+
+    double nf;
+    if (f < 1.5)
+        nf = 1.0;
+    else if (f < 3.0)
+        nf = 2.0;
+    else if (f < 7.0)
+        nf = 5.0;
+    else
+        nf = 10.0;
+
+    return nf * std::pow(10.0, expv);
+}
+inline void ConfigureAxisTicks(vtkGridAxesActor3D* axes,
+                               const double bounds[6],
+                               int axis,
+                               int requestedTicks)
+{
+    // Do not trust the docs its all wrong just look at the source code - also function names are nonsensical
+    if (!axes || requestedTicks <= 0)
+        return;
+    if (axis < 0 || axis > 2)
+        return;
+
+    const int idx = 2 * axis;
+    double minVal = bounds[idx];
+    double maxVal = bounds[idx + 1];
+
+    if (minVal > maxVal)
+        std::swap(minVal, maxVal);
+
+    const double span = maxVal - minVal;
+    if (span <= 0.0)
+    {
+        // Degenerate: single label at minVal
+        axes->SetUseCustomLabels(axis, true);
+        axes->SetNumberOfLabels(axis, 1);
+        axes->SetLabel(axis, 0, minVal);
+        return;
+    }
+
+    // 1) Rough step from requested tick count
+    if (requestedTicks < 2)
+        requestedTicks = 2;
+
+    const double rawStep = span / static_cast<double>(requestedTicks - 1);
+    double step = NiceStep(rawStep);
+    if (step <= 0.0)
+        step = rawStep; // fallback
+
+    // 2) Snap to an inner range [start, end] ⊆ [minVal, maxVal]
+    const double start = std::ceil(minVal / step) * step;
+    const double end   = std::floor(maxVal / step) * step;
+
+    if (end < start)
+    {
+        // Step is too large; fall back to a single label at center.
+        const double mid = 0.5 * (minVal + maxVal);
+        axes->SetUseCustomLabels(axis, true);
+        axes->SetNumberOfLabels(axis, 1);
+        axes->SetLabel(axis, 0, mid);
+        return;
+    }
+
+    // 3) Compute actual number of labels and fill them.
+    const double nStepsReal = (end - start) / step;
+    const vtkIdType nLabels = static_cast<vtkIdType>(std::floor(nStepsReal + 0.5)) + 1;
+
+    axes->SetUseCustomLabels(axis, true);
+    axes->SetNumberOfLabels(axis, nLabels);
+
+    for (vtkIdType i = 0; i < nLabels; ++i)
+    {
+        const double val = start + static_cast<double>(i) * step;
+        axes->SetLabel(axis, i, val);
+    }
+}
+
+
 void AddXYAxes(vtkRenderer* renderer,
                const double bounds[6],
                const std::string& x_label,
@@ -842,6 +941,11 @@ void AddXYAxes(vtkRenderer* renderer,
     axes->SetXTitle(x_label);
     axes->SetYTitle(y_label + "  ");
     axes->SetZTitle("");  // hide Z-axis title completely
+
+    // Reduce Tick frequency - 
+    ConfigureAxisTicks(axes, b, /*axis=X*/ 0, /*requestedTicks*/ 5);
+    ConfigureAxisTicks(axes, b, /*axis=Y*/ 1, /*requestedTicks*/ 10);
+    
 
     // Text properties
     for (int i = 0; i < 3; ++i)
@@ -1068,6 +1172,53 @@ static ScalarStats ComputeScalarStatsInBounds(vtkDataSet* ds,
     return stats;
 }
 
+// Remove closed loops: lines where first and last point index are equal.
+inline vtkSmartPointer<vtkPolyData>
+ExtractOpenContours(vtkPolyData* input)
+{
+    if (!input)
+        return nullptr;
+
+    // Make sure we have polylines instead of lots of tiny segments.
+    auto stripper = vtkSmartPointer<vtkStripper>::New();
+    stripper->SetInputData(input);
+    stripper->Update();
+
+    vtkPolyData* stripped = stripper->GetOutput();
+    if (!stripped)
+        return nullptr;
+
+    auto output = vtkSmartPointer<vtkPolyData>::New();
+    output->ShallowCopy(stripped);  // copy points, arrays, etc.
+
+    vtkCellArray* lines = stripped->GetLines();
+    if (!lines)
+    {
+        output->SetLines(nullptr);
+        return output;
+    }
+
+    auto newLines = vtkSmartPointer<vtkCellArray>::New();
+
+    lines->InitTraversal();
+    vtkIdType npts;
+    const vtkIdType* pts = nullptr;
+    while (lines->GetNextCell(npts, pts))
+    {
+        if (npts < 2)
+            continue;
+
+        // Closed polyline: first and last vertex are the same
+        if (pts[0] == pts[npts - 1])
+            continue;  // drop closed loop
+
+        newLines->InsertNextCell(npts, pts);
+    }
+
+    output->SetLines(newLines);
+    return output;
+}
+
 // Basic LUT builder.
 static vtkSmartPointer<vtkLookupTable>
 BuildLookupTable(const std::string& color_map_name,
@@ -1158,10 +1309,120 @@ MakeNiceScalarBarLabels(double vmin, double vmax, int n_desired)
 
     // Build labels
     for (double v = nice_min; v <= nice_max + 0.5 * step; v += step)
-        labels->InsertNextValue(v);
+    {
+        double value = v;
+
+        // If value is exactly zero, shift it to a small positive value
+        if (std::abs(value) < 1e-12)
+            value = 0.1 * step;
+
+        labels->InsertNextValue(value);
+    }
 
     return labels;
 }
+
+inline double ComputeCellLength(vtkCell* cell, vtkPoints* pts)
+{
+    const vtkIdType npts = cell->GetNumberOfPoints();
+    if (npts < 2 || !pts)
+        return 0.0;
+
+    double p0[3], p1[3];
+    double length = 0.0;
+
+    for (vtkIdType i = 0; i < npts - 1; ++i)
+    {
+        pts->GetPoint(cell->GetPointId(i),     p0);
+        pts->GetPoint(cell->GetPointId(i + 1), p1);
+        length += std::sqrt(vtkMath::Distance2BetweenPoints(p0, p1));
+    }
+
+    return length;
+}
+
+// Keep only line cells whose length >= minRelativeLength * maxLength.
+// minRelativeLength in (0,1], e.g. 0.2 = keep >= 20% of longest.
+inline vtkSmartPointer<vtkPolyData>
+FilterContoursByRelativeLength(vtkPolyData* input, double minRelativeLength)
+{
+    if (!input || minRelativeLength <= 0.0)
+        return nullptr;
+
+    vtkPoints* pts = input->GetPoints();
+    vtkCellArray* inLines = input->GetLines();
+
+    if (!pts || !inLines)
+    {
+        auto empty = vtkSmartPointer<vtkPolyData>::New();
+        empty->ShallowCopy(input);
+        empty->SetLines(nullptr);
+        return empty;
+    }
+
+    // First pass: compute lengths and maximum.
+    std::vector<double> lengths;
+    lengths.reserve(inLines->GetNumberOfCells());
+
+    inLines->InitTraversal();
+    vtkIdType npts;
+    const vtkIdType* cellPts = nullptr;
+    double maxLen = 0.0;
+
+    while (inLines->GetNextCell(npts, cellPts))
+    {
+        if (npts < 2)
+        {
+            lengths.push_back(0.0);
+            continue;
+        }
+
+        double length = 0.0;
+        double p0[3], p1[3];
+
+        for (vtkIdType i = 0; i < npts - 1; ++i)
+        {
+            pts->GetPoint(cellPts[i],     p0);
+            pts->GetPoint(cellPts[i + 1], p1);
+            length += std::sqrt(vtkMath::Distance2BetweenPoints(p0, p1));
+        }
+
+        lengths.push_back(length);
+        if (length > maxLen)
+            maxLen = length;
+    }
+
+    auto output = vtkSmartPointer<vtkPolyData>::New();
+    output->ShallowCopy(input);
+
+    if (maxLen <= 0.0)
+    {
+        output->SetLines(nullptr);
+        return output;
+    }
+
+    const double lengthThreshold = minRelativeLength * maxLen;
+
+    // Second pass: copy only long-enough cells.
+    auto outLines = vtkSmartPointer<vtkCellArray>::New();
+    inLines->InitTraversal();
+
+    size_t idx = 0;
+    while (inLines->GetNextCell(npts, cellPts))
+    {
+        double len = (idx < lengths.size() ? lengths[idx] : 0.0);
+        if (len >= lengthThreshold && npts > 1)
+        {
+            outLines->InsertNextCell(npts, cellPts);
+        }
+        ++idx;
+    }
+
+    output->SetLines(outLines);
+    return output;
+}
+
+
 
 static vtkSmartPointer<vtkScalarBarActor>
 CreateScalarBar(vtkLookupTable* lut,
@@ -1186,6 +1447,10 @@ CreateScalarBar(vtkLookupTable* lut,
     lprop->SetFontSize(label_font_size);
     lprop->SetColor(0.0, 0.0, 0.0);
 
+    // Its bold for some reason
+    lprop->BoldOff();
+    lprop->ItalicOff();
+    lprop->ShadowOff();
     // Generic white background behind the bar + labels
     scalar_bar->DrawBackgroundOn();
     scalar_bar->GetBackgroundProperty()->SetColor(1.0, 1.0, 1.0);
@@ -1430,6 +1695,17 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
     renderWindow->SetAlphaBitPlanes(0);
     renderWindow->SetMultiSamples(0);
     renderWindow->SetSize(img_w, img_h);
+    renderWindow->SetNumberOfLayers(2);
+
+    // Background renderer: full window, pure white
+    auto bgRenderer = vtkSmartPointer<vtkRenderer>::New();
+    bgRenderer->SetLayer(0);  // background layer
+    bgRenderer->SetViewport(0.0, 0.0, 1.0, 1.0);
+    bgRenderer->SetBackground(1.0, 1.0, 1.0);
+    bgRenderer->SetBackground2(1.0, 1.0, 1.0);
+    bgRenderer->GradientBackgroundOff();
+    renderWindow->AddRenderer(bgRenderer);
+
 
     PlotViewLayout layout = MakeDefaultPlotViewLayout(
         request.cbar_horizontal,
@@ -1583,23 +1859,24 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
             contour->SetNumberOfContours(1);
             contour->SetValue(0, v);
 
-            // Connectivity: keep only the largest region for this level
-            auto conn = vtkSmartPointer<vtkPolyDataConnectivityFilter>::New();
-            conn->SetInputConnection(contour->GetOutputPort());
-            conn->SetExtractionModeToLargestRegion();
-            conn->Update();
+            // Join small line segments into polylines
+            auto stripper = vtkSmartPointer<vtkStripper>::New();
+            stripper->SetInputConnection(contour->GetOutputPort());
+            stripper->JoinContiguousSegmentsOn();   // important
+            // no need to Update(); appendAll will drive it
 
-            vtkPolyData* connOut = conn->GetOutput();
-            if (connOut && connOut->GetNumberOfCells() > 0)
-            {
-                appendAll->AddInputConnection(conn->GetOutputPort());
-            }
+            appendAll->AddInputConnection(stripper->GetOutputPort());
         }
 
         appendAll->Update();
 
+        // Filter short contours - loops and what not
+        vtkPolyData* allContours = appendAll->GetOutput();
+        auto filteredContours =
+            FilterContoursByRelativeLength(allContours, /*minRelativeLength*/ 0.001); // keep >= 20% of longest
+
         auto contourMapper = vtkSmartPointer<vtkPolyDataMapper>::New();
-        contourMapper->SetInputConnection(appendAll->GetOutputPort());
+        contourMapper->SetInputData(filteredContours);
         contourMapper->ScalarVisibilityOff();   // uniform color for all lines
 
         if (request.crop_to_region)
