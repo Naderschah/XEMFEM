@@ -42,6 +42,7 @@ if (NOT VTK_FOUND)
     message(FATAL_ERROR "PLOT: Unable to find the VTK build folder.")
 endif()
 
+# Core plotting library (reused by PLOT and xemfem)
 add_library(plotting STATIC
     FEMPlotVTK.cpp
 )
@@ -56,6 +57,7 @@ target_link_libraries(plotting
         ${VTK_LIBRARIES}
 )
 
+# Thin wrapper executable
 add_executable(PLOT
     main.cpp
 )

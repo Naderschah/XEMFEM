@@ -3,6 +3,7 @@
 *.mesh
 *.gf
 *.med
+./geometry/mesh/
 # Ignore all builds anywhere in the tree
 **/build/
 **/build*/
@@ -18,3 +19,5 @@ sim_results/
 *.swp
 *.log
 *.bak
+# Misc I have in this folder
+COMSOL_res

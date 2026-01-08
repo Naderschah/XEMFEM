@@ -18,7 +18,7 @@ docker run --rm \
   -v $XAUTHORITY:/home/felix/.Xauthority:ro \
   -v /home/felix:/home/felix \
   --shm-size=2g --ipc=host --net=host \
-  feelpp/salome:9.8.0-ubuntu-20.04 salome
+  trophime/salome:9.9.0-focal salome
 
 # Nvidia GPU
 docker run --rm \
@@ -33,7 +33,7 @@ docker run --rm \
   -v $XAUTHORITY:/home/felix/.Xauthority:ro \
   -v /home/felix:/home/felix \
   --shm-size=2g --ipc=host --net=host \
-  feelpp/salome:9.8.0-ubuntu-20.04 salome
+  trophime/salome:9.9.0-focal salome
 ```
 It comes with a python package that can be used as a side by side scripting engine to generate the geometry. This makes life much easier
 

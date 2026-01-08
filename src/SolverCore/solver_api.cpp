@@ -8,6 +8,11 @@
 #include "cmdLineParser.h"
 #include "solver_api.h"
 
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <iomanip>
+#include <stdexcept>
 #include <omp.h>
 #include <filesystem>
 
@@ -271,4 +276,87 @@ SimulationResult load_results(const Config &cfg,
     result.success = true;
     result.error_message.clear();
     return result;
+}
+
+
+// Single Simulation with file path handling 
+
+std::string run_one(const Config &cfg,
+                           const std::vector<std::pair<std::string, std::string>> &active_params,
+                           std::size_t run_index) // 0-based
+{
+    std::filesystem::path model_path = cfg.mesh.path;
+    // Determine root save directory from Config
+    std::filesystem::path save_root(cfg.save_path);
+    std::error_code ec;
+
+    // Check save path is empty 
+    if (std::filesystem::exists(save_root)) {
+        bool empty = std::filesystem::is_empty(save_root, ec);
+        if (ec) {
+            throw std::runtime_error("Failed to check save_path directory: " + ec.message());
+        }
+        if (!empty) {
+            if (!cfg.delete_files_present) {
+                throw std::runtime_error(
+                    "Directory '" + save_root.string() + "' is not empty.");
+            } else {
+                // Delete all contents but not the directory itself
+                for (const auto& entry : std::filesystem::directory_iterator(save_root)) {
+                    std::filesystem::remove_all(entry.path(), ec);
+                    if (ec) {
+                        throw std::runtime_error(
+                            "Failed to delete '" + entry.path().string() +
+                            "': " + ec.message());
+                    }
+                }
+            }
+        }
+    }
+
+    // Ensure directory exists
+    std::filesystem::create_directories(save_root, ec);
+    if (ec)
+    {
+        std::cerr << "Warning: could not create save_root directory "
+                  << save_root << " : " << ec.message() << "\n";
+    }
+
+    // Per-run directory: run_0001, run_0002, ...
+    std::size_t display_index = run_index + 1;  // make it 1-based for naming
+    std::ostringstream run_name;
+    run_name << "run_" << std::setw(4) << std::setfill('0') << display_index;
+
+    std::filesystem::path run_dir = save_root / run_name.str();
+    std::filesystem::create_directories(run_dir, ec);
+    if (ec)
+    {
+        std::cerr << "Warning: could not create run directory "
+                  << run_dir << " : " << ec.message() << "\n";
+    }
+
+    // Copy config and override solver output paths so they land in run_dir
+    Config cfg_copy = cfg;
+
+    auto cfg_ptr = std::make_shared<Config>(cfg_copy);
+    if (!cfg.debug.dry_run)
+    {
+        SimulationResult result = run_simulation(cfg_ptr, model_path);
+        if (!result.success)
+        {
+            std::cerr << "Simulation failed for " << run_name.str()
+                      << ": " << result.error_message << "\n";
+            return {};  // signal failure to caller
+        }
+
+        save_results(result, save_root);
+    }
+
+    if (cfg.debug.debug){
+        std::cout << "[DEBUG] Boundary Condition values" << std::endl;
+        for (const auto& [name, b] : cfg_copy.boundaries) {
+            std::cout << name << ": " << b.value << '\n';
+        }
+    }
+    return run_name.str();
 }

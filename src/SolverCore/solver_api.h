@@ -3,6 +3,10 @@
 #include <memory>
 #include <filesystem>
 #include <string>
+#include <vector>
+#include <utility>
+#include <cstddef>
+
 
 #include "Config.h"
 #include "mfem.hpp"
@@ -31,3 +35,5 @@ SimulationResult run_simulation(
 void save_results(const SimulationResult &result, const std::filesystem::path &root_path);
 
 SimulationResult load_results(const Config &cfg, const std::filesystem::path &root_path);
+
+std::string run_one(const Config& cfg, const std::vector<std::pair<std::string, std::string>>& active_params, std::size_t run_index);

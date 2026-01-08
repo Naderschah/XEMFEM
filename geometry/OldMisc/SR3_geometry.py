@@ -5,6 +5,35 @@ from salome.shaper import geom
 import uuid
 """
 Direct transcription of the COMSOL matlab code 
+
+Tested only on 9.8.0:
+
+# Normal GPU 
+docker run --rm \
+  --user $(id -u):$(id -g) \
+  -e DISPLAY=$DISPLAY \
+  -e QT_X11_NO_MITSHM=1 \
+  -e XAUTHORITY=/home/felix/.Xauthority \
+  -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
+  -v $XAUTHORITY:/home/felix/.Xauthority:ro \
+  -v /home/felix:/home/felix \
+  --shm-size=2g --ipc=host --net=host \
+  feelpp/salome:9.8.0-ubuntu-20.04 salome
+
+# Nvidia GPU
+docker run --rm \
+  --user $(id -u):$(id -g) \
+  --device nvidia.com/gpu=all \
+  -e NVIDIA_VISIBLE_DEVICES=all \
+  -e NVIDIA_DRIVER_CAPABILITIES=all \
+  -e DISPLAY=$DISPLAY \
+  -e QT_X11_NO_MITSHM=1 \
+  -e XAUTHORITY=/home/felix/.Xauthority \
+  -v /tmp/.X11-unix:/tmp/.X11-unix:ro \
+  -v $XAUTHORITY:/home/felix/.Xauthority:ro \
+  -v /home/felix:/home/felix \
+  --shm-size=2g --ipc=host --net=host \
+  feelpp/salome:9.8.0-ubuntu-20.04 salome
 """
 
 MODELDO = True
@@ -912,12 +941,12 @@ def build_cathode(part_doc, p, makeface, Sketch=None):
     pts = [
       (x0,     y0),       # bottom-left
       (x0,     y0 + H),   # top-left (end og rect)
-      (p.CathodeRadialPosition + 0.0045, y0 + H),# to inner edge
-      (p.CathodeRadialPosition + 0.0045, y0 + H +0.003),# Up 
-      (p.CathodeRadialPosition + 0.0045 + 0.002, y0 + H +0.003),# To inner edge
-      (p.CathodeRadialPosition + 0.0045 + 0.002, y0 + H +0.003 +0.0018),# To upper left edge 
-      (p.CathodeRadialPosition + 0.0045 + 0.002 +0.013, y0 + H +0.003 +0.0018),# To right upper edge 
-      (p.CathodeRadialPosition + 0.0045 + 0.015, y0 + H),# To right inner edge 
+      (x0 + 0.0045, y0 + H),# to inner edge
+      (x0 + 0.0045, y0 + H +0.003),# Up 
+      (x0 + 0.0045 + 0.002, y0 + H +0.003),# To inner edge
+      (x0 + 0.0045 + 0.002, y0 + H +0.003 +0.0018),# To upper left edge 
+      (x0 + 0.0045 + 0.002 +0.013, y0 + H +0.003 +0.0018),# To right upper edge 
+      (x0 + 0.0045 + 0.015, y0 + H),# To right inner edge 
       (x0 + W, y0 + H),   # top-right (og rect)
       (x0 + W, y0),       # bottom-right
 
@@ -955,7 +984,6 @@ def build_cathode(part_doc, p, makeface, Sketch=None):
     for i in fillet_indices:
         vertex = lines[(i - 1) % n].endPoint()
         Sketch.setFilletWithRadius(vertex, 0.001)
-
 
     # Gate wires 
     for i in range(1, floor(p.CathodeRadialPosition/p.BottomStackWireSpacing)+1):
@@ -1575,7 +1603,7 @@ def build_top_pmts(part_doc, p, makeface, Sketch=None):
     R = QD / 2.0
 
     # For bottom: y_ref = (ReflectorZ - HoleDepth)*Shrinkage
-    # For top (hole above reflector), mirror with +HoleDepth (no shrink unless you have it):
+    # For top (hole above reflector), mirror with +HoleDepth:
     y_ref = p.TopPMTsArrayReflectorVerticalPosition + p.TopPMTsArrayReflectorPMTHoleDepth
 
     # bottom of quartz cylinder (inside hole)
@@ -3055,7 +3083,6 @@ if __name__ == '__main__':
     makeface = True
     debug = False
 
-    # Make the cryostat
     Cryostat = model.addPart(partSet)
     Cryostat_doc = Cryostat.document()
     p = GeometryParams()

@@ -1,10 +1,32 @@
 #pragma once
 
-#include <functional>
-#include <filesystem>
+// ===================================== Nelder Mead ==================================
+/* Uses Git YibaiMeng/nelder-mead header only library 
+Requires a function that takes const std::vector<T>& returning T 
+No built in bounds or constraints -> We need to handle these manually
+*/
 #include <vector>
 #include <string>
 #include <utility>
+#include <iostream>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <iomanip>
+#include <functional>
+#include <stdexcept>
+#include <limits>
+#include <cmath> 
+#include "mfem.hpp"
+
+#include "solver_api.h"
+#include "ComputeElectricField.h"
+#include "config_modification.h"
+#include "optimization.h"
+#include "trace_fieldlines.h"
+#include "field_spread.h"
+
+
 
 // Holds the optimization metrics
 struct OptimizationMetrics {

@@ -1,24 +1,258 @@
-## ELectrostatics with MFEM
-
-Compile solver: 
-
-cmake /path/to/src && make 
-
-Run solver 
-
-TPC --config /path/to/config.yaml --mesh /path/to/mesh
+# ELectrostatics with MFEM
 
 Generate Geometry:
 
+run Salome docker image (see ./geometry), generate mesh, run the postprocessor, configure the yaml. 
+
+Compile solver: 
+```bash
+mkdir build
+cd build
+cmake ../src && make 
+```
+Run solver 
+```bash
+./SWEEP --config /path/to/config.yaml
+```
+
+## Simulation configuration
+
+The configuration is written as a yaml file. 
+
+Not all options are used by all portions of the code, some options are meshing specific. Most are MFEM solver specific. 
+
+An overview of the currently supported options is given below
+```yaml
+# Has no use here yet 
+schema_version: 1
+# Name used in metadata for simulations only 
+geometry_id: SomeName 
+
+mesh:
+  # No need to modify this the mesh postprocessor writes the correct path
+  path: "/home/felix/work/geometry/mesh/mesh22.msh"
+  # Which geometry to generate in meshing, currently only SR3 is supported
+  geometry: "SR3"
+  # Wheter or not to autoappend the generated boundaries and attributes to the currently used config file
+  autoappend: "True"
+
+# Where Simulation results should be saved
+save_path: "/home/felix/work/sim_results"
+# Wheter to overwrite existing files (trashes the directory if true) - meta file is always overwritten
+delete_files_present: true 
+
+# Debug Settings
+debug:
+  # TODO: Make exhaustive list of what this does
+  debug: false
+  # TODO: Make exhaustive list of what this does
+  dry_run: false
+  # Print boundary conditions as loaded in MFEM simulation
+  printBoundaryConditions: false
+  # Wheter or not to print hypre warnings (there is always 1+ as Hypre misinterprets some solver internals)
+  printHypreWarnings: false
+  # TODO: Exhaustive list
+  dumpdata: false
+  # TODO: Exhaustive list 
+  debug_single_seed: false
+
+# Compute Settings
+compute:
+  # Multi processing Interface
+  # Used for multimachine computation 
+  # TODO Currently untested -> Config will need extending for this - might also be needed for multi cpu devices
+  mpi: 
+    enabled: false 
+    ranks: auto 
+    repartition_after_refine: true
+  # Multithreading
+  threads:
+    enabled: true
+    # Automatically assign number of threads based on what OpenMP sees as thread number for CPU 
+    num: -1 
+    # scatter or compact, how memory is to be managed between threads 
+    affinity: scatter
+  
+  # Currently not respected
+  # Will be once GPU and MPI is figured out 
+  device: 
+    type: none
+    id: auto 
+    per_rank: 1
+
+# Sweep configuration 
+# Sweeps performed if sweeps is non empty
+# Represented as list of items to sweep over 
+sweeps:
+    # Some Name for the sweep 
+  - name: "AnodeSweep"
+    # Path inside the YAML from root (anything can be sweeped)
+    path: "boundaries.BC_Anode.value" 
+    # Specify a range sweep
+    kind: "range"
+    # Starting at 
+    start: 1900.0
+    # Ending At 
+    end:   4900.0
+    # in number steps 
+    steps: 4
+  # Or a discrete Sweep 
+  - name: "order_sweep"
+    path: "solver.order"
+    kind: "discrete"
+    values: [1, 2, 3]
+
+# Optimization Configuration (minimize some metric relative to some parameters)
+# Uses Nelder-Mead
+optimize:
+  enabled: false
+  # TODO What does this do again
+  metrics_only: false
+  # Wheter to print per optimization results
+  print_restults: true
+  # Objective function
+  # Available are: TODO 
+  objective: "self_weighting"
+  # Number of evaluations per iteration
+  max_evals: 1
+  # Number of iterations 
+  max_iters: 1
+  # TODO: What is this again 
+  rel_tol_f: 1.0e-3
+  # TODO: What is this again 
+  rel_tol_x: 1.0e-3
+  # TODO: What is this again 
+  adaptive: true 
+
+  # TPC dimension definition (parts of the detector we care about)
+  r_min: 0.0         
+  r_max: 0.664       # PanelRadialPosition
+  z_min: -1.5025     # CathodeVerticalPosition + CathodeWireDiameter
+  z_max: 0.004
+
+  # Electron Tracing Configuration (Charge Insensitive Volume)
+  # TODO Update with good parameters 
+  # TODO Add proper docs
+  trace_params:
+    # TODO Handle that this changes the final CIV 
+    tracing_z_max: -0.75 # Reduce RK4 integration time, works if we assume no dead volume above this point (tracing at electrodes is much more expensive)
+    # The following three parameters determine the integration timestep relative to the average mesh element height
+    max_steps: 1000000  # Maximum Integration Steps
+    c_cfl: 0.25        # Courant–Friedrichs–Lewy condition for timestep computation - used if with the computed timestep the simulation domain can be traversed at least 1.5 times
+    geom_tol: 1e-4     # Boundary check tolerance
+    ir_order: 1        # Integration Rule Order (1 = quadrature -> 1 point per Triangle)
+    c_step: 0.5
+    num_seed_elements: 512
+
+  # TODO Implement - whats the status on this
+  fieldSpread_params:
+    TopBottomDist: 0.14 
+    BottomPercentile: 0.5
+    UpperPercentile: 0.95 
+
+  # Variables to optimize against
+  # represented as a list,
+  # TODO Is discrete supported?
+  variables:
+    - name: "BottomScreenVoltage"
+      path: "boundaries.BC_BottomScreen.value"
+      kind: "continuous"
+      lower: -3000.0
+      upper: 3000.0
+      initial: 0.0
+
+# Electrostatics Solver Configuration 
+solver:
+  # Run axisymmetric Simulation
+  axisymmetric: true
+  # Solution order
+  order: 3
+  # TODO  https://mfem.org/howto/assembly_levels/
+  assembly_mode: partial              # full | partial | matrix_free
+  # Solution absolute tolerance
+  atol: 1e-50 #1e-25
+  # Solution relative tolerance
+  rtol: 0.0
+  # Maximum number of iterations 
+  maxiter: 100000
+  # Should the solver print the status on each step (a lot of text)
+  printlevel: 0
+  # Names to save mesh and solutions under
+  # TODO Is this still respected?
+  mesh_save_path: "simulation_mesh.msh"
+  V_solution_path:  "solution_V.gf"
+  Emag_solution_path: "solution_Emag.gf"
+
+# Plotting Options
+# TODO Whats the status on this
+plotting:
+  show_mesh: false
+  mesh_edge_width: 0.1
+  img_width: 2160
+  img_height: 3840
 
 
-### Simulation configuration
+# Rest is autogenerated by mesh postprocessor
+# Volumes
+materials:
+  # Some Name 
+  GXe:
+    # Internal attribute ID (inside the GMSH file)
+    attr_id: 1
+    # Relative permativity
+    epsilon_r: 1.0
+  # And so on
+# Equipotential Surfaces
+boundaries:
+  # Some Name 
+  BC_AllPMTs:
+    # Internal boundary ID (inside the GMSH file)
+    bdr_id: 4
+    # Type of boundary condition (we only need dirichlet - TODO Is anything else currently supported?)
+    type: dirichlet
+    # At Voltage
+    value: -1300
+  # And So on 
+  
+# Voltages can also be autocomputed as a funcion of others
+# Used only for field cage (as the name implies)
+fieldcage_network:
+  enabled: true
+  # Equipotentials on the circuit 
+  nodes:
+    # List of 
+    - name: "BC_FieldShapingRings0"
+      # What boundary it corresponds to (same name as above)
+      boundary: "BC_FieldShapingRings0"
+      # If it is a fixed point 
+      fixed: true
+    - name: "BC_FieldShapingRings1"
+      boundary: "BC_FieldShapingRings1"
+      fixed: false
+    # And so on 
+  # Resistor Values in the network 
+  resistors:
+    R1: 1250000000.0
+    R2: 2500000000.0
+    R3: 5000000000.0
+    R_C: 7000000000.0
+  # How nodes are connected, list again 
+  edges:
+      # What is in between two nodes 
+      # N1 - [R] - N2 
+    - n1: "BC_FieldShapingRings0"
+      n2: "BC_FieldShapingRings1"
+      R: "R1"
+    - n1: "BC_FieldShapingRings1"
+      n2: "BC_FieldShapingRings2"
+      R: "R1"
 
+```
 
 
 ## Software Stack
 
-
+#### Electrostatics 
 MFEM: 
 - Version 4.8.0 
 - Highest currently available
@@ -29,38 +263,70 @@ Hypre:
 - Previous versions 
   - tried with 2.32.0 : HypreBoomer AMG reports 1 OpenMP thread regardless of set number. Either checks in a funny way, or bugged  
 
-cuda_toolkit:
-- Not yet implemented, will be required for GPU (cuda)
-- Versions unknown 
+TODO: GPU 
 
+
+#### Meshing 
+
+SALOME:
+- Version 9.9.0
+- Anything above this version should work, one version down does not due to a function used in tagging
+
+TODO: Script should be available headless, and the two containers merged to make it possible to mesh and simulate in one shot 
 
 
 # TODO
 
-## Geometry and config files 
+## Geometry 
 
-Need to think about how ot easily supply configs and source dirs
+Implement SR2 Geometry
 
-Need to implement neumann Robin and periodic boundary conditions 
+Allow Headless running, and run postprocess directly
 
-Should think about axisymmetric
+Merge docker containers
 
-Also really need to fix Electric Field 
+Netgen settngs inside config.yaml
 
-
-## General
+## MFEM
 
 use pragma stop with ifndef 
 
-Wall boundary conditions 
-
 Also implement misc boundary conditions
+
+GPU implementation & MPI testing (fairly certain wont work at the moment)
 
 Need to fix indentation 
 
-Gotta stop doing auto - I dont think this one will happen 
+Cut down on the structs 
+
+Generalized Path Handler 
+
+Merge Plotting and Simulation (or did i do this already)
+
+Add interpolated export
+
+### Config File
+Stubs to clean up:
+- optimize.metrics_only : No longer used (once sweep executable gone)
+
+### Optimization
+
+CIV - Find good hyperparameters 
+
+CIV Compare to electric field direction as proxy 
+
+Implement difference of parameters as fixed
 
 
-Geometry 
-- Need a few generic functions for fragment and return objects in some reasonable way 
-- Need a function for select boundary and return 
+
+
+Field Optimization Strategy:
+
+Two sets of metrics:
+- One for Drift 
+- One for Extraction 
+
+Optimize Both seperately for some fixed parameters relative to themselves, and then check the superposition, then vary a little and see if this is indeed the best config for the combined
+
+
+First steps figure out CIV - add injection point where simulation results exist and we simply compute 
