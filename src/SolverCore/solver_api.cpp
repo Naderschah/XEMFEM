@@ -48,7 +48,6 @@ SimulationResult run_simulation(std::shared_ptr<Config> cfg,
   Array<int> dirichlet_arr = GetDirichletAttributes(mesh.get(), cfg);
   // FIXME: For Neumann and Robin and axisymmetric we still need to supply boundary markers
 
-
   // 4. Solve Poisson
   auto V = SolvePoisson(*pfes, dirichlet_arr, cfg);
 
@@ -90,48 +89,58 @@ SimulationResult run_simulation(std::shared_ptr<Config> cfg,
 
 void save_results(const SimulationResult &result, const std::filesystem::path &root_path)
 {
-  // TODO Make some config entry for which to save
+    // --- Create directory structure ---
+    std::error_code ec;
+    std::filesystem::create_directories(root_path, ec);
+    if (ec) {
+        std::cerr << "Warning: could not create output directory "
+                  << root_path << " : " << ec.message() << "\n";
+    }
 
-  {
-  // Save E field components 
-  std::filesystem::path EComponentPath = root_path / "E";
-  SaveEComponents(*result.E, EComponentPath.string());  // E_ex.gf, E_ey.gf, ...
-  std::ofstream ofs(root_path / "Emag.gf");
-  if (!ofs) {
-      std::cerr << "Warning: could not open Emag.gf in " << root_path << "\n";
-  } else {
-      result.Emag->Save(ofs);
-  }
-  // Save V and mesh 
-  std::filesystem::path mesh_path = root_path / "simulation_mesh.msh";
-  result.mesh->Save(mesh_path.c_str());
-  std::filesystem::path V_path = root_path / "V.gf";
-  result.V->Save(V_path.c_str());
-  }
+    // --- Save E field TODO Add flag in config ---
+    {
+        std::filesystem::path EComponentPath = root_path / "E";
+        SaveEComponents(*result.E, EComponentPath.string());  // E_ex.gf, E_ey.gf, ...
 
-  {
-  // ---------- ParaView output ----------
-  // Collection name appears in the .pvd file
-  std::string collection_name = "Simulation";
-  auto *pvdc = new ParaViewDataCollection(collection_name, result.mesh.get());
+        std::ofstream ofs(root_path / "Emag.gf");
+        if (!ofs) {
+            std::cerr << "Warning: could not open Emag.gf in " << root_path << "\n";
+        } else {
+            result.Emag->Save(ofs);
+        }
+    }
 
-  // Write under root_path (directory will be created if needed)
-  pvdc->SetPrefixPath(root_path.string());
+    // --- Save mesh + V as serial outputs ---
+    std::filesystem::path mesh_path = root_path / "simulation_mesh.msh";
+    std::ofstream mesh_out(mesh_path);
+    if (!mesh_out) {
+        std::cerr << "Warning: could not open mesh file " << mesh_path << "\n";
+    } else {
+        result.mesh->PrintAsSerial(mesh_out);
+    }
+    std::filesystem::path V_path = root_path / "V.gf";
+    result.V->SaveAsSerial(V_path.c_str(), /*precision=*/16, /*save_rank=*/0);
 
-  // Register fields (they can be H1, L2, etc., as long as they live on result.mesh)
-  pvdc->RegisterField("V", result.V.get());       // H1 scalar
-  pvdc->RegisterField("E", result.E.get());       // L2 vector (components in the GF)
-  pvdc->RegisterField("Emag", result.Emag.get()); // scalar magnitude
+    // ---------- ParaView output ----------
+    // Collection name appears in the .pvd file
+    std::string collection_name = "Simulation";
+    auto *pvdc = new ParaViewDataCollection(collection_name, result.mesh.get());
 
-  // Optional: control output quality
-  int order = result.V->FESpace()->GetOrder(0);
-  pvdc->SetLevelsOfDetail(order);
-  pvdc->SetDataFormat(VTKFormat::BINARY);
-  pvdc->SetHighOrderOutput(true);
+    // Write under root_path (directory will be created if needed)
+    pvdc->SetPrefixPath(root_path.string());
 
-  pvdc->Save();
-  }
+    // Register fields (they can be H1, L2, etc., as long as they live on result.mesh)
+    pvdc->RegisterField("V", result.V.get());       // H1 scalar
+    pvdc->RegisterField("E", result.E.get());       // L2 vector (components in the GF)
+    pvdc->RegisterField("Emag", result.Emag.get()); // scalar magnitude
 
+    // Optional: control output quality
+    int order = result.V->FESpace()->GetOrder(0);
+    pvdc->SetLevelsOfDetail(order);
+    pvdc->SetDataFormat(VTKFormat::BINARY);
+    pvdc->SetHighOrderOutput(true);
+
+    pvdc->Save();
 }
 namespace
 {
@@ -161,116 +170,79 @@ SimulationResult load_results(const Config &cfg,
                               const std::filesystem::path &root_path)
 {
     using namespace mfem;
-    std::cerr << "[LOAD RESULT] This will error later something about the way we create the mesh TODO Fix\n";
 
     SimulationResult result;
     result.success = false;
-    result.error_message.clear();
 
-    std::error_code ec;
-    if (!std::filesystem::exists(root_path, ec)) {
-        result.error_message =
-            "load_results: directory does not exist: " + root_path.string();
-        std::cerr << result.error_message << "\n";
-        return result;
-    }
+    // --- Explicit filenames (no prefix search) ---
+    const auto mesh_path = root_path / "simulation_mesh.msh";
+    const auto V_path    = root_path / "V.gf";
 
-    // ----------------- 1) Load serial mesh -----------------
-    auto mesh_file = find_first_with_prefix(root_path, "simulation_mesh.msh");
-    if (!mesh_file) {
-        result.error_message =
-            "load_results: mesh file with prefix 'simulation_mesh.msh' "
-            "not found in " + root_path.string();
-        std::cerr << result.error_message << "\n";
-        return result;
-    }
-
-    std::ifstream mesh_in(*mesh_file);
-    if (!mesh_in) {
-        result.error_message =
-            "load_results: cannot open mesh file: " + mesh_file->string();
-        std::cerr << result.error_message << "\n";
-        return result;
-    }
-
-    Mesh serial_mesh;
-    try {
-        serial_mesh.Load(mesh_in, 1, 1);
-    } catch (const std::exception &e) {
-        result.error_message =
-            std::string("load_results: failed to load serial Mesh: ") + e.what();
-        std::cerr << result.error_message << "\n";
-        return result;
-    }
-
-    // ----------------- 2) Build ParMesh from serial Mesh -----------------
-    try {
-        result.mesh = std::make_unique<ParMesh>(MPI_COMM_WORLD, serial_mesh);
-    } catch (const std::exception &e) {
-        result.error_message =
-            std::string("load_results: failed to build ParMesh: ") + e.what();
-        std::cerr << result.error_message << "\n";
-        return result;
-    }
-
-    const int dim = result.mesh->Dimension();
-
-    // ----------------- 3) Rebuild H1 FE space for V -----------------
-    // Use the same order you used in the original run.
-    const int order_h1 = cfg.solver.order;  // adjust field name if different
-
-    auto fec_h1  = std::make_unique<H1_FECollection>(order_h1, dim);
-    auto pfes_h1 = std::make_unique<ParFiniteElementSpace>(
-        result.mesh.get(), fec_h1.get(), /*vdim=*/1);
-
-    // ----------------- 4) Load V.gf into ParGridFunction -----------------
-    auto V_file = find_first_with_prefix(root_path, "V.gf");
-    if (!V_file) {
-        result.error_message =
-            "load_results: file with prefix 'V.gf' not found in " +
-            root_path.string();
-        std::cerr << result.error_message << "\n";
-        return result;
-    }
-
+    if (!std::filesystem::exists(mesh_path))
     {
-        std::ifstream in(*V_file);
-        if (!in) {
-            result.error_message =
-                "load_results: cannot open V.gf file: " + V_file->string();
-            std::cerr << result.error_message << "\n";
+        result.error_message = "load_results: missing " + mesh_path.string();
+        return result;
+    }
+    if (!std::filesystem::exists(V_path))
+    {
+        result.error_message = "load_results: missing " + V_path.string();
+        return result;
+    }
+
+    // --- 1) Load SERIAL mesh ---
+    Mesh serial_mesh;
+    {
+        std::ifstream mesh_in(mesh_path);
+        if (!mesh_in)
+        {
+            result.error_message = "load_results: cannot open " + mesh_path.string();
             return result;
         }
-
-        auto V = std::make_unique<ParGridFunction>(pfes_h1.get());
-        V->Load(in);
-        result.V = std::move(V);
+        serial_mesh.Load(mesh_in, /*generate_edges=*/1, /*refine=*/1);
     }
 
-    // store FE data if SimulationResult has these members
-    result.fec  = std::move(fec_h1);
-    result.pfes = std::move(pfes_h1);
+    // --- 2) Build SERIAL space + load SERIAL V ---
+    auto fec_h1_s  = std::make_unique<H1_FECollection>(cfg.solver.order, serial_mesh.Dimension());
+    auto fes_h1_s  = std::make_unique<FiniteElementSpace>(&serial_mesh, fec_h1_s.get(), 1);
 
-    // ----------------- 5) Rebuild E and Emag via ElectricFieldPostprocessor ----
-    try {
-        // ElectricFieldPostprocessor takes a FiniteElementSpace&, and
-        // ParFiniteElementSpace derives from FiniteElementSpace.
+    std::unique_ptr<mfem::GridFunction> V_s;
+    std::ifstream vin(V_path);
+    if (!vin)
+    {
+        result.error_message = "load_results: cannot open " + V_path.string();
+        return result;
+    }
+    V_s = std::make_unique<mfem::GridFunction>(&serial_mesh, vin);
+
+    // --- 3) Convert to PAR objects required by SimulationResult ---
+    result.mesh = std::make_unique<ParMesh>(MPI_COMM_WORLD, serial_mesh);
+
+    const int dim = result.mesh->Dimension();
+    result.fec  = std::make_unique<H1_FECollection>(cfg.solver.order, dim);
+    result.pfes = std::make_unique<ParFiniteElementSpace>(result.mesh.get(), result.fec.get(), 1);
+
+    result.V = std::make_unique<ParGridFunction>(result.pfes.get());
+    {
+        GridFunctionCoefficient Vcoeff(V_s.get());
+        result.V->ProjectCoefficient(Vcoeff);
+    }
+
+    // --- 4) Rebuild E/Emag from components as you already do ---
+    try
+    {
         ElectricFieldPostprocessor efpp(*result.pfes);
-
-        // E: vector L2 field reconstructed from saved components
-        auto E = efpp.MakeE();  // std::unique_ptr<mfem::GridFunction>
-        std::string prefix = (root_path / "E").string(); // same as SaveComponents prefix
-        efpp.LoadE(*E, prefix);
+        auto E = efpp.MakeE();
+        efpp.LoadE(*E, (root_path / "E").string());
         result.E = std::move(E);
 
-        // Emag: recompute from E
-        auto Emag = efpp.MakeEmag();  // std::unique_ptr<mfem::GridFunction>
+        auto Emag = efpp.MakeEmag();
         efpp.ComputeFieldMagnitude(*result.E, *Emag);
         result.Emag = std::move(Emag);
-    } catch (const std::exception &e) {
-        std::cerr << "load_results: failed to reconstruct E/Emag from components: "
-                  << e.what() << "\n";
-        // leave E / Emag null; V + mesh are still valid
+    }
+    catch (const std::exception &e)
+    {
+        // leave E/Emag null; V + mesh valid
+        std::cerr << "load_results: failed to reconstruct E/Emag: " << e.what() << "\n";
     }
 
     result.success = true;
@@ -352,7 +324,7 @@ std::string run_one(const Config &cfg,
         save_results(result, save_root);
     }
 
-    if (cfg.debug.debug){
+    if (cfg.debug.printBoundaryConditions){
         std::cout << "[DEBUG] Boundary Condition values" << std::endl;
         for (const auto& [name, b] : cfg_copy.boundaries) {
             std::cout << name << ": " << b.value << '\n';

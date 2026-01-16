@@ -57,6 +57,7 @@ struct DebugSettings
     bool dry_run                 = false; // TODO Remove? 
     bool printBoundaryConditions = true;
     bool printHypreWarnings      = true;
+    // TOOD SkipMPI - might get involved
 
     // Dump data to file where applicable
     bool dumpdata              = false;
@@ -146,6 +147,22 @@ struct OptimizationSettings {
     double tol_x          = 1e-3;
     bool   adaptive       = true;
 };
+
+struct CIVSettings {
+    std::string method = "ColumnSweep";
+    // Random Sample config
+    int num_seed_elements = 512;
+    // Column Sweep Config
+    int n_slices = 24; 
+    // Wheter to save the boundary line of the CIV
+    bool dump_civ_boundary = false;
+    double min_col_pos = 0.1;
+    // Integration order
+    int    ir_order       = 1;
+    // Random Sampling seed - Expose?
+    int    rng_seed       = 67; 
+};
+
 // -------------------- Compute / Runtime Settings ----------------------------
 struct SolverSettings {
     // MFEM / solve controls
@@ -161,43 +178,37 @@ struct SolverSettings {
 // Field Line tracing parameters 
 struct ElectronTraceParams
 {
-    // Select CIV tracing method 
-    std::string method = "ColumnSweep"; // Or RandomSample or currently not working InformedSweep
-    // Maximum number of accepted steps per electron
-    int    max_steps      = 200;
+    // Which propagation method to use
+    // Euler-Cauchy, RK23, RK45
+    std::string method    = "RK34";
+    // The step size = c_step * hk, where hk is the shortest vertex to vertex distance inside the current mesh element 
+    double c_step         = 0.25;
+    // Step allowed if error_metric / hK  < tol_rel
+    double tol_rel        = 1e-3;
+    // these * hk produce the smallest and maximal step sizes 
+    double c_min_factor  = 0.01;
+    double c_max_factor  = 1.5; 
+    // Adaptive step resizing, factor by which estimate drops/grows
+    double adapt_grow     = 1.5; 
+    double adapt_shrink   = 0.25;
     // Tolerance for r,z boundary checks (axis clamp, z-range, etc.)
     double geom_tol       = 1e-12;
-    // Order for integration rules used when seeding CIV / volume weights
-    int    ir_order       = 1;
-    // Field-line step control (first-order drift integrator)
-    // Base fraction of local element size used as nominal step:
-    //   ds_nominal = c_step * hK
-    double c_step         = 0.25;
-    // Adaptive bounds (for error control):
-    //   ds_min = ds_min_factor * hK; ds_max = ds_max_factor * hK
-    double ds_min_factor  = 0.001;  // small steps near strong curvature
-    double ds_max_factor  = 0.30;  // do not exceed frac of hK 
-    // Error-control parameters for embedded RK
-    double adapt_grow     = 1.5;   // max step growth per acceptance
-    double adapt_shrink   = 0.25;   // min shrink factor on rejection
-    double tol_rel        = 1e-3;  // relative position error tolerance
-    // tracing maximum
-    double tracing_z_max = 0.004;
+    // Maximum integration steps not counting retries due to too high error
+    int    max_steps      = 200;
+
+    // ---- Not Exposed
     // If true, treat r <= geom_tol as an exit condition 
     bool   terminate_on_axis = true;
-    int    num_seed_elements = 0;  // <= 0 means "use all elements"
-    int    rng_seed = 67;       // We always want the same one - Currently not exposed
-
-    // Parameters specific to informed sweep
-    bool dump_civ_boundary = true;
-
-    // TODO This should not be here 
-    // It is only kept as i need to clean up CIV Tracing
+    // Overwritten by what is given in optimization
     double r_min          = 0.0;
     double r_max          = 0.664;
     double z_min          = -1.5028;
     double z_max          = 0.004;
+    // TODO : To be Removed
+    double tracing_z_max = 0.004;
 };
+
+
 
 // ------------------------- Actual Config Struct -------------------------------
 struct Config {
@@ -224,8 +235,11 @@ struct Config {
     // Configuration to solve circuits
     FieldCageNetworkSettings fieldcage_network;
 
-    // TODO Not yet configuable (edit .cpp file)
+    // Tracing Parameters
     ElectronTraceParams tracing_params;
+
+    // CIV Computation parameters
+    CIVSettings civ_params;
 
     // Load from path
     static Config Load(const std::string& path);

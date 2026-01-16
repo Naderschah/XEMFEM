@@ -111,7 +111,7 @@ optimize:
   # Wheter to print per optimization results
   print_restults: true
   # Objective function
-  # Available are: TODO 
+  # Available are: FieldSpread, CIV, self_weighting
   objective: "self_weighting"
   # Number of evaluations per iteration
   max_evals: 1
@@ -134,15 +134,38 @@ optimize:
   # TODO Update with good parameters 
   # TODO Add proper docs
   trace_params:
-    # TODO Handle that this changes the final CIV 
-    tracing_z_max: -0.75 # Reduce RK4 integration time, works if we assume no dead volume above this point (tracing at electrodes is much more expensive)
-    # The following three parameters determine the integration timestep relative to the average mesh element height
-    max_steps: 1000000  # Maximum Integration Steps
-    c_cfl: 0.25        # Courant–Friedrichs–Lewy condition for timestep computation - used if with the computed timestep the simulation domain can be traversed at least 1.5 times
-    geom_tol: 1e-4     # Boundary check tolerance
-    ir_order: 1        # Integration Rule Order (1 = quadrature -> 1 point per Triangle)
-    c_step: 0.5
+    # Which propagation method to use
+    # Euler-Cauchy, RK23, RK45
+    method: "RK45"
+    # The step size = c_step * hk, where hk is the shortest vertex to vertex distance inside the current mesh element 
+    c_step: 0.25
+    # these * hk produce the smallest and maximal step sizes 
+    ds_min_factor: 0.05
+    ds_max_factor: 2 
+    # Step allowed if error_metric / hK  < tol_rel
+    tol_rel: 0.1
+    # Adaptive step resizing, factor by which estimate drops/grows
+    adapt_shrink: 0.7
+    adapt_grow: 1.2
+    # Boundary check tolerance 
+    geom_tol: 1e-5
+    # Maximum integration steps not counting retries due to too high error
+    max_steps: 1000000
+
+  civ_params:
+    # CIV method: RandomSample, ColumnSweep, InformedSweep
+    method: "RandomSample" 
+    # Samples to use for method RandomSample
     num_seed_elements: 512
+    # Slices to take for ColumnSweep
+    n_slices: 24
+    # Wheter the defined boundary line is to be written to file or not
+    dump_civ_boundary: false    
+    # Informed Sweep: For initial column search define an extra point at the 
+    # bottom min_col_pos away from the bottom, if all tested elements are charge 
+    # sensitive the procedure terminates concluding there is no CIV (ie = 0)
+    min_col_pos: 0.001
+
 
   # TODO Implement - whats the status on this
   fieldSpread_params:
@@ -248,7 +271,11 @@ fieldcage_network:
       R: "R1"
 
 ```
+## Results Inspection
 
+Plots can be made with the plot subcommand, point to the config file and everything will be plotted. 
+
+Alternatively, the pvdu file found under Simulation in the results path can be opened in paraview (has a huge amount of viewing and postprocessing options) for inspection, open it from the terminal. Or in glvis using `glvis -m simulation_mesh.msh -g V.gf -k "AmaagcmRj"` which views the internally used file directly. 
 
 ## Software Stack
 
@@ -311,6 +338,8 @@ Stubs to clean up:
 
 ### Optimization
 
+Clean up dispatch logic 
+
 CIV - Find good hyperparameters 
 
 CIV Compare to electric field direction as proxy 
@@ -330,3 +359,22 @@ Optimize Both seperately for some fixed parameters relative to themselves, and t
 
 
 First steps figure out CIV - add injection point where simulation results exist and we simply compute 
+
+
+#### Tracing
+
+There are a number of functions that may be able to be merged/seperated or may be the same thing
+
+FindElementForPointLocal
+FindElementForPointGlobal
+FindElementForPointRobust
+TraceSingleCIProbe
+
+Also all old methods should be updated and the code between them should be more shared
+
+
+The informed sweep method should work but the initial column sweep fails due to some 
+charge insensitive elements close to the wall -> For now addding wall surface charge
+to eliminate this behavior to determine operating conditions
+
+Once this is done I should investigate this and find a more suitable method.

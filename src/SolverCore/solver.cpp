@@ -100,26 +100,29 @@ std::unique_ptr<mfem::ParGridFunction> SolvePoisson(ParFiniteElementSpace &pfes,
   using namespace mfem;
 
   if (cfg->debug.debug) {std::cout << "[DEBUG] In Poisson Solver" << std::endl;}
+  MPI_Comm comm = pfes.GetParMesh()->GetComm();
 
   const std::filesystem::path directory(cfg->save_path);
   const std::filesystem::path log_path = directory / "solver.log";
 
   const Mesh &mesh = *pfes.GetMesh();
+
   PWConstCoefficient epsilon_pw = BuildEpsilonPWConst(mesh, cfg);
-  // TODO add check that epsilon and dirichlet are full and buitl 
-  // common handles (filled inside the single if/else)
+  auto w = MakeAxisymWeightCoeff(cfg->solver.axisymmetric, 0);
+  mfem::ProductCoefficient weps(*w, epsilon_pw);
+  
+  // TODO Are teh comments still relevant?
   std::unique_ptr<ParGridFunction> V;     // GridFunction or ParGridFunction
-  std::unique_ptr<ParBilinearForm> a;        // BilinearForm or ParBilinearForm
-  std::unique_ptr<ParLinearForm>   b;        // LinearForm   or ParLinearForm
-  OperatorHandle                A;        // SparseMatrix or HypreParMatrix
+  std::unique_ptr<ParBilinearForm> a;     // BilinearForm or ParBilinearForm
+  std::unique_ptr<ParLinearForm>   b;     // LinearForm   or ParLinearForm
+  OperatorHandle                   A;     // SparseMatrix or HypreParMatrix
   Vector                        X, B;     // works for both
   std::function<std::unique_ptr<Solver>(OperatorHandle&)> make_prec;
 
   V = std::make_unique<ParGridFunction>(&pfes);
   a = std::make_unique<ParBilinearForm>(&pfes);
   b = std::make_unique<ParLinearForm>(&pfes);
-
-  MPI_Comm comm = pfes.GetParMesh()->GetComm();
+  *V = 0.0;
 
   // build the proper preconditioner later, after A exists
   make_prec = [=](OperatorHandle &Ah) -> std::unique_ptr<Solver>
@@ -139,17 +142,15 @@ std::unique_ptr<mfem::ParGridFunction> SolvePoisson(ParFiniteElementSpace &pfes,
     return prec;
   };
 
-  *V = 0.0;
   ApplyDirichletValues(*V, dirichlet_attr, cfg);
 
-  auto w = MakeAxisymWeightCoeff(cfg->solver.axisymmetric, 0);
-  mfem::ProductCoefficient weps(*w, epsilon_pw);
   a->AddDomainIntegrator(new DiffusionIntegrator(weps));
   a->Assemble();                
 
   b->Assemble();
 
   Array<int> ess_tdof;
+
   pfes.GetEssentialTrueDofs(dirichlet_attr, ess_tdof);
 
   a->FormLinearSystem(ess_tdof, *V, *b, A, X, B);  

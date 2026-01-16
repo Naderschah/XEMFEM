@@ -40,8 +40,6 @@ static bool InROI(const mfem::Vector &x, const Config &cfg)
             z <= cfg.optimize.z_max);
 }
 
-
-
 // Compute spread metric = (Q95 - Q5) / mean(|E|) in ROI
 double computeFieldSpreadMetric(const Config &cfg,
                                 const SimulationResult &result)
@@ -152,6 +150,34 @@ double computeFieldSpreadMetric(const Config &cfg,
     }
 
     const double spread = (Q95 - Q5) / mean_E;
+    
+    // Check its finite 
+    if (!std::isfinite(spread))
+    {
+        double minE = std::numeric_limits<double>::infinity();
+        double maxE = -std::numeric_limits<double>::infinity();
+
+        for (double v : e_vals)
+        {
+            if (std::isfinite(v))
+            {
+                minE = std::min(minE, v);
+                maxE = std::max(maxE, v);
+            }
+        }
+
+        std::cout
+            << "[FieldSpread NaN/Inf]\n"
+            << "  spread   = " << spread << "\n"
+            << "  Q5       = " << Q5 << "\n"
+            << "  Q95      = " << Q95 << "\n"
+            << "  mean_E   = " << mean_E << "\n"
+            << "  total_w  = " << total_w << "\n"
+            << "  samples  = " << e_vals.size() << "\n"
+            << "  min|E|   = " << minE << "\n"
+            << "  max|E|   = " << maxE << "\n"
+            << std::endl;
+    }
 
     if (cfg.debug.debug) {std::cout << "Field Spread " << spread << std::endl;}
     return spread;

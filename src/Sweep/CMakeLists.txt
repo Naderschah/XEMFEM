@@ -52,6 +52,7 @@ add_library(sweep_objects OBJECT
   trace_fieldlines.cpp
   field_spread.cpp
   sweeps.cpp
+  CIV.cpp
 )
 
 target_include_directories(sweep_objects PRIVATE
@@ -68,11 +69,10 @@ target_link_libraries(sweep_objects PRIVATE
 # ---------------------------------------------------------
 # --- Legacy Sweep executable (still works) ----------------
 # ---------------------------------------------------------
-add_executable(SWEEP
-  main.cpp
-)
-
-target_link_libraries(SWEEP PRIVATE
-  sweep_objects
-  SolverCore
-)
+#add_executable(SWEEP
+#  main.cpp
+#)
+#target_link_libraries(SWEEP PRIVATE
+#  sweep_objects
+#  SolverCore
+#)

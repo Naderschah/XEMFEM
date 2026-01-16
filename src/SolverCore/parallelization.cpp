@@ -15,7 +15,7 @@ namespace parallel
     static mfem::MPI_Session *g_mpi_session = nullptr;
     static mfem::Device      *g_device      = nullptr;
 
-    void init_environment(const Config &cfg,
+    void init_environment(Config &cfg,
                           int &argc, char **&argv)
     {
         if (g_initialized)
@@ -41,6 +41,7 @@ namespace parallel
             if (cfg.compute.threads.num_auto || cfg.compute.threads.num <= 0)
             {
                 num_threads = omp_get_max_threads();
+                cfg.compute.threads.num = num_threads;
             }
             else
             {
@@ -49,9 +50,7 @@ namespace parallel
 
             // Set num threads via OpenMP
             omp_set_num_threads(num_threads);
-            std::cout << "[OpenMP] Thread Count: " << num_threads << std::endl;
             // Sidenote HYPREs: hypre_SetNumThreads  calls  omp_set_num_threads
-
 
             if (cfg.compute.threads.affinity == "compact") {
                 setenv("OMP_PROC_BIND", "close", 1);   // GCC/LLVM/OpenMP
@@ -60,7 +59,8 @@ namespace parallel
             } else {
                 throw std::runtime_error("Unknown threads.affinity: " + cfg.compute.threads.affinity);
             }
-            std::cout << "[OpenMP] Affinity: " << getenv("OMP_PROC_BIND") << std::endl;
+            std::cout << "[OpenMP] Thread Count: " << num_threads 
+                      << "; Affinity: " << getenv("OMP_PROC_BIND") << std::endl;
             
         }
         

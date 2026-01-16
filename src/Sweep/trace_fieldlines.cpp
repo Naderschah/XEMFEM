@@ -15,65 +15,16 @@
 
 using namespace mfem;
 
-
-// Internal Structs
-
-struct InterfacePoint
+static void clamp_axis(Vector& x, bool axisymmetric, double geom_tol)
 {
-    double r;
-    double z_ci;        // highest CI height at this radius
-    int    elem;
-    bool   cathode_ci;  // seen cathode-insensitive exits in this column
-    bool   wall_ci;     // seen wall-insensitive exits in this column
-};
-// Shared seed container used by both CIV and tracing.
-struct CivSeeds
-{
-    std::vector<mfem::Vector>          positions; // (r,z) seeds (physical coords)
-    std::vector<double>                volumes;   // volume weight per seed
-    std::vector<int>                   elements;  // element index for each seed
-    std::vector<mfem::IntegrationPoint> ips;      // reference IP for each seed
-};
-
-
-// Mesh connectivity / size info used by the tracer
-struct ElementAdjacency
-{
-    std::vector<std::vector<int>> neighbors; // Neighbor idx
-    std::vector<double>           h;         // Characteristic Height
-};
-
-
-// ============================================================================
-// CIV by random sample 
-// Also contains basic tracing logic
-// ============================================================================
-
-// Electric field coefficient wrapper around a vector GridFunction
-struct ElectricFieldCoeff : public mfem::VectorCoefficient
-{
-    mfem::GridFunction &phi;  // H1 potential
-    double sign;              // +1.0 for grad(phi), -1.0 for -grad(phi)
-
-    ElectricFieldCoeff(mfem::GridFunction &phi_, double sign_ = -1.0)
-        : mfem::VectorCoefficient(phi_.FESpace()->GetMesh()->SpaceDimension())
-        , phi(phi_)
-        , sign(sign_)
-    { }
-
-    void Eval(mfem::Vector &V,
-              mfem::ElementTransformation &T,
-              const mfem::IntegrationPoint &ip) override
-    {
-        T.SetIntPoint(&ip);
-        phi.GetGradient(T, V);
-        V *= sign; // sign = -1.0 gives physical E = -grad(phi)
+    if (axisymmetric && x[0] <= geom_tol) {
+        x[0] = geom_tol;
     }
-};
+}
 
 
 // Build adjacency and characteristic size h per element
-static ElementAdjacency BuildAdjacency(mfem::ParMesh &mesh)
+ElementAdjacency BuildAdjacency(mfem::ParMesh &mesh)
 {
     ElementAdjacency adj;
 
@@ -129,7 +80,7 @@ static ElementAdjacency BuildAdjacency(mfem::ParMesh &mesh)
     return adj;
 }
 
-static bool FindElementForPointLocal(
+bool FindElementForPointLocal(
     mfem::ParMesh            &mesh,
     const ElementAdjacency   &adj,
     int                       current_elem,
@@ -214,9 +165,625 @@ static bool FindElementForPointRobust(
     return false;
 }
 
-// Single electron tracing (internal helper)
-namespace
+// Evaluate unit drift direction at an already-located (elem, ip).
+// Assumes caller has ensured elem is valid and ip is inside that element.
+// Uses the sign convention: k = E / |E| (as in your current code).
+static void eval_k_in_element(mfem::ParMesh            &mesh,
+                              ElectricFieldCoeff       &E_coeff,
+                              int                       elem,
+                              const mfem::IntegrationPoint &ip,
+                              int                       dim,
+                              // outputs:
+                              mfem::Vector             &k_out,
+                              bool                     &terminated,
+                              ElectronExitCode         &term_code)
 {
+    using namespace mfem;
+
+    if (terminated) { return; }
+
+    ElementTransformation *T = mesh.GetElementTransformation(elem);
+    T->SetIntPoint(&ip);
+
+    Vector E(dim);
+    E_coeff.Eval(E, *T, ip);
+
+    const double Enorm = E.Norml2();
+    if (Enorm <= 0.0)
+    {
+        terminated = true;
+        term_code  = ElectronExitCode::DegenerateTimeStep;
+        return;
+    }
+
+    k_out.SetSize(dim);
+    k_out = E;
+    k_out *= (1.0 / Enorm);
+}
+
+// Evaluate unit drift direction k at a physical point x_query.
+// Does point-location first, then calls eval_k_in_element so all methods
+// share the exact same field evaluation + normalization logic.
+static void eval_k_at_point(mfem::ParMesh                 &mesh,
+                            const ElementAdjacency        &adj,
+                            ElectricFieldCoeff            &E_coeff,
+                            const mfem::Vector            &x_query,
+                            int                            search_elem,
+                            int                            dim,
+                            // outputs:
+                            mfem::Vector                  &k_out,
+                            int                            &e_out,
+                            mfem::IntegrationPoint         &ip_out,
+                            bool                           &terminated,
+                            bool                           &need_shrink,
+                            ElectronExitCode               &term_code)
+{
+    using namespace mfem;
+
+    if (terminated || need_shrink) { return; }
+
+    int e_tmp = -1;
+    IntegrationPoint ip_tmp;
+
+    if (!FindElementForPointRobust(mesh, adj, search_elem, x_query, e_tmp, ip_tmp) ||
+        e_tmp < 0 || e_tmp >= mesh.GetNE())
+    {
+        need_shrink = true;
+        return;
+    }
+
+    // Field evaluation + normalization centralized here:
+    eval_k_in_element(mesh, E_coeff, e_tmp, ip_tmp, dim, k_out, terminated, term_code);
+    if (terminated)
+    {
+        e_out  = e_tmp;
+        ip_out = ip_tmp;
+        return;
+    }
+
+    e_out  = e_tmp;
+    ip_out = ip_tmp;
+}
+
+// -----------------------------------------------------------------
+// Particle propagation algos
+// All of it ChatGPT
+// -----------------------------------------------------------------
+static Vector transform_to_physical(Mesh&                   mesh,
+                                    int                     elem_id,
+                                    const IntegrationPoint& ip,
+                                    int                     dim,
+                                    bool                    axisymmetric,
+                                    double                  geom_tol)
+{
+    IntegrationPoint ip_local = ip;
+
+    ElementTransformation* T = mesh.GetElementTransformation(elem_id);
+    T->SetIntPoint(&ip_local);
+
+    Vector x(dim);
+    T->Transform(ip_local, x);
+
+    if (axisymmetric && x[0] <= geom_tol) {
+        x[0] = geom_tol;
+    }
+
+    return x;
+}
+
+static void LocateEndpointOrShrink(mfem::ParMesh             &mesh,
+                                   const ElementAdjacency    &adj,
+                                   const mfem::Vector        &x_accept,
+                                   int                        search_elem,
+                                   // outputs:
+                                   int                       &elem_new,
+                                   mfem::IntegrationPoint    &ip_new,
+                                   bool                      &need_shrink,
+                                   bool                      &terminated)
+{
+    using namespace mfem;
+
+    if (terminated || need_shrink) { return; }
+
+    int e_tmp = -1;
+    IntegrationPoint ip_tmp;
+
+    if (!FindElementForPointRobust(mesh, adj, search_elem, x_accept, e_tmp, ip_tmp) ||
+        e_tmp < 0 || e_tmp >= mesh.GetNE())
+    {
+        need_shrink = true;
+        return;
+    }
+
+    elem_new = e_tmp;
+    ip_new   = ip_tmp;
+}
+
+static void ClassifyTerminationAt(const TpcGeometry         &geom,
+                                  const ElectronTraceParams &params,
+                                  bool                       axisymmetric,
+                                  const mfem::Vector        &x_accept,
+                                  // outputs:
+                                  bool                      &terminated,
+                                  ElectronExitCode          &term_code)
+{
+    if (terminated) { return; }
+
+    if (axisymmetric && params.terminate_on_axis && x_accept[0] <= params.geom_tol)
+    {
+        terminated = true;
+        term_code  = ElectronExitCode::HitAxis;
+        return;
+    }
+
+    // Assumes (r,z) stored in indices (0,1)
+    const double r = x_accept[0];
+    const double z = x_accept[1];
+
+    const ElectronExitCode bc = geom.ClassifyBoundary(r, z, params.geom_tol);
+    if (bc != ElectronExitCode::None)
+    {
+        terminated = true;
+        term_code  = bc;
+    }
+}
+
+static void AttemptStep_EulerCauchy(mfem::ParMesh                &mesh,
+                                   ElectricFieldCoeff           &E_coeff,
+                                   const ElementAdjacency       &adj,
+                                   const TpcGeometry            &geom,
+                                   const ElectronTraceParams    &params,
+                                   bool                          axisymmetric,
+                                   int                           elem_id,
+                                   const mfem::IntegrationPoint &ip,
+                                   double                        ds,
+                                   // outputs:
+                                   mfem::Vector                 &x_new,
+                                   int                          &elem_new,
+                                   mfem::IntegrationPoint       &ip_new,
+                                   double                       &err_metric,
+                                   bool                         &need_shrink,
+                                   bool                         &terminated,
+                                   ElectronExitCode             &term_code)
+{
+    using namespace mfem;
+
+    const int dim = mesh.SpaceDimension();
+
+    const Vector x0 = transform_to_physical(mesh, elem_id, ip, dim,
+                                           axisymmetric, params.geom_tol);
+
+    Vector k1(dim);
+    eval_k_in_element(mesh, E_coeff, elem_id, ip, dim, k1, terminated, term_code);
+    if (terminated)
+    {
+        x_new    = x0;
+        elem_new = elem_id;
+        ip_new   = ip;
+        return;
+    }
+
+    Vector x_e(x0);
+    x_e.Add(ds, k1);
+    clamp_axis(x_e, axisymmetric, params.geom_tol);
+
+    Vector k2(dim);
+    int e_e = elem_id;
+    IntegrationPoint ip_e = ip;
+
+    eval_k_at_point(mesh, adj, E_coeff,
+                    x_e, elem_id, dim,
+                    k2, e_e, ip_e,
+                    terminated, need_shrink, term_code);
+    if (terminated || need_shrink)
+    {
+        x_new    = x_e;
+        elem_new = e_e;
+        ip_new   = ip_e;
+        return;
+    }
+
+    Vector x_h(x0);
+    x_h.Add(0.5 * ds, Vector(k1) += k2);
+    clamp_axis(x_h, axisymmetric, params.geom_tol);
+
+    err_metric = (Vector(x_h) -= x_e).Norml2();
+
+    x_new = x_h;
+
+    LocateEndpointOrShrink(mesh, adj, x_new, e_e,
+                           elem_new, ip_new,
+                           need_shrink, terminated);
+    if (need_shrink || terminated)
+    {
+        if (need_shrink)
+        {
+            elem_new = e_e;
+            ip_new   = ip_e;
+        }
+        return;
+    }
+
+    ClassifyTerminationAt(geom, params, axisymmetric, x_new,
+                          terminated, term_code);
+}
+
+
+
+static void AttemptStep_RK23(mfem::ParMesh                &mesh,
+                            ElectricFieldCoeff            &E_coeff,
+                            const ElementAdjacency        &adj,
+                            const TpcGeometry             &geom,
+                            const ElectronTraceParams     &params,
+                            bool                           axisymmetric,
+                            int                            elem_id,
+                            const mfem::IntegrationPoint  &ip,
+                            double                         ds,
+                            // outputs:
+                            mfem::Vector                  &x_new,
+                            int                           &elem_new,
+                            mfem::IntegrationPoint        &ip_new,
+                            double                        &err_metric,
+                            bool                          &need_shrink,
+                            bool                          &terminated,
+                            ElectronExitCode              &term_code)
+{
+    using namespace mfem;
+
+    const int dim = mesh.SpaceDimension();
+
+    const Vector x0 = transform_to_physical(mesh, elem_id, ip, dim,
+                                           axisymmetric, params.geom_tol);
+
+    Vector k1(dim);
+    eval_k_in_element(mesh, E_coeff, elem_id, ip, dim, k1, terminated, term_code);
+    if (terminated)
+    {
+        x_new    = x0;
+        elem_new = elem_id;
+        ip_new   = ip;
+        return;
+    }
+
+    // Stage 2: k2 at x1 = x0 + (ds/2)*k1
+    Vector x1(x0);
+    x1.Add(0.5 * ds, k1);
+    clamp_axis(x1, axisymmetric, params.geom_tol);
+
+    Vector k2(dim);
+    int e1 = elem_id;
+    IntegrationPoint ip1 = ip;
+    eval_k_at_point(mesh, adj, E_coeff,
+                    x1, elem_id, dim,
+                    k2, e1, ip1,
+                    terminated, need_shrink, term_code);
+    if (terminated || need_shrink)
+    {
+        x_new    = x1;
+        elem_new = e1;
+        ip_new   = ip1;
+        return;
+    }
+
+    // Stage 3: k3 at x2s = x0 + (3ds/4)*k2
+    Vector x2s(x0);
+    x2s.Add(0.75 * ds, k2);
+    clamp_axis(x2s, axisymmetric, params.geom_tol);
+
+    Vector k3(dim);
+    int e2 = e1;
+    IntegrationPoint ip2 = ip1;
+    eval_k_at_point(mesh, adj, E_coeff,
+                    x2s, e1, dim,
+                    k3, e2, ip2,
+                    terminated, need_shrink, term_code);
+    if (terminated || need_shrink)
+    {
+        x_new    = x2s;
+        elem_new = e2;
+        ip_new   = ip2;
+        return;
+    }
+
+    // Candidate (3rd order) endpoint: x3
+    Vector x3(x0);
+    x3.Add(ds * (2.0/9.0), k1);
+    x3.Add(ds * (1.0/3.0), k2);
+    x3.Add(ds * (4.0/9.0), k3);
+    clamp_axis(x3, axisymmetric, params.geom_tol);
+
+    // Stage 4: k4 at x3
+    Vector k4(dim);
+    int e3 = e2;
+    IntegrationPoint ip3 = ip2;
+    eval_k_at_point(mesh, adj, E_coeff,
+                    x3, e2, dim,
+                    k4, e3, ip3,
+                    terminated, need_shrink, term_code);
+    if (terminated || need_shrink)
+    {
+        x_new    = x3;
+        elem_new = e3;
+        ip_new   = ip3;
+        return;
+    }
+
+    // 2nd order embedded estimate: x2
+    Vector x2(x0);
+    x2.Add(ds * (7.0/24.0), k1);
+    x2.Add(ds * (1.0/4.0),  k2);
+    x2.Add(ds * (1.0/3.0),  k3);
+    x2.Add(ds * (1.0/8.0),  k4);
+    clamp_axis(x2, axisymmetric, params.geom_tol);
+
+    // Accept the 3rd-order solution candidate
+    x_new = x3;
+
+    // Error metric: ||x3 - x2||
+    err_metric = (Vector(x3) -= x2).Norml2();
+
+    // Locate accepted endpoint (common helper)
+    LocateEndpointOrShrink(mesh, adj, x_new, e3,
+                           elem_new, ip_new,
+                           need_shrink, terminated);
+    if (need_shrink || terminated)
+    {
+        if (need_shrink)
+        {
+            elem_new = e3;
+            ip_new   = ip3;
+        }
+        return;
+    }
+
+    // Termination classification (common helper)
+    ClassifyTerminationAt(geom, params, axisymmetric, x_new,
+                          terminated, term_code);
+}
+
+static void AttemptStep_RK45(mfem::ParMesh                &mesh,
+                            ElectricFieldCoeff            &E_coeff,
+                            const ElementAdjacency        &adj,
+                            const TpcGeometry             &geom,
+                            const ElectronTraceParams     &params,
+                            bool                           axisymmetric,
+                            int                            elem_id,
+                            const mfem::IntegrationPoint  &ip,
+                            double                         ds,
+                            // outputs:
+                            mfem::Vector                  &x_new,
+                            int                           &elem_new,
+                            mfem::IntegrationPoint        &ip_new,
+                            double                        &err_metric,
+                            bool                          &need_shrink,
+                            bool                          &terminated,
+                            ElectronExitCode              &term_code)
+{
+    using namespace mfem;
+
+    const int dim = mesh.SpaceDimension();
+
+    const Vector x0 = transform_to_physical(mesh, elem_id, ip, dim,
+                                           axisymmetric, params.geom_tol);
+
+    Vector k1(dim);
+    eval_k_in_element(mesh, E_coeff, elem_id, ip, dim, k1, terminated, term_code);
+    if (terminated)
+    {
+        x_new    = x0;
+        elem_new = elem_id;
+        ip_new   = ip;
+        return;
+    }
+
+    Vector k2(dim), k3(dim), k4(dim), k5(dim), k6(dim);
+
+    // Stage 2: x1 = x0 + ds*(1/5)*k1
+    Vector x1(x0);
+    x1.Add(ds * (1.0/5.0), k1);
+    clamp_axis(x1, axisymmetric, params.geom_tol);
+
+    int e1 = elem_id;
+    IntegrationPoint ip1 = ip;
+    eval_k_at_point(mesh, adj, E_coeff,
+                    x1, elem_id, dim,
+                    k2, e1, ip1,
+                    terminated, need_shrink, term_code);
+    if (terminated || need_shrink)
+    {
+        x_new    = x1;
+        elem_new = e1;
+        ip_new   = ip1;
+        return;
+    }
+
+    // Stage 3: x2 = x0 + ds*(3/40*k1 + 9/40*k2)
+    Vector x2(x0);
+    x2.Add(ds * (3.0/40.0), k1);
+    x2.Add(ds * (9.0/40.0), k2);
+    clamp_axis(x2, axisymmetric, params.geom_tol);
+
+    int e2 = e1;
+    IntegrationPoint ip2 = ip1;
+    eval_k_at_point(mesh, adj, E_coeff,
+                    x2, e1, dim,
+                    k3, e2, ip2,
+                    terminated, need_shrink, term_code);
+    if (terminated || need_shrink)
+    {
+        x_new    = x2;
+        elem_new = e2;
+        ip_new   = ip2;
+        return;
+    }
+
+    // Stage 4: x3s = x0 + ds*(3/10*k1 - 9/10*k2 + 6/5*k3)
+    Vector x3s(x0);
+    x3s.Add(ds * (3.0/10.0),  k1);
+    x3s.Add(ds * (-9.0/10.0), k2);
+    x3s.Add(ds * (6.0/5.0),   k3);
+    clamp_axis(x3s, axisymmetric, params.geom_tol);
+
+    int e3 = e2;
+    IntegrationPoint ip3 = ip2;
+    eval_k_at_point(mesh, adj, E_coeff,
+                    x3s, e2, dim,
+                    k4, e3, ip3,
+                    terminated, need_shrink, term_code);
+    if (terminated || need_shrink)
+    {
+        x_new    = x3s;
+        elem_new = e3;
+        ip_new   = ip3;
+        return;
+    }
+
+    // Stage 5: x4s = x0 + ds*(-11/54*k1 + 5/2*k2 -70/27*k3 +35/27*k4)
+    Vector x4s(x0);
+    x4s.Add(ds * (-11.0/54.0), k1);
+    x4s.Add(ds * (5.0/2.0),    k2);
+    x4s.Add(ds * (-70.0/27.0), k3);
+    x4s.Add(ds * (35.0/27.0),  k4);
+    clamp_axis(x4s, axisymmetric, params.geom_tol);
+
+    int e4 = e3;
+    IntegrationPoint ip4 = ip3;
+    eval_k_at_point(mesh, adj, E_coeff,
+                    x4s, e3, dim,
+                    k5, e4, ip4,
+                    terminated, need_shrink, term_code);
+    if (terminated || need_shrink)
+    {
+        x_new    = x4s;
+        elem_new = e4;
+        ip_new   = ip4;
+        return;
+    }
+
+    // Stage 6: x5s = x0 + ds*(1631/55296*k1 + 175/512*k2 + 575/13824*k3
+    //                        + 44275/110592*k4 + 253/4096*k5)
+    Vector x5s(x0);
+    x5s.Add(ds * (1631.0/55296.0),   k1);
+    x5s.Add(ds * (175.0/512.0),      k2);
+    x5s.Add(ds * (575.0/13824.0),    k3);
+    x5s.Add(ds * (44275.0/110592.0), k4);
+    x5s.Add(ds * (253.0/4096.0),     k5);
+    clamp_axis(x5s, axisymmetric, params.geom_tol);
+
+    int e5 = e4;
+    IntegrationPoint ip5 = ip4;
+    eval_k_at_point(mesh, adj, E_coeff,
+                    x5s, e4, dim,
+                    k6, e5, ip5,
+                    terminated, need_shrink, term_code);
+    if (terminated || need_shrink)
+    {
+        x_new    = x5s;
+        elem_new = e5;
+        ip_new   = ip5;
+        return;
+    }
+
+    // 5th order (accepted): x5
+    Vector x5(x0);
+    x5.Add(ds * (37.0/378.0),   k1);
+    x5.Add(ds * (250.0/621.0),  k3);
+    x5.Add(ds * (125.0/594.0),  k4);
+    x5.Add(ds * (512.0/1771.0), k6);
+    clamp_axis(x5, axisymmetric, params.geom_tol);
+
+    // 4th order (embedded): x4
+    Vector x4(x0);
+    x4.Add(ds * (2825.0/27648.0),  k1);
+    x4.Add(ds * (18575.0/48384.0), k3);
+    x4.Add(ds * (13525.0/55296.0), k4);
+    x4.Add(ds * (277.0/14336.0),   k5);
+    x4.Add(ds * (1.0/4.0),         k6);
+    clamp_axis(x4, axisymmetric, params.geom_tol);
+
+    err_metric = (Vector(x5) -= x4).Norml2();
+
+    x_new = x5;
+
+    LocateEndpointOrShrink(mesh, adj, x_new, e5,
+                           elem_new, ip_new,
+                           need_shrink, terminated);
+    if (need_shrink || terminated)
+    {
+        if (need_shrink)
+        {
+            elem_new = e5;
+            ip_new   = ip5;
+        }
+        return;
+    }
+
+    ClassifyTerminationAt(geom, params, axisymmetric, x_new,
+                          terminated, term_code);
+}
+
+
+static void AttemptStep_Debug(mfem::ParMesh                &mesh,
+                              ElectricFieldCoeff           &E_coeff,
+                              const ElementAdjacency       &adj,
+                              const TpcGeometry            &geom,
+                              const ElectronTraceParams    &params,
+                              bool                          axisymmetric,
+                              int                           elem_id,
+                              const mfem::IntegrationPoint &ip,
+                              double                        ds,
+                              // outputs:
+                              mfem::Vector                &x_new,
+                              int                          &elem_new,
+                              mfem::IntegrationPoint       &ip_new,
+                              double                       &err_metric,
+                              bool                         &need_shrink,
+                              bool                         &terminated,
+                              ElectronExitCode             &term_code)
+{
+    using namespace mfem;
+
+    const int dim = mesh.SpaceDimension();
+
+    const Vector x0 = transform_to_physical(mesh, elem_id, ip, dim,
+                                           axisymmetric, params.geom_tol);
+
+    Vector k1(dim);
+    eval_k_in_element(mesh, E_coeff, elem_id, ip, dim, k1, terminated, term_code);
+    if (terminated)
+    {
+        x_new    = x0;
+        elem_new = elem_id;
+        ip_new   = ip;
+        return;
+    }
+
+    x_new = x0;
+    x_new.Add(ds, k1);
+    clamp_axis(x_new, axisymmetric, params.geom_tol);
+
+    err_metric = 0.0;
+
+    LocateEndpointOrShrink(mesh, adj, x_new, elem_id,
+                           elem_new, ip_new,
+                           need_shrink, terminated);
+    if (need_shrink || terminated)
+    {
+        if (need_shrink)
+        {
+            elem_new = elem_id;
+            ip_new   = ip;
+        }
+        return;
+    }
+
+    ClassifyTerminationAt(geom, params, axisymmetric, x_new,
+                          terminated, term_code);
+}
+
+
+
+// Trace Electron Line 
 ElectronTraceResult TraceSingleElectronLine(
     mfem::ParMesh                &mesh,
     ElectricFieldCoeff           &E_coeff,
@@ -239,238 +806,98 @@ ElectronTraceResult TraceSingleElectronLine(
     int              elem_id = start_elem;
     IntegrationPoint ip      = start_ip;
 
+    // Get Step Function
+    StepFunction StepFunc = nullptr;
+    if      (params.method == "Euler-Cauchy"){ StepFunc = &AttemptStep_EulerCauchy; }
+    else if (params.method == "RK23"){         StepFunc = &AttemptStep_RK23; }
+    else if (params.method == "RK45"){         StepFunc = &AttemptStep_RK45; }
+    else if (params.method == "Debug"){        StepFunc = &AttemptStep_Debug; }
+    else    { throw std::invalid_argument( "Integration Method " + params.method + " unknown.\n"); }
     Vector x(dim);
 
     // Initial point
-    {
-        ElementTransformation *T0 = mesh.GetElementTransformation(elem_id);
-        T0->SetIntPoint(&ip);
-        T0->Transform(ip, x);
+    ElementTransformation *T0 = mesh.GetElementTransformation(elem_id);
+    T0->SetIntPoint(&ip);
+    T0->Transform(ip, x);
 
-        if (axisymmetric && x[0] <= params.geom_tol)
-        {
-            x[0] = params.geom_tol;
-        }
+    if (axisymmetric && x[0] <= params.geom_tol) 
+    { x[0] = params.geom_tol; }
 
-        if (axisymmetric && params.terminate_on_axis &&
-            x[0] <= params.geom_tol)
-        {
-            result.exit_code    = ElectronExitCode::HitAxis;
-            result.exit_element = elem_id;
-            if (save_pathlines) { result.points.push_back(x); }
-            return result;
-        }
+    if (save_pathlines) { result.points.push_back(x); }
 
-        if (save_pathlines) { result.points.push_back(x); }
-    }
-
-    int    step       = 0;
-    double ds_current = 0.0; // adaptive step length for this electron
+    int    step      = 0;
+    double c_current = 0.0; // adaptive *dimensionless* step for this electron
 
     while (step < params.max_steps)
     {
         // Local element size
         const double hK = adj.h[elem_id];
-        if (hK <= 0.0)
-        {
-            result.exit_code    = ElectronExitCode::DegenerateTimeStep;
-            result.exit_element = elem_id;
-            if (save_pathlines) { result.points.push_back(x); }
-            break;
-        }
 
-        // Per-element bounds and initial ds
-        const double ds_min = params.ds_min_factor * hK;
-        const double ds_max = params.ds_max_factor * hK;
+        // Per-element bounds in c-space
+        const double c_min = params.c_min_factor;
+        const double c_max = params.c_max_factor;
 
-        if (ds_current <= 0.0)
-        {
-            ds_current = params.c_step * hK;
-        }
-        ds_current = std::min(std::max(ds_current, ds_min), ds_max);
+        if (c_current <= 0.0) { c_current = params.c_step; }
+        c_current = std::min(std::max(c_current, c_min), c_max);
 
         bool accepted_step = false;
 
         while (!accepted_step)
         {
-            const double ds = ds_current;
+            const double ds = c_current * hK;
 
-            // ------------------ RK4 trial step ------------------
-            int              e0  = elem_id;
-            IntegrationPoint ip0 = ip;
-
-            // Stage 1
-            ElementTransformation *T1 = mesh.GetElementTransformation(e0);
-            T1->SetIntPoint(&ip0);
-
-            Vector x0(dim);
-            T1->Transform(ip0, x0);
-
-            if (axisymmetric && x0[0] <= params.geom_tol)
-            {
-                x0[0] = params.geom_tol;
-            }
-
-            Vector E1(dim);
-            E_coeff.Eval(E1, *T1, ip0);
-            double Enorm1 = E1.Norml2();
-            if (Enorm1 <= 0.0)
-            {
-                result.exit_code    = ElectronExitCode::DegenerateTimeStep;
-                result.exit_element = e0;
-                if (save_pathlines) { result.points.push_back(x0); }
-                return result;
-            }
-
-            Vector v1(E1);
-            v1 *= -1.0 / Enorm1;  // unit direction
-
-            Vector k1(dim), k2(dim), k3(dim), k4(dim);
-            k1 = v1;
-
+            // ---------------------------------------------------------------------
+            // Trial step (delegated by integrator choice)
+            // ---------------------------------------------------------------------
             bool             need_shrink = false;
             bool             terminated  = false;
             ElectronExitCode term_code   = ElectronExitCode::None;
 
-            Vector          x_new(dim);
-            int             elem_new = e0;
-            IntegrationPoint ip_new  = ip0;
+            Vector           x_new(dim);
+            int              elem_new = elem_id;
+            IntegrationPoint ip_new  = ip;
 
-            // Helper for stages 2–4
-            auto rk_stage = [&](double step_factor,
-                                const Vector &k_prev,
-                                int           search_elem,
-                                Vector       &x_stage,
-                                int          &elem_stage,
-                                IntegrationPoint &ip_stage,
-                                Vector       &k_stage)
-            {
-                if (terminated || need_shrink) { return; }
+            double err_metric = 0.0;
 
-                x_stage = x0;
-                x_stage.Add(step_factor * ds, k_prev);
-                if (axisymmetric && x_stage[0] <= params.geom_tol)
-                {
-                    x_stage[0] = params.geom_tol;
-                }
+            StepFunc(mesh, E_coeff, adj, geom, params, axisymmetric, elem_id, ip, ds,
+                    // outputs:
+                    x_new, elem_new, ip_new, err_metric, need_shrink, terminated, term_code);
 
-                int              e_tmp  = -1;
-                IntegrationPoint ip_tmp;
-                if (!FindElementForPointRobust(mesh, adj, search_elem, x_stage, e_tmp, ip_tmp) ||
-                        e_tmp < 0 || e_tmp >= mesh.GetNE())
-                {
-                    need_shrink = true;
-                    return;
-                }
-
-                ElementTransformation *T = mesh.GetElementTransformation(e_tmp);
-                T->SetIntPoint(&ip_tmp);
-                Vector E(dim);
-                E_coeff.Eval(E, *T, ip_tmp);
-                double Enorm = E.Norml2();
-                if (Enorm <= 0.0)
-                {
-                    terminated  = true;
-                    term_code   = ElectronExitCode::DegenerateTimeStep;
-                    x_new       = x_stage;
-                    elem_stage  = e_tmp;
-                    ip_stage    = ip_tmp;
-                    return;
-                }
-
-                Vector v(E);
-                v *= -1.0 / Enorm;
-                k_stage   = v;
-                elem_stage = e_tmp;
-                ip_stage   = ip_tmp;
-            };
-
-            Vector x2(dim), x3(dim), x4(dim);
-
-            // Stage 2
-            rk_stage(0.5, k1, e0, x2, elem_new, ip_new, k2);
-
-            // Stage 3
-            rk_stage(0.5, k2, elem_new, x3, elem_new, ip_new, k3);
-
-            // Stage 4
-            if (!terminated && !need_shrink)
-            {
-                rk_stage(1.0, k3, elem_new, x4, elem_new, ip_new, k4);
-
-                if (!terminated && !need_shrink)
-                {
-                    // Build final x_new from RK4 combination
-                    x_new = x0;
-                    x_new.Add(ds / 6.0, k1);
-                    x_new.Add(ds / 3.0, k2);
-                    x_new.Add(ds / 3.0, k3);
-                    x_new.Add(ds / 6.0, k4);
-
-                    // Axis termination
-                    if (axisymmetric && params.terminate_on_axis &&
-                        x_new[0] <= params.geom_tol)
-                    {
-                        terminated = true;
-                        term_code  = ElectronExitCode::HitAxis;
-                    }
-                    else
-                    {
-                        // Geometry-based boundary classification
-                        const double r_new = x_new[0];
-                        const double z_new = x_new[1];
-
-                        const ElectronExitCode bc =
-                            geom.ClassifyBoundary(r_new, z_new, params.geom_tol);
-
-                        if (bc != ElectronExitCode::None)
-                        {
-                            terminated = true;
-                            term_code  = bc;
-                        }
-                    }
-                }
-            }
-
-            // Handle termination or need_shrink
+            // ---------------------------------------------------------------------
+            // Handle termination / topology shrink
+            // ---------------------------------------------------------------------
             if (terminated)
             {
                 result.exit_code    = term_code;
-                result.exit_element = elem_id; // last known valid in-volume element
+                result.exit_element = elem_new; // last known valid in-volume element
                 if (save_pathlines) { result.points.push_back(x_new); }
                 return result;
             }
 
             if (need_shrink)
             {
-                // Step too large w.r.t. element topology; shrink and retry
-                double ds_new = ds_current * params.adapt_shrink;
-                if (ds_new < ds_min)
+                const double c_new = c_current * params.adapt_shrink;
+                if (c_new < c_min)
                 {
-                    // Cannot shrink further: treat as leaving volume
                     result.exit_code    = ElectronExitCode::LeftVolume;
                     result.exit_element = elem_id;
-                    if (save_pathlines) { result.points.push_back(x); }
                     return result;
                 }
-                ds_current = ds_new;
-                continue; // retry trial with smaller ds
+                c_current = c_new;
+                continue; // retry
             }
 
-            // ------------------ Curvature-based "error" ------------------
-            Vector dv(dim);
-            dv = k4;
-            dv -= k1;
-            double err_dir = dv.Norml2(); // 0: straight, larger: more bending
-
+            // ---------------------------------------------------------------------
+            // Error-based acceptance (common policy)
+            // ---------------------------------------------------------------------
             const double tol = params.tol_rel;
-            if (err_dir > tol && ds_current > ds_min)
+
+            if (err_metric > tol && c_current > c_min)
             {
-                // Too much bending for current step length → shrink
-                double ds_new = ds_current * params.adapt_shrink;
-                if (ds_new < ds_min) { ds_new = ds_min; }
-                ds_current = ds_new;
-                continue; // retry trial with smaller ds
+                double c_new = c_current * params.adapt_shrink;
+                if (c_new < c_min) { c_new = c_min; }
+                c_current = c_new;
+                continue; // retry
             }
 
             // Accept step
@@ -483,11 +910,11 @@ ElectronTraceResult TraceSingleElectronLine(
             accepted_step = true;
 
             // Optional step growth in smooth regions
-            if (err_dir < 0.25 * tol)
+            if (err_metric < 0.25 * tol)
             {
-                double ds_new = ds_current * params.adapt_grow;
-                if (ds_new > ds_max) { ds_new = ds_max; }
-                ds_current = ds_new;
+                double c_new = c_current * params.adapt_grow;
+                if (c_new > c_max) { c_new = c_max; }
+                c_current = c_new;
             }
         } // end adaptive trial loop
 
@@ -501,222 +928,371 @@ ElectronTraceResult TraceSingleElectronLine(
 
     return result;
 }
-} // anonymous namespace
-
-// Build volume-weighted seeds for CIV / optimization / tracing
-// based on the mesh and cfg.tracing_params.
-static CivSeeds ExtractCivSeeds(const Config &cfg, const SimulationResult &result)
-{
-    mfem::ParMesh &pmesh = *result.mesh;
-    const int dim  = pmesh.Dimension();
-
-    TpcGeometry geom(cfg);
-
-    const int ir_order = cfg.tracing_params.ir_order;
-
-    mfem::IntegrationRules irs;
-    CivSeeds seeds;
-
-    const int ne = pmesh.GetNE();
-    seeds.positions.reserve(ne);
-    seeds.elements.reserve(ne);
-    seeds.ips.reserve(ne);
-
-    std::vector<double> element_volume(ne, 0.0);
-    std::vector<int>    seeds_per_element(ne, 0);
-
-    // ------------------ STEP 1: find geometry-eligible elements ------------------
-    std::vector<int> eligible_elems;
-    eligible_elems.reserve(ne);
-
-    for (int e = 0; e < ne; ++e)
-    {
-        mfem::ElementTransformation *T = pmesh.GetElementTransformation(e);
-        MFEM_ASSERT(T, "ExtractCivSeeds: ElementTransformation is null");
-
-        mfem::Geometry::Type geom_type  = T->GetGeometryType();
-        const mfem::IntegrationRule &ir = irs.Get(geom_type, ir_order);
-        const int n_ip                  = ir.GetNPoints();
-
-        bool any_inside = false;
-
-        for (int i = 0; i < n_ip; ++i)
-        {
-            const mfem::IntegrationPoint &ip = ir.IntPoint(i);
-            T->SetIntPoint(&ip);
-
-            mfem::Vector x(dim);
-            T->Transform(ip, x);
-            const double r = x(0);
-            const double z = x(1);
-
-            if (geom.Inside(r, z))
-            {
-                any_inside = true;
-                break;
-            }
-        }
-
-        if (any_inside)
-        {
-            eligible_elems.push_back(e);
-        }
-    }
-    // ---------------------------------------------------------------------------
-
-    // ------------------ STEP 2: randomly select from eligible elements ---------
-    int num_seed_elements = cfg.tracing_params.num_seed_elements;
-    const int n_eligible  = static_cast<int>(eligible_elems.size());
-
-    if (num_seed_elements <= 0 || num_seed_elements > n_eligible)
-    {
-        num_seed_elements = n_eligible; // fall back to all eligible
-    }
-
-    std::mt19937 rng;
-    if (cfg.tracing_params.rng_seed != 0)
-    {
-        rng.seed(static_cast<std::mt19937::result_type>(cfg.tracing_params.rng_seed));
-    }
-    else
-    {
-        std::random_device rd;
-        rng.seed(rd());
-    }
-
-    std::vector<int> selected_elems;
-    selected_elems.reserve(num_seed_elements);
-
-    std::sample(eligible_elems.begin(), eligible_elems.end(),
-                std::back_inserter(selected_elems),
-                num_seed_elements,
-                rng);
-    // ---------------------------------------------------------------------------
-
-    // ------------------ STEP 3: extract seeds only from selected elements ------
-    for (int idx = 0; idx < num_seed_elements; ++idx)
-    {
-        int e = selected_elems[idx];
-
-        mfem::ElementTransformation *T = pmesh.GetElementTransformation(e);
-        MFEM_ASSERT(T, "ExtractCivSeeds: ElementTransformation is null");
-
-        mfem::Geometry::Type geom_type  = T->GetGeometryType();
-        const mfem::IntegrationRule &ir = irs.Get(geom_type, ir_order);
-        const int n_ip                  = ir.GetNPoints();
-
-        double V_e = 0.0;
-
-        for (int i = 0; i < n_ip; ++i)
-        {
-            const mfem::IntegrationPoint &ip = ir.IntPoint(i);
-            T->SetIntPoint(&ip);
-
-            mfem::Vector x(dim);
-            T->Transform(ip, x);
-            const double r = x(0);
-            const double z = x(1);
-
-            // Contribution to element volume (axisymmetric without 2π)
-            const double detJ  = T->Weight();   // |det(J)| in (r,z)
-            const double w_ref = ip.weight;     // reference weight
-            const double dV    = r * detJ * w_ref;
-
-            V_e += dV;
-
-            if (!geom.Inside(r, z))
-            {
-                continue;
-            }
-
-            seeds.positions.push_back(x);
-            seeds.elements.push_back(e);
-
-            mfem::IntegrationPoint ip_copy = ip;
-            seeds.ips.push_back(ip_copy);
-
-            seeds_per_element[e]++;
-        }
-
-        element_volume[e] = V_e;
-    }
-    // ---------------------------------------------------------------------------
-
-    // ------------------ STEP 4: same volume partition as before ----------------
-    const int n_seeds = static_cast<int>(seeds.positions.size());
-    seeds.volumes.resize(n_seeds);
-
-    for (int j = 0; j < n_seeds; ++j)
-    {
-        const int e         = seeds.elements[j];
-        const int n_in_elem = seeds_per_element[e];
-
-        MFEM_VERIFY(n_in_elem > 0,
-                    "ExtractCivSeeds: element has seeds reference but zero seeds_per_element");
-
-        seeds.volumes[j] = element_volume[e] / static_cast<double>(n_in_elem);
-    }
-
-    return seeds;
-}
-
-
-// ============================================================================
-// Public API: seed extraction
-// ============================================================================
-
-
-// Old random-sampling CIV computation, factored out so we can dispatch by method.
-static double ComputeCIV_RandomSample(const Config           &cfg,
-                                      const SimulationResult &result)
+// -----------------------
+// Parallel interface, first a bunch of helpers
+// -----------------------
+static void DebugFindCentreSeed(mfem::ParMesh            &global_mesh,
+                                int                      dim,
+                                const ElectronTraceParams &params,
+                                const Config             &cfg,
+                                int                      &elem_center,
+                                mfem::IntegrationPoint   &ip_center)
 {
     using namespace mfem;
 
-    if (cfg.debug.debug)
+    // 1) Construct centre point in physical coordinates
+    const double r_c = 0.5 * (params.r_min + params.r_max);
+    const double z_c = 0.5 * (params.z_min + params.z_max);
+
+    mfem::Vector x_center(dim);
+    x_center[0] = r_c;
+    x_center[1] = z_c;
+
+    // 2) Find element and reference IntegrationPoint that contain x_center
+    elem_center = -1;
+
+    for (int e = 0; e < global_mesh.GetNE(); ++e)
     {
-        std::cout << "[DEBUG:OPTIMIZATION] Computing CIV (RandomSample)" << std::endl;
-    }
+        mfem::ElementTransformation *T = global_mesh.GetElementTransformation(e);
+        mfem::InverseElementTransformation invT(T);
 
-    ParMesh &pmesh = *result.mesh;
-
-    CivSeeds seeds = ExtractCivSeeds(cfg, result);
-
-    // If no seeds throw error
-    if (seeds.positions.empty())
-    {
-        throw std::runtime_error("No seeds to compute CIV for");
-    }
-
-    std::vector<ElectronTraceResult> trace_results;
-
-    TraceElectronFieldLines(result, cfg, seeds, trace_results);
-
-    double V_total = 0.0; // active TPC volume
-    double V_civ   = 0.0; // Volume where electrons do not reach liquid gas interface
-
-    for (std::size_t i = 0; i < seeds.positions.size(); ++i)
-    {
-        const double                dV  = seeds.volumes[i];
-        const ElectronTraceResult  &res = trace_results[i];
-
-        V_total += dV;
-
-        // charge-insensitive if it does NOT reach liquid-gas interface
-        if (res.exit_code != ElectronExitCode::HitLiquidGas)
+        mfem::IntegrationPoint ip_trial;
+        int res = invT.Transform(x_center, ip_trial);
+        if (res == InverseElementTransformation::Inside)
         {
-            V_civ += dV;
+            elem_center = e;
+            ip_center   = ip_trial;
+            break;
         }
     }
 
-    if (V_total <= 0.0)
-    {
-        return 0.0;
-    }
+    MFEM_VERIFY(elem_center >= 0,
+                "TraceElectronFieldLines: centre point not found in any element");
 
-    // Return volume fraction
-    return V_civ / V_total;
+    mfem::ElementTransformation *Tcheck =
+        global_mesh.GetElementTransformation(elem_center);
+    Tcheck->SetIntPoint(&ip_center);
+
+    mfem::Vector x_check(dim);
+    Tcheck->Transform(ip_center, x_check);
+
+    std::cout << "[DEBUG:TRACE] Centre from config : r=" << r_c
+              << ", z=" << z_c << "\n";
+    std::cout << "[DEBUG:TRACE] Mapped back centre : r=" << x_check[0]
+              << ", z=" << x_check[1] << "\n";
+
+    if (cfg.debug.debug)
+    {
+        std::cout << "[DEBUG:TRACE] Single-seed debug mode active.\n"
+                  << "               Centre point: r=" << r_c
+                  << ", z=" << z_c << "\n"
+                  << "               Element id : " << elem_center << "\n";
+    }
 }
 
+static void DebugSingleSeedTrace(mfem::ParMesh                       &global_mesh,
+                                 int                                 dim,
+                                 mfem::GridFunction                 &global_phi,
+                                 const mfem::FiniteElementCollection *fec_phi,
+                                 int                                 ordering_phi,
+                                 const ElementAdjacency             &adj,
+                                 const TpcGeometry                  &geom,
+                                 const ElectronTraceParams          &params,
+                                 const Config                       &cfg,
+                                 std::vector<ElectronTraceResult>   &out_results,
+                                 bool                                axisymmetric,
+                                 bool                                save_paths)
+{
+    using namespace mfem;
+
+    int elem_center = -1;
+    mfem::IntegrationPoint ip_center;
+
+    DebugFindCentreSeed(global_mesh,
+                        dim,
+                        params,
+                        cfg,
+                        elem_center,
+                        ip_center);
+
+    // 3) Local mesh and potential
+    mfem::ParMesh local_mesh(global_mesh);
+
+    mfem::ParFiniteElementSpace local_fes_phi(
+        &local_mesh, fec_phi, /*vdim=*/1, ordering_phi);
+
+    mfem::GridFunction local_phi(&local_fes_phi);
+    local_phi = global_phi; // copy potential DOFs
+
+    // Local E coefficient: E = -grad(phi)
+    ElectricFieldCoeff local_E_coeff(local_phi, 1.0);
+
+    const ElementAdjacency &local_adj = adj;
+    for (std::size_t i = 0; i < local_adj.h.size(); ++i)
+    {
+        if (local_adj.h[i] <= 0.0)
+        {
+            throw std::runtime_error("Determind Mesh size non positive");
+        }
+    }
+
+    // 4) Local params
+    ElectronTraceParams local_params = params;
+
+    // 5) Resize outputs and trace exactly one electron
+    out_results.clear();
+    out_results.resize(1);
+
+    out_results[0] = TraceSingleElectronLine(local_mesh,
+                                             local_E_coeff,
+                                             local_adj,
+                                             geom,
+                                             local_params,
+                                             elem_center,
+                                             ip_center,
+                                             axisymmetric,
+                                             save_paths);
+}
+
+static void PrintExitConditionSummary(const Config                     &cfg,
+                                      const CivSeeds                   &seeds,
+                                      const std::vector<ElectronTraceResult> &out_results)
+{
+    if (!cfg.debug.debug) { return; }
+
+    std::size_t count_hit_lgi      = 0;
+    std::size_t count_hit_cathode  = 0;
+    std::size_t count_hit_wall     = 0;
+    std::size_t count_left_volume  = 0;
+    std::size_t count_max_steps    = 0;
+    std::size_t count_deg_dt       = 0;
+    std::size_t count_none         = 0;
+    std::size_t count_hit_axis     = 0;
+
+    for (const auto &res : out_results)
+    {
+        switch (res.exit_code)
+        {
+            case ElectronExitCode::HitLiquidGas:       count_hit_lgi++;     break;
+            case ElectronExitCode::HitCathode:         count_hit_cathode++; break;
+            case ElectronExitCode::HitWall:            count_hit_wall++;    break;
+            case ElectronExitCode::LeftVolume:         count_left_volume++; break;
+            case ElectronExitCode::MaxSteps:           count_max_steps++;   break;
+            case ElectronExitCode::DegenerateTimeStep: count_deg_dt++;      break;
+            case ElectronExitCode::HitAxis:            count_hit_axis++;    break;
+            case ElectronExitCode::None:               count_none++;        break;
+        }
+    }
+
+    const double N = static_cast<double>(out_results.size());
+    auto frac = [&](std::size_t c) -> double {
+        return (N > 0.0 ? static_cast<double>(c) / N : 0.0);
+    };
+
+    double V_total        = 0.0;
+    double V_hit_lgi      = 0.0;
+    double V_hit_cathode  = 0.0;
+    double V_hit_wall     = 0.0;
+    double V_left_volume  = 0.0;
+    double V_max_steps    = 0.0;
+    double V_deg_dt       = 0.0;
+    double V_none         = 0.0;
+    double V_hit_axis     = 0.0;
+
+    for (std::size_t i = 0; i < seeds.positions.size(); ++i)
+    {
+        const double dV = seeds.volumes[i];
+        const auto  &res = out_results[i];
+
+        V_total += dV;
+
+        switch (res.exit_code)
+        {
+            case ElectronExitCode::HitLiquidGas:       V_hit_lgi     += dV; break;
+            case ElectronExitCode::HitCathode:         V_hit_cathode += dV; break;
+            case ElectronExitCode::HitWall:            V_hit_wall    += dV; break;
+            case ElectronExitCode::LeftVolume:         V_left_volume += dV; break;
+            case ElectronExitCode::MaxSteps:           V_max_steps   += dV; break;
+            case ElectronExitCode::DegenerateTimeStep: V_deg_dt      += dV; break;
+            case ElectronExitCode::HitAxis:            V_hit_axis    += dV; break;
+            case ElectronExitCode::None:               V_none        += dV; break;
+        }
+    }
+
+    auto vfrac = [&](double V) -> double {
+        return (V_total > 0.0 ? V / V_total : 0.0);
+    };
+
+    std::cout << "\n---------------- Electron Tracing Summary ----------------\n";
+    std::cout << "Total seeds traced: " << out_results.size() << "\n\n";
+
+    std::cout << std::left
+              << std::setw(22) << "Exit Type"
+              << std::setw(18) << "Seed Fraction"
+              << std::setw(18) << "Volume Fraction\n";
+
+    std::cout << "-----------------------------------------------------------------\n";
+
+    auto row = [&](const char *label, double f_seed, double f_vol) {
+        std::cout << std::left
+                  << std::setw(22) << label
+                  << std::setw(18) << f_seed
+                  << std::setw(18) << f_vol
+                  << "\n";
+    };
+
+    row("Hit Liquid-Gas",   frac(count_hit_lgi),     vfrac(V_hit_lgi));
+    row("Hit Cathode",      frac(count_hit_cathode), vfrac(V_hit_cathode));
+    row("Hit Wall",         frac(count_hit_wall),    vfrac(V_hit_wall));
+    row("Hit Axis",         frac(count_hit_axis),    vfrac(V_hit_axis));
+    row("Left Volume",      frac(count_left_volume), vfrac(V_left_volume));
+    row("Max Steps",        frac(count_max_steps),   vfrac(V_max_steps));
+    row("Degenerate dt",    frac(count_deg_dt),      vfrac(V_deg_dt));
+    row("None (unexpected)",frac(count_none),        vfrac(V_none));
+
+    std::cout << "-----------------------------------------------------------------\n";
+}
+
+static void DumpElectronPathsCSV(const Config                          &cfg,
+                                 const std::vector<ElectronTraceResult> &out_results)
+{
+    if (!cfg.debug.dumpdata) { return; }
+
+    std::cout << "[DEBUG] Dumping Electron Paths in CIV" << std::endl;
+    namespace fs = std::filesystem;
+    fs::path outdir(cfg.save_path);
+    fs::path outfile = outdir / "electron_paths_debug.csv";
+    std::ofstream ofs(outfile);
+    ofs << "# id, step, r, z, exit_code\n";
+
+    for (std::size_t i = 0; i < out_results.size(); ++i)
+    {
+        const auto &res = out_results[i];
+        const auto &pts = res.points;
+
+        for (std::size_t k = 0; k < pts.size(); ++k)
+        {
+            const mfem::Vector &x = pts[k];
+            const double r = x(0);
+            const double z = x(1);
+
+            ofs << i << "," << k << "," << r << "," << z << ","
+                << static_cast<int>(res.exit_code) << "\n";
+        }
+    }
+}
+
+
+// -----------------------------------------------------------------------------
+// INNER: does EVERYTHING except object creation needed to satisfy its signature
+// -----------------------------------------------------------------------------
+void TraceElectronFieldLinesInner(mfem::ParMesh                   &global_mesh,
+                                  mfem::GridFunction              &global_phi,
+                                  const ElementAdjacency          &adj,
+                                  const mfem::FiniteElementCollection *fec_phi,
+                                  int                              ordering_phi,
+                                  const ElectronTraceParams        &params,
+                                  const Config                     &cfg,
+                                  const CivSeeds                   &seeds,
+                                  std::vector<ElectronTraceResult> &out_results,
+                                  bool                             axisymmetric,
+                                  bool                             save_paths,
+                                  const double                     *z_max_overrides) // size = n_seeds or nullptr
+{
+    using namespace mfem;
+
+    const int dim = global_mesh.SpaceDimension();
+    const std::size_t n_seeds = seeds.positions.size();
+
+    if (z_max_overrides != nullptr)
+    {
+        MFEM_VERIFY(out_results.size() == n_seeds,
+                    "TraceElectronFieldLinesInner: out_results must be sized to n_seeds");
+    }
+
+    // -------------------------------------------------------------------------
+    // Single-seed debug mode
+    // -------------------------------------------------------------------------
+    if (cfg.debug.debug_single_seed)
+    {
+        // For debug_single_seed there isn't a natural seed index; use [0] if provided.
+        ElectronTraceParams local_params = params;
+        if (z_max_overrides != nullptr && n_seeds > 0)
+        {
+            local_params.z_max = z_max_overrides[0];
+        }
+
+        TpcGeometry geom(local_params);
+
+        DebugSingleSeedTrace(global_mesh,
+                             dim,
+                             global_phi,
+                             fec_phi,
+                             ordering_phi,
+                             adj,
+                             geom,
+                             local_params,
+                             cfg,
+                             out_results,
+                             axisymmetric,
+                             save_paths);
+    }
+    else
+    {
+        // ---------------------------------------------------------------------
+        // Normal mode: trace all seeds in parallel
+        // ---------------------------------------------------------------------
+        #pragma omp parallel
+        {
+            ParMesh local_mesh(global_mesh);
+
+            ParFiniteElementSpace local_fes_phi(&local_mesh, fec_phi, /*vdim=*/1, ordering_phi);
+            GridFunction local_phi(&local_fes_phi);
+            local_phi = global_phi;
+
+            ElectricFieldCoeff local_E_coeff(local_phi, 1.0);
+
+            const ElementAdjacency &local_adj = adj;
+
+            #pragma omp for schedule(static)
+            for (std::int64_t i = 0; i < static_cast<std::int64_t>(n_seeds); ++i)
+            {
+                const std::size_t ui = static_cast<std::size_t>(i);
+                const int start_elem = seeds.elements[ui];
+                const IntegrationPoint &start_ip = seeds.ips[ui];
+
+                ElectronTraceParams local_params = params;
+                if (z_max_overrides != nullptr)
+                {
+                    local_params.z_max = z_max_overrides[ui];
+                }
+
+                // Per-seed geometry so ClassifyBoundary sees the per-seed z_max
+                TpcGeometry local_geom(local_params);
+
+                ElectronTraceResult res = TraceSingleElectronLine(local_mesh,
+                                                                  local_E_coeff,
+                                                                  local_adj,
+                                                                  local_geom,
+                                                                  local_params,
+                                                                  start_elem,
+                                                                  start_ip,
+                                                                  axisymmetric,
+                                                                  save_paths);
+
+                out_results[ui] = std::move(res);
+            }
+        } // end parallel
+    }
+
+    PrintExitConditionSummary(cfg, seeds, out_results);
+    DumpElectronPathsCSV(cfg, out_results);
+}
+
+// -----------------------------------------------------------------------------
+// OUTER: only constructs objects needed for the inner signature, then calls it
+// (nonstatic free function)
+// -----------------------------------------------------------------------------
 void TraceElectronFieldLines(const SimulationResult           &sim,
                              const Config                     &cfg,
                              const CivSeeds                   &seeds,
@@ -724,14 +1300,10 @@ void TraceElectronFieldLines(const SimulationResult           &sim,
 {
     using namespace mfem;
 
-    // Copy tracing params so we can tweak them locally (e.g. in debug mode)
     ElectronTraceParams params = cfg.tracing_params;
     params.z_max = cfg.tracing_params.tracing_z_max;
 
     ParMesh &global_mesh = *sim.mesh;
-    const int dim = global_mesh.SpaceDimension();
-
-    // H1 potential used to compute E = -grad(phi)
     GridFunction &global_phi = *sim.V;
 
     const std::size_t n_seeds = seeds.positions.size();
@@ -739,853 +1311,30 @@ void TraceElectronFieldLines(const SimulationResult           &sim,
                 seeds.ips.size()      == n_seeds,
                 "TraceElectronFieldLines: CivSeeds size mismatch");
 
-    // Prepare output container for parallel write by index
     out_results.clear();
     out_results.resize(n_seeds);
 
-    // Build adjacency ONCE from the global mesh
     ElementAdjacency adj = BuildAdjacency(global_mesh);
 
-    TpcGeometry geom(cfg);
+    TpcGeometry geom(params);
 
-    // FE info for the potential phi
-    const FiniteElementSpace        *fes_phi   = global_phi.FESpace();
-    const FiniteElementCollection   *fec_phi   = fes_phi->FEColl();
-    const int                        ordering_phi = fes_phi->GetOrdering();
+    const FiniteElementSpace      *fes_phi      = global_phi.FESpace();
+    const FiniteElementCollection *fec_phi      = fes_phi->FEColl();
+    const int                      ordering_phi = fes_phi->GetOrdering();
 
     const bool axisymmetric = cfg.solver.axisymmetric;
     const bool save_paths   = cfg.debug.dumpdata;
 
-    // -------------------------------------------------------------------------
-    // Single-seed debug mode
-    // -------------------------------------------------------------------------
-    if (cfg.debug.debug_single_seed)
-    {
-        // 1) Construct centre point in physical coordinates
-        const double r_c = 0.5 * (params.r_min + params.r_max);
-        const double z_c = 0.5 * (params.z_min + params.z_max);
-
-        mfem::Vector x_center(dim);
-        x_center[0] = r_c;
-        x_center[1] = z_c;
-
-        // 2) Find element and reference IntegrationPoint that contain x_center
-        int                   elem_center = -1;
-        mfem::IntegrationPoint ip_center;
-
-        for (int e = 0; e < global_mesh.GetNE(); ++e)
-        {
-            mfem::ElementTransformation *T = global_mesh.GetElementTransformation(e);
-            mfem::InverseElementTransformation invT(T);
-
-            mfem::IntegrationPoint ip_trial;
-            int res = invT.Transform(x_center, ip_trial);
-            if (res == InverseElementTransformation::Inside)
-            {
-                elem_center = e;
-                ip_center   = ip_trial;
-                break;
-            }
-        }
-
-        mfem::ElementTransformation *Tcheck =
-            global_mesh.GetElementTransformation(elem_center);
-        Tcheck->SetIntPoint(&ip_center);
-
-        mfem::Vector x_check(dim);
-        Tcheck->Transform(ip_center, x_check);
-
-        std::cout << "[DEBUG:TRACE] Centre from config : r=" << r_c
-                  << ", z=" << z_c << "\n";
-        std::cout << "[DEBUG:TRACE] Mapped back centre : r=" << x_check[0]
-                  << ", z=" << x_check[1] << "\n";
-
-        if (cfg.debug.debug)
-        {
-            std::cout << "[DEBUG:TRACE] Single-seed debug mode active.\n"
-                      << "               Centre point: r=" << r_c
-                      << ", z=" << z_c << "\n"
-                      << "               Element id : " << elem_center << "\n";
-        }
-
-        // 3) Local mesh and potential
-        mfem::ParMesh local_mesh(global_mesh);
-
-        mfem::ParFiniteElementSpace local_fes_phi(
-            &local_mesh, fec_phi, /*vdim=*/1, ordering_phi);
-
-        mfem::GridFunction local_phi(&local_fes_phi);
-        local_phi = global_phi; // copy potential DOFs
-
-        // Local E coefficient: E = -grad(phi)
-        ElectricFieldCoeff local_E_coeff(local_phi, -1.0);
-
-        const ElementAdjacency &local_adj = adj;
-
-        // 4) Local params with optional c_step override
-        ElectronTraceParams local_params = params;
-        if (cfg.debug.debug_c_step_override > 0.0)
-        {
-            local_params.c_step = cfg.debug.debug_c_step_override;
-        }
-
-        // 5) Resize outputs and trace exactly one electron
-        out_results.clear();
-        out_results.resize(1);
-
-        out_results[0] = TraceSingleElectronLine(local_mesh,
-                                                 local_E_coeff,
-                                                 local_adj,
-                                                 geom,
-                                                 local_params,
-                                                 elem_center,
-                                                 ip_center,
-                                                 axisymmetric,
-                                                 save_paths);
-    }
-    else
-    {
-        // ---------------------------------------------------------------------
-        // Normal mode: trace all seeds in parallel
-        // ---------------------------------------------------------------------
-
-        #pragma omp parallel
-        {
-            // Local copy of the mesh (geometry + topology)
-            ParMesh local_mesh(global_mesh);
-
-            // Local FE space and potential on local mesh
-            ParFiniteElementSpace local_fes_phi(&local_mesh, fec_phi, /*vdim=*/1, ordering_phi);
-            GridFunction local_phi(&local_fes_phi);
-            local_phi = global_phi; // copy potential DOFs
-
-            // Local E coefficient: physical field E = -grad(phi)
-            ElectricFieldCoeff local_E_coeff(local_phi, -1.0);
-
-            // Adjacency can be shared
-            const ElementAdjacency &local_adj = adj;
-
-            // Parallelize over seeds within this thread's context
-            #pragma omp for schedule(static)
-            for (std::int64_t i = 0; i < static_cast<std::int64_t>(n_seeds); ++i)
-            {
-                const int start_elem = seeds.elements[i];
-                const IntegrationPoint &start_ip = seeds.ips[i];
-
-                ElectronTraceParams local_params = params;
-
-                ElectronTraceResult res = TraceSingleElectronLine(local_mesh,
-                                                                  local_E_coeff,
-                                                                  local_adj,
-                                                                  geom,
-                                                                  local_params,
-                                                                  start_elem,
-                                                                  start_ip,
-                                                                  axisymmetric,
-                                                                  save_paths);
-
-                out_results[static_cast<std::size_t>(i)] = std::move(res);
-            }
-        } // end parallel
-    }
-
-    // Print exit condition summary (serial)
-    if (cfg.debug.debug)
-    {
-        std::size_t count_hit_lgi      = 0;
-        std::size_t count_hit_cathode  = 0;
-        std::size_t count_hit_wall     = 0;
-        std::size_t count_left_volume  = 0;
-        std::size_t count_max_steps    = 0;
-        std::size_t count_deg_dt       = 0;
-        std::size_t count_none         = 0;
-        std::size_t count_hit_axis     = 0; 
-
-        for (const auto &res : out_results)
-        {
-            switch (res.exit_code)
-            {
-                case ElectronExitCode::HitLiquidGas:       count_hit_lgi++;     break;
-                case ElectronExitCode::HitCathode:         count_hit_cathode++; break;
-                case ElectronExitCode::HitWall:            count_hit_wall++;    break;
-                case ElectronExitCode::LeftVolume:         count_left_volume++; break;
-                case ElectronExitCode::MaxSteps:           count_max_steps++;   break;
-                case ElectronExitCode::DegenerateTimeStep: count_deg_dt++;      break;
-                case ElectronExitCode::HitAxis:            count_hit_axis++;    break;
-                case ElectronExitCode::None:               count_none++;        break;
-            }
-        }
-
-        const double N = static_cast<double>(out_results.size());
-        auto frac = [&](std::size_t c) -> double {
-            return (N > 0.0 ? static_cast<double>(c) / N : 0.0);
-        };
-
-        double V_total        = 0.0;
-        double V_hit_lgi      = 0.0;
-        double V_hit_cathode  = 0.0;
-        double V_hit_wall     = 0.0;
-        double V_left_volume  = 0.0;
-        double V_max_steps    = 0.0;
-        double V_deg_dt       = 0.0;
-        double V_none         = 0.0;
-        double V_hit_axis     = 0.0;
-
-        for (std::size_t i = 0; i < seeds.positions.size(); ++i)
-        {
-            const double dV = seeds.volumes[i];
-            const auto  &res = out_results[i];
-
-            V_total += dV;
-
-            switch (res.exit_code)
-            {
-                case ElectronExitCode::HitLiquidGas:       V_hit_lgi     += dV; break;
-                case ElectronExitCode::HitCathode:         V_hit_cathode += dV; break;
-                case ElectronExitCode::HitWall:            V_hit_wall    += dV; break;
-                case ElectronExitCode::LeftVolume:         V_left_volume += dV; break;
-                case ElectronExitCode::MaxSteps:           V_max_steps   += dV; break;
-                case ElectronExitCode::DegenerateTimeStep: V_deg_dt      += dV; break;
-                case ElectronExitCode::HitAxis:            V_hit_axis    += dV; break;
-                case ElectronExitCode::None:               V_none        += dV; break;
-            }
-        }
-
-        auto vfrac = [&](double V) -> double {
-            return (V_total > 0.0 ? V / V_total : 0.0);
-        };
-
-        std::cout << "\n---------------- Electron Tracing Summary ----------------\n";
-        std::cout << "Total seeds traced: " << out_results.size() << "\n\n";
-
-        std::cout << std::left
-                  << std::setw(22) << "Exit Type"
-                  << std::setw(18) << "Seed Fraction"
-                  << std::setw(18) << "Volume Fraction\n";
-
-        std::cout << "-----------------------------------------------------------------\n";
-
-        auto row = [&](const char *label, double f_seed, double f_vol) {
-            std::cout << std::left
-                      << std::setw(22) << label
-                      << std::setw(18) << f_seed
-                      << std::setw(18) << f_vol
-                      << "\n";
-        };
-
-        row("Hit Liquid-Gas",
-            frac(count_hit_lgi),
-            vfrac(V_hit_lgi));
-
-        row("Hit Cathode",
-            frac(count_hit_cathode),
-            vfrac(V_hit_cathode));
-
-        row("Hit Wall",
-            frac(count_hit_wall),
-            vfrac(V_hit_wall));
-
-        row("Hit Axis",
-            frac(count_hit_axis),
-            vfrac(V_hit_axis));
-
-        row("Left Volume",
-            frac(count_left_volume),
-            vfrac(V_left_volume));
-
-        row("Max Steps",
-            frac(count_max_steps),
-            vfrac(V_max_steps));
-
-        row("Degenerate dt",
-            frac(count_deg_dt),
-            vfrac(V_deg_dt));
-
-        row("None (unexpected)",
-            frac(count_none),
-            vfrac(V_none));
-
-        std::cout << "-----------------------------------------------------------------\n";
-    }
-
-    if (cfg.debug.dumpdata)
-    {
-        std::cout << "[DEBUG] Dumping Electron Paths in CIV" << std::endl;
-        namespace fs = std::filesystem;
-        fs::path outdir(cfg.save_path);
-        fs::path outfile = outdir / "electron_paths_debug.csv";
-        std::ofstream ofs(outfile);
-        ofs << "# id, step, r, z, exit_code\n";
-
-        for (std::size_t i = 0; i < out_results.size(); ++i)
-        {
-            const auto &res = out_results[i];
-            const auto &pts = res.points;
-
-            for (std::size_t k = 0; k < pts.size(); ++k)
-            {
-                const mfem::Vector &x = pts[k];
-                const double r = x(0);
-                const double z = x(1);
-
-                ofs << i << "," << k << "," << r << "," << z << ","
-                    << static_cast<int>(res.exit_code) << "\n";
-            }
-        }
-    }
+    TraceElectronFieldLinesInner(global_mesh,
+                                 global_phi,
+                                 adj,
+                                 fec_phi,
+                                 ordering_phi,
+                                 params,
+                                 cfg,
+                                 seeds,
+                                 out_results,
+                                 axisymmetric,
+                                 save_paths,
+                                /*z_max_overrides=*/nullptr);
 }
-
-
-// ============================================================================
-// CIV by binary search 
-// ============================================================================
-static bool FindElementForPointGlobal(
-    mfem::ParMesh          &mesh,
-    const mfem::Vector     &x_phys,
-    int                    &out_elem,
-    mfem::IntegrationPoint &out_ip)
-{
-    using namespace mfem;
-
-    const int ne = mesh.GetNE();
-
-    for (int e = 0; e < ne; ++e)
-    {
-        ElementTransformation *T = mesh.GetElementTransformation(e);
-        MFEM_ASSERT(T, "FindElementForPointGlobal: ElementTransformation is null");
-
-        InverseElementTransformation invT(T);
-
-        IntegrationPoint ip_trial;
-        int res = invT.Transform(x_phys, ip_trial);
-        if (res == InverseElementTransformation::Inside)
-        {
-            out_elem = e;
-            out_ip   = ip_trial;
-            return true;
-        }
-    }
-
-    // No element contains x_phys
-    return false;
-}
-
-// Return true for any form of charge insensitivity (cathode or wall)
-static bool IsChargeInsensitive(const ElectronTraceResult &res)
-{
-    return (res.exit_code == ElectronExitCode::HitCathode ||
-            res.exit_code == ElectronExitCode::HitWall);
-}
-
-
-struct TracerContext
-{
-    // Per-thread-owned MFEM objects
-    mfem::ParMesh               mesh;        // local copy of global mesh
-    mfem::ParFiniteElementSpace fes_phi;     // H1 space for potential
-    mfem::GridFunction          phi;         // potential on local mesh
-    ElectricFieldCoeff          E_coeff;     // E = -grad(phi)
-
-    // Shared read-only data (references or pointers)
-    const ElementAdjacency              &adj;
-
-    // Physics / configuration
-    TpcGeometry         tpc;
-    ElectronTraceParams params;
-    bool                axisymmetric;
-    Config              cfg;
-
-    TracerContext(mfem::ParMesh                     &global_mesh,
-                  const mfem::FiniteElementCollection *fec_phi,
-                  int                                  ordering,
-                  const mfem::GridFunction           &global_phi,
-                  const ElementAdjacency             &adj_ref,
-                  const Config                       &cfg)
-        : mesh(global_mesh),
-          fes_phi(&mesh, fec_phi, /*vdim=*/1, ordering),
-          phi(&fes_phi),
-          E_coeff(phi, -1.0),
-          adj(adj_ref),
-          tpc(cfg),
-          params(cfg.tracing_params),
-          axisymmetric(cfg.solver.axisymmetric),
-          cfg(cfg)
-    {
-        phi = global_phi; // copy potential DOFs into local mesh
-    }
-
-    TracerContext(const TracerContext&) = delete;
-    TracerContext& operator=(const TracerContext&) = delete;
-    TracerContext(TracerContext&&) = default;
-    TracerContext& operator=(TracerContext&&) = default;
-};
-// Trace a single electron starting from physical (r,z).
-// Returns true if the point was inside the mesh and we traced it.
-// On success, fills 'res' and 'start_elem'.
-static bool TraceSingleCIProbe(TracerContext       &ctx,
-                               double               r,
-                               double               z,
-                               int                 &elem_guess,
-                               ElectronTraceResult &res)
-{
-    using namespace mfem;
-
-    // Reject points outside the TPC region
-    if (!ctx.tpc.Inside(r, z))
-    {
-        return false;
-    }
-
-    // Physical coordinate vector
-    const int dim = ctx.mesh.SpaceDimension();
-
-    Vector x_phys(dim);
-    x_phys[0] = r;
-    x_phys[1] = z;
-
-    int              elem = -1;
-    IntegrationPoint ip;
-
-    // 1) try local search from elem_guess if valid
-    if (elem_guess >= 0 &&
-        elem_guess < ctx.mesh.GetNE() &&
-        FindElementForPointLocal(ctx.mesh, ctx.adj, elem_guess, x_phys, elem, ip))
-    {
-        elem_guess = elem;
-    }
-    // 2) otherwise global search
-    else if (!FindElementForPointGlobal(ctx.mesh, x_phys, elem, ip))
-    {
-        return false; // not in mesh
-    }
-    else
-    {
-        elem_guess = elem;
-    }
-
-    // Now trace from (elem, ip) using existing RK4 integrator
-    res = TraceSingleElectronLine(ctx.mesh,
-                                  ctx.E_coeff,
-                                  ctx.adj,
-                                  ctx.tpc,
-                                  ctx.params,
-                                  elem,
-                                  ip,
-                                  ctx.axisymmetric,
-                                  /*save_pathlines=*/false);
-
-    return true;
-}
-
-
-// Used to do simple downwards integration of the resulting boundaries instead of 
-// summing mesh elements
-static double ComputeCIV_FromInterfaceAnalytic(const Config                  &cfg,
-                                               const std::vector<InterfacePoint> &iface)
-{
-    if (iface.empty())
-    {
-        return 0.0;
-    }
-
-    TpcGeometry tpc(cfg);
-
-    const double r_min = tpc.r_min;
-    const double r_max = tpc.r_max;
-    const double z_min = tpc.z_min;
-
-    // Use the same "top of active drift region" as in the old element-based
-    // ComputeCIVFromInterface (z_check_max = cfg.tracing_params.z_max).
-    const double z_top = cfg.tracing_params.z_max;  // or tpc.z_max if you prefer
-
-    if (r_max <= r_min || z_top <= z_min)
-    {
-        return 0.0;
-    }
-
-    std::vector<InterfacePoint> pts = iface;
-
-    auto clamp_z = [&](double z) -> double {
-        if (z < z_min) return z_min;
-        if (z > z_top) return z_top;
-        return z;
-    };
-
-    double A_ci = 0.0; // CI area in (r,z)
-
-    // Segment from r_min up to first interface point: use z_ci = pts.front().z_ci
-    const double r0 = pts.front().r;
-    if (r_min < r0)
-    {
-        double zc = clamp_z(pts.front().z_ci);
-        double h  = zc - z_min;
-        if (h > 0.0)
-        {
-            A_ci += h * (r0 - r_min);
-        }
-    }
-
-    // Interior segments: piecewise linear between successive interface points
-    const int n = static_cast<int>(pts.size());
-    for (int i = 0; i + 1 < n; ++i)
-    {
-        const double ra = pts[i].r;
-        const double rb = pts[i+1].r;
-        if (rb <= ra) { continue; }
-
-        double za = clamp_z(pts[i].z_ci);
-        double zb = clamp_z(pts[i+1].z_ci);
-
-        double ha = za - z_min;
-        double hb = zb - z_min;
-
-        // Clip negative heights (if z_ci dips below z_min numerically)
-        if (ha < 0.0) ha = 0.0;
-        if (hb < 0.0) hb = 0.0;
-
-        if (ha == 0.0 && hb == 0.0) { continue; }
-
-        // Trapezoidal area under a linear segment: (average height) * width
-        const double dr    = rb - ra;
-        const double h_avg = 0.5 * (ha + hb);
-        A_ci += h_avg * dr;
-    }
-
-    // Segment from last interface point up to r_max: use z_ci = pts.back().z_ci
-    const double rn = pts.back().r;
-    if (rn < r_max)
-    {
-        double zc = clamp_z(pts.back().z_ci);
-        double h  = zc - z_min;
-        if (h > 0.0)
-        {
-            A_ci += h * (r_max - rn);
-        }
-    }
-
-    // Total area of the active rectangle in (r,z)
-    const double A_tot = (r_max - r_min) * (z_top - z_min);
-    if (A_tot <= 0.0)
-    {
-        return 0.0;
-    }
-
-    const double frac = A_ci / A_tot;
-    return frac;
-}
-// ============================================================================
-// CIV by radial column sweeps (fixed r-slices, z-search per slice)
-// ============================================================================
-static double ComputeCIV_ColumnSweep(const SimulationResult &sim,
-                                     const Config           &cfg)
-{
-    using namespace mfem;
-
-    MFEM_VERIFY(sim.mesh, "ComputeCIV_ColumnSweep: mesh is null");
-    ParMesh &global_mesh = *sim.mesh;
-
-    MFEM_VERIFY(sim.V, "ComputeCIV_ColumnSweep: potential V is null");
-    GridFunction &global_phi = *sim.V;
-
-    const FiniteElementSpace      *fes_phi = global_phi.FESpace();
-    const FiniteElementCollection *fec     = fes_phi->FEColl();
-    const int                      ordering = fes_phi->GetOrdering();
-
-    // Shared geometry/connectivity
-    ElementAdjacency              adj         = BuildAdjacency(global_mesh);
-
-    // Base tracer context
-    TracerContext base_ctx(global_mesh,
-                           fec,
-                           ordering,
-                           global_phi,
-                           adj,
-                           cfg);
-
-    // Speed up by not requiring to traverse the entire TPC 
-
-    // Geometry limits and params
-    TpcGeometry tpc(cfg);
-    const double r_min    = tpc.r_min;
-    const double r_max    = tpc.r_max;
-    const double z_min    = tpc.z_min;
-    const double z_max    = tpc.z_max;
-    const double geom_tol = cfg.tracing_params.geom_tol;
-    const bool   debug    = cfg.debug.debug;
-
-    if (debug)
-    {
-        std::cout << "[DEBUG:CIV] r_min=" << r_min
-                  << " r_max=" << r_max
-                  << " z_min=" << z_min
-                  << " z_max=" << z_max
-                  << " geom_tol=" << geom_tol << "\n";
-    }
-
-    // Number of radial slices
-    const int n_r_slices = 25; // TODO Config entry 
-
-    // Radial range we actually sample (avoid exact boundaries)
-    const double r_lo = r_min + geom_tol;
-    const double r_hi = r_max - geom_tol;
-    if (r_hi <= r_lo)
-    {
-        if (debug)
-        {
-            std::cout << "[DEBUG:CIV] Invalid radial range in ColumnSweep: r_hi <= r_lo\n";
-        }
-        return 0.0;
-    }
-
-    // Max number of traces per column
-    int n_threads = cfg.compute.threads.num;
-    if (n_threads <= 0) { n_threads = 1; }
-    const int max_probes_per_column = 50; // TOOD Config hook
-
-    if (debug)
-    {
-        std::cout << "[DEBUG:CIV] n_r_slices=" << n_r_slices
-                  << " threads=" << n_threads
-                  << " max_probes_per_column=" << max_probes_per_column << "\n";
-    }
-
-    // Build per-thread contexts (same pattern as in FindInitialColumnCI)
-    int n_used_threads = std::max(1, n_threads);
-    std::vector<std::unique_ptr<TracerContext>> extra;
-    extra.reserve(n_used_threads - 1);
-
-    std::vector<TracerContext*> ctx_pool(n_used_threads);
-    ctx_pool[0] = &base_ctx;
-
-    for (int t = 1; t < n_used_threads; ++t)
-    {
-        extra.emplace_back(std::make_unique<TracerContext>(
-            base_ctx.mesh, fec, ordering, base_ctx.phi,
-            adj, cfg));
-        ctx_pool[t] = extra.back().get();
-    }
-
-    // Storage for interface points (per slice) and flags
-    std::vector<InterfacePoint> iface_tmp(n_r_slices);
-    std::vector<bool>           col_found(n_r_slices, false);
-
-    // Parallel over radial slices; each thread uses its own TracerContext
-    #pragma omp parallel for num_threads(n_used_threads)
-    for (int k = 0; k < n_r_slices; ++k)
-    {
-        int tid = omp_get_thread_num();
-        if (tid >= n_used_threads) { tid %= n_used_threads; }
-
-        TracerContext &ctx_k = *ctx_pool[tid];
-
-        // Radial location for this column
-        const double t   = (k + 0.5) / static_cast<double>(n_r_slices);
-        const double r_k = r_lo + t * (r_hi - r_lo);
-
-        // -----------------------------------------
-        // REUSE elem_guess across all z probes in this column
-        // -----------------------------------------
-        int elem_guess = -1;
-
-        // Bracket top/bottom
-        double z_top = -1.5;//z_max - geom_tol; //TODO add config entry
-        double z_bot = z_min + geom_tol; 
-
-        // Top probe
-        bool ok_top = false, ci_top = false;
-        {
-            double rr = r_k, zz = z_top;
-            ElectronTraceResult res;
-            ok_top = TraceSingleCIProbe(ctx_k, rr, zz, elem_guess, res);
-            ci_top = ok_top && IsChargeInsensitive(res);
-        }
-
-        // Bottom probe (reuses elem_guess)
-        bool ok_bot = false, ci_bot = false;
-        {
-            double rr = r_k, zz = z_bot;
-            ElectronTraceResult res;
-            ok_bot = TraceSingleCIProbe(ctx_k, rr, zz, elem_guess, res);
-            ci_bot = ok_bot && IsChargeInsensitive(res);
-        }
-
-        bool   found_ci = false;
-        double z_ci     = 0.0;
-
-        if (!ok_bot || !ci_bot)
-        {
-            // No CI even at bottom -> this column contributes nothing
-            found_ci = false;
-        }
-        else if (ci_top)
-        {
-            // CI already at top -> whole column CI
-            found_ci = true;
-            z_ci     = z_top;
-        }
-        else
-        {
-            // Bisection between z_top (non-CI) and z_bot (CI)
-            double z_hi = z_top;
-            double z_lo = z_bot;
-            z_ci        = z_lo;
-
-            int remaining = max_probes_per_column - 2;
-
-            while (remaining > 0 && (z_hi - z_lo) > 5.0 * geom_tol)
-            {
-                double z_mid = 0.5 * (z_hi + z_lo);
-                double rr = r_k, zz = z_mid;
-
-                ElectronTraceResult res;
-                bool ok_mid = TraceSingleCIProbe(ctx_k, rr, zz, elem_guess, res);
-                bool ci_mid = ok_mid && IsChargeInsensitive(res);
-
-                if (ci_mid)
-                {
-                    z_ci = z_mid;
-                    z_lo = z_mid;   // CI side moves up
-                }
-                else
-                {
-                    z_hi = z_mid;   // non-CI side moves down
-                }
-
-                --remaining;
-            }
-
-            found_ci = true;
-        }
-
-        if (found_ci)
-        {
-            col_found[k] = true;
-            InterfacePoint ip;
-            ip.r          = r_k;
-            ip.z_ci       = z_ci;
-            ip.elem       = elem_guess;  // optional; not needed for volume
-            ip.cathode_ci = false;
-            ip.wall_ci    = false;
-            iface_tmp[k]  = ip;
-        }
-        else
-        {
-            col_found[k] = false;
-        }
-    }    // end parallel over columns
-
-    // Compact interface points to only those columns where we found CI
-    std::vector<InterfacePoint> iface;
-    iface.reserve(n_r_slices);
-    for (int k = 0; k < n_r_slices; ++k)
-    {
-        if (col_found[k])
-        {
-            iface.push_back(iface_tmp[k]);
-        }
-    }
-
-    if (iface.empty())
-    {
-        if (debug)
-        {
-            std::cout << "[DEBUG:CIV] ColumnSweep: no interface points found; CIV = 0.\n";
-        }
-        return 0.0;
-    }
-
-    // Sort by radius so EvaluateInterfaceZ works correctly
-    std::sort(iface.begin(), iface.end(),
-              [](const InterfacePoint &a, const InterfacePoint &b)
-              {
-                  return a.r < b.r;
-              });
-
-    if (cfg.tracing_params.dump_civ_boundary)
-    {
-        namespace fs = std::filesystem;
-        fs::path outdir(cfg.save_path);
-        fs::path fname = outdir / "civ_interface_boundary_columnsweep.csv";
-        std::ofstream ofs(fname);
-        ofs << "# r, z_ci\n";
-        for (const auto &ip : iface)
-            ofs << ip.r << "," << ip.z_ci << "\n";
-
-        if (debug)
-        {
-            std::cout << "[DEBUG:CIV] Dumped ColumnSweep CIV boundary to: "
-                      << fname.string() << "\n";
-        }
-    }
-    // CIVolumeResult vres = ComputeCIVFromInterface(global_mesh, cfg, geom, iface);
-    double V_CI = ComputeCIV_FromInterfaceAnalytic(cfg, iface);
-
-    double V_total = (r_max - r_min) * (z_max - z_min ); //vres.V_total;
-    //double V_CI    = vres.V_CI;
-    double frac    = (V_total > 0.0) ? (V_CI / V_total) : 0.0;
-
-    if (debug)
-    {
-        std::cout << "\n----- Charge Insensitive Volume (ColumnSweep) -----\n";
-        std::cout << "Total Volume considered: " << V_total << "\n";
-        std::cout << "CIV Volume:              " << V_CI    << "\n";
-        std::cout << "CIV Fraction:            " << frac    << "\n";
-        std::cout << "---------------------------------------------------\n";
-    }
-
-    return frac;
-}
-
-// ============================================================================
-// Public API: tracing
-// ============================================================================
-
-double compute_civ(const Config &cfg, const SimulationResult &result)
-/*
-Compute Charge Insensitive Volume on the mesh
-Ie 1-(Volume where electrons reach liquid gas interface) / (Total Volume)
-*/
-{
-    auto t_start = std::chrono::steady_clock::now();
-    if (cfg.debug.debug)
-        std::cout << "[DEBUG:CIV] Timing: start CIV" << std::endl;
-
-    const std::string &method = cfg.tracing_params.method; // "InformedSweep" or "RandomSample"
-
-    if (method == "RandomSample")
-    {
-        return ComputeCIV_RandomSample(cfg, result);
-    }
-    else if (method == "InformedSweep")
-    {
-        // Marching-interface CIV
-        if (cfg.debug.debug)
-        {
-           throw std::runtime_error("CIV Method Informed Sweep currently does not worked, issue lies in the point neighbor search repeatedly failing");
-        }
-        return 1.0;
-        //return ComputeCIV_Marching(result, cfg);
-    }
-    else if (method == "ColumnSweep")
-    {
-        if (cfg.debug.debug)
-        {
-            std::cout << "[DEBUG:OPTIMIZATION] Computing CIV (Column Sweep)" << std::endl;
-        }
-        double civ = ComputeCIV_ColumnSweep(result, cfg);
-        if (cfg.debug.debug)
-        {
-            auto t_end = std::chrono::steady_clock::now();
-            double ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
-            std::cout << "[DEBUG:CIV] Timing: ColumnSweep took " << ms << " ms" << std::endl;
-        }
-        return civ;
-    }
-    else
-    {
-        // Unknown method: default to random sampling, but warn
-        std::cerr << "[WARN:OPTIMIZATION] Unknown CIV method '" << method << "',\n";
-        return 1.0;
-    }
-}
-

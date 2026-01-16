@@ -23,7 +23,7 @@ No built in bounds or constraints -> We need to handle these manually
 #include "ComputeElectricField.h"
 #include "config_modification.h"
 #include "optimization.h"
-#include "trace_fieldlines.h"
+#include "CIV.h"
 #include "field_spread.h"
 
 
@@ -54,7 +54,7 @@ enum class FieldLineDest {
     Other       // anything else (lost, ambiguous, etc.)
 };
 
-// Forward declare - act definition at the end of this file
+// Forward declare
 class OptimizationLogger;
 
 using ObjectiveFn = std::function<double(const OptimizationMetrics&)>;
@@ -73,7 +73,7 @@ void apply_opt_vars(Config &cfg, const OptimizationSettings &opt, const std::vec
 
 std::vector<std::pair<std::string, std::string>> make_var_list(const OptimizationSettings &opt, const std::vector<double> &x);
 
-// File writing
+// ---------------------- File writing
 
 // Called at very end (kept in case file somehow gets corrupted)
 void write_optimization_meta(const std::string &geometry_id, const std::filesystem::path &save_root, const std::vector<OptRunRecord> &records);

@@ -23,7 +23,30 @@ struct SimulationResult
     std::unique_ptr<mfem::ParGridFunction> V;
     std::unique_ptr<mfem::GridFunction> E;
     std::unique_ptr<mfem::GridFunction> Emag;
+};
 
+// Struct to hold boundary attributes
+struct BoundaryData
+{
+  // Marker arrays: length = max_bdr_attr
+  mfem::Array<int> dirichlet_marker;
+  mfem::Array<int> neumann_marker;
+  mfem::Array<int> surface_charge_marker;
+
+  // Base coefficients (unweighted). 
+  std::unique_ptr<mfem::Coefficient> Vd_coeff;     // Dirichlet value u_D
+  std::unique_ptr<mfem::Coefficient> gN_coeff;     // Neumann flux data (if used)
+  std::unique_ptr<mfem::Coefficient> sigma_coeff;  // Surface charge σ_s
+
+  // Piecewise coefficients
+  std::vector<std::unique_ptr<mfem::Coefficient>> owned_pieces_Vd;
+  std::vector<std::unique_ptr<mfem::Coefficient>> owned_pieces_gN;
+  std::vector<std::unique_ptr<mfem::Coefficient>> owned_pieces_sigma;
+
+  // Dispatcher flags
+  bool has_dirichlet = false;
+  bool has_neumann = false;
+  bool has_surface_charge = false;
 };
 
 // Core solver entry point (no CLI, no file I/O)

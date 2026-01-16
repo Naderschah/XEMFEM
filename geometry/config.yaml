@@ -11,7 +11,7 @@ debug:
   dry_run: false
   printBoundaryConditions: false
   printHypreWarnings: false
-  dumpdata: false
+  dumpdata: true
   debug_single_seed: false
 compute:
   mpi:
@@ -20,7 +20,7 @@ compute:
     repartition_after_refine: true
   threads:
     enabled: true
-    num: 24
+    num: -1
     affinity: scatter
   device:
     type: none
@@ -29,7 +29,7 @@ compute:
 optimize:
   enabled: false
   print_results: true
-  objective: self_weighting
+  objective: "CIV"
   max_evals: 1
   max_iters: 1
   rel_tol_f: 0.001
@@ -40,13 +40,20 @@ optimize:
   z_min: -1.5025
   z_max: 0.004
   trace_params:
-    tracing_z_max: -0.75
+    method: "RK45"
+    c_step: 0.15
+    c_min_factor: 0.01
+    c_max_factor: 0.3
+    tol_rel: 1e-4 #0.1mm
+    adapt_shrink: 0.5
+    adapt_grow: 1.1
+    geom_tol: 1e-6
     max_steps: 1000000
-    c_cfl: 0.25
-    geom_tol: 1e-4
-    ir_order: 1
-    c_step: 0.5
-    num_seed_elements: 512
+  civ_params:
+    method: "RandomSample" 
+    num_seed_elements: 32
+    n_slices: 1
+    min_col_pos: 0.001
   fieldSpread_params:
     TopBottomDist: 0.14
     BottomPercentile: 0.5

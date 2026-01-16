@@ -269,13 +269,9 @@ static void parse_optimization(Config &cfg, const YAML::Node &root)
     cfg.optimize.enabled =
         O["enabled"].as<bool>(cfg.optimize.enabled);
 
-    if (!cfg.optimize.enabled) {
-        return; // nothing else to do
-    }
-
     cfg.optimize.metrics_only = O["metrics_only"].as<bool>(cfg.optimize.metrics_only);
     
-    cfg.optimize.objective =
+    cfg.optimize.print_results =
         O["print_results"].as<bool>(cfg.optimize.print_results);
 
     // Domain bounds
@@ -362,59 +358,42 @@ static void parse_trace_params(Config &cfg, const YAML::Node &root)
         const auto n = tp[key];
         return n ? n.as<bool>(cur) : cur;
     };
-
-   
-    params.tracing_z_max = get_d("tracing_z_max", params.tracing_z_max);
-    
-    // TODO Clean this up currently this is carried twice internaly
+    // TODO Make this not required
     params.r_min = cfg.optimize.r_min;
     params.r_max = cfg.optimize.r_max;
     params.z_min = cfg.optimize.z_min;
     params.z_max = cfg.optimize.z_max;
 
-    // Main controls
-    params.max_steps     = get_i("max_steps",     params.max_steps);
-    params.geom_tol      = get_d("geom_tol",      params.geom_tol);
-    params.ir_order      = get_i("ir_order",      params.ir_order);
-    params.num_seed_elements   = get_i("num_seed_elements",   params.num_seed_elements);
 
-    // Step-size controls
+    params.method        = tp["method"].as<std::string>(cfg.tracing_params.method);
     params.c_step        = get_d("c_step",        params.c_step);
-    params.ds_min_factor = get_d("ds_min_factor", params.ds_min_factor);
-    params.ds_max_factor = get_d("ds_max_factor", params.ds_max_factor);
-
-    // Adaptive / error control
-    params.adapt_grow    = get_d("adapt_grow",    params.adapt_grow);
-    params.adapt_shrink  = get_d("adapt_shrink",  params.adapt_shrink);
     params.tol_rel       = get_d("tol_rel",       params.tol_rel);
+    params.c_min_factor  = get_d("c_min_factor",  params.c_min_factor);
+    params.c_max_factor  = get_d("c_max_factor",  params.c_max_factor);
+    params.adapt_shrink  = get_d("adapt_shrink",  params.adapt_shrink);
+    params.adapt_grow    = get_d("adapt_grow",    params.adapt_grow);
+    params.geom_tol      = get_d("geom_tol",      params.geom_tol);
+    params.max_steps     = get_i("max_steps",     params.max_steps);
 
-    // Termination options
-    params.terminate_on_axis = get_b("terminate_on_axis", params.terminate_on_axis);
+
+    // TODO : To be Removed
+    params.tracing_z_max = get_d("tracing_z_max", params.tracing_z_max);
 
     // Basic validation
-    if (params.r_min >= params.r_max) {
-        throw std::runtime_error("Config error: optimize.trace_params: r_min must be < r_max");
-    }
-    if (params.z_min >= params.z_max) {
-        throw std::runtime_error("Config error: optimize.trace_params: z_min must be < z_max");
-    }
     if (params.max_steps <= 0) {
         throw std::runtime_error("Config error: optimize.trace_params: max_steps must be > 0");
     }
     if (params.geom_tol <= 0.0) {
         throw std::runtime_error("Config error: optimize.trace_params: geom_tol must be > 0");
     }
-    if (params.ir_order <= 0) {
-        throw std::runtime_error("Config error: optimize.trace_params: ir_order must be > 0");
-    }
     if (params.c_step <= 0.0) {
         throw std::runtime_error("Config error: optimize.trace_params: c_step must be > 0");
     }
-    if (params.ds_min_factor <= 0.0) {
-        throw std::runtime_error("Config error: optimize.trace_params: ds_min_factor must be > 0");
+    if (params.c_min_factor <= 0.0) {
+        throw std::runtime_error("Config error: optimize.trace_params: c_min_factor must be > 0");
     }
-    if (params.ds_max_factor <= 0.0 || params.ds_max_factor < params.ds_min_factor) {
-        throw std::runtime_error("Config error: optimize.trace_params: ds_max_factor must be >= ds_min_factor and > 0");
+    if (params.c_max_factor <= 0.0 || params.c_max_factor < params.c_min_factor) {
+        throw std::runtime_error("Config error: optimize.trace_params: c_max_factor must be >= c_min_factor and > 0");
     }
     if (params.adapt_grow < 1.0) {
         throw std::runtime_error("Config error: optimize.trace_params: adapt_grow must be >= 1");
@@ -429,6 +408,25 @@ static void parse_trace_params(Config &cfg, const YAML::Node &root)
     cfg.tracing_params = params;
 }
 
+// ---------------------- CIV Params 
+static void parse_civ_params(Config &cfg, const YAML::Node &root)
+{
+    if (!root["optimize"]) {
+        return; // not required
+    }
+    if (!root["optimize"]["civ_params"]) {
+        return; // not required
+    }
+
+    const YAML::Node O = root["optimize"]["civ_params"];
+
+    cfg.civ_params.method = O["method"].as<std::string>(cfg.civ_params.method);
+    cfg.civ_params.n_slices = O["n_slices"].as<int>(cfg.civ_params.n_slices);
+    cfg.civ_params.num_seed_elements = O["num_seed_elements"].as<int>(cfg.civ_params.num_seed_elements);
+    cfg.civ_params.dump_civ_boundary = O["dump_civ_boundary"].as<bool>(cfg.civ_params.dump_civ_boundary);
+    cfg.civ_params.min_col_pos = O["min_col_pos"].as<double>(cfg.civ_params.min_col_pos);
+    
+}
 // -----------------------------------------------------------------------------
 // Debug settings
 // -----------------------------------------------------------------------------
@@ -558,6 +556,7 @@ Config LoadFromNode(const YAML::Node &root) {
   parse_fieldcage_network(cfg, root);
   parse_optimization(cfg, root);
   parse_trace_params(cfg, root);
+  parse_civ_params(cfg, root);
   
   return cfg;
 }

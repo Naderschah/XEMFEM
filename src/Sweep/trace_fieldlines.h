@@ -45,9 +45,8 @@ struct TpcGeometry
     double z_min;
     double z_max;
 
-    explicit TpcGeometry(const Config &cfg)
+    explicit TpcGeometry(const ElectronTraceParams &tp)
     {
-        const auto &tp = cfg.optimize;
         r_min = tp.r_min;
         r_max = tp.r_max;
         z_min = tp.z_min;
@@ -76,22 +75,109 @@ struct TpcGeometry
 };
 
 
-struct CivSeeds;
+// Electric field coefficient wrapper around a vector GridFunction
+struct ElectricFieldCoeff : public mfem::VectorCoefficient
+{
+    mfem::GridFunction &phi;  // H1 potential
+    double sign;              // +1.0 for grad(phi), -1.0 for -grad(phi)
+
+    ElectricFieldCoeff(mfem::GridFunction &phi_, double sign_ = -1.0)
+        : mfem::VectorCoefficient(phi_.FESpace()->GetMesh()->SpaceDimension())
+        , phi(phi_)
+        , sign(sign_)
+    { }
+
+    void Eval(mfem::Vector &V,
+              mfem::ElementTransformation &T,
+              const mfem::IntegrationPoint &ip) override
+    {
+        T.SetIntPoint(&ip);
+        phi.GetGradient(T, V);
+        V *= sign; // gives physical E = -grad(phi)
+    }
+};
+
+struct InterfacePoint
+{
+    double r;
+    double z_ci;        // highest CI height at this radius
+    int    elem;
+    bool   cathode_ci;  // seen cathode-insensitive exits in this column
+    bool   wall_ci;     // seen wall-insensitive exits in this column
+};
+// Shared seed container used by both CIV and tracing.
+struct CivSeeds
+{
+    std::vector<mfem::Vector>          positions; // (r,z) seeds (physical coords)
+    std::vector<double>                volumes;   // volume weight per seed
+    std::vector<int>                   elements;  // element index for each seed
+    std::vector<mfem::IntegrationPoint> ips;      // reference IP for each seed
+};
 
 
+// Mesh connectivity / size info used by the tracer
+struct ElementAdjacency
+{
+    std::vector<std::vector<int>> neighbors; // Neighbor idx
+    std::vector<double>           h;         // Characteristic Height
+};
+// Build Adjacency
+ElementAdjacency BuildAdjacency(mfem::ParMesh &mesh);
+// Find mesh element given coordinate using neighbor search
+bool FindElementForPointLocal(
+    mfem::ParMesh            &mesh,
+    const ElementAdjacency   &adj,
+    int                       current_elem,
+    const mfem::Vector       &x_new,
+    int                      &out_elem,
+    mfem::IntegrationPoint   &out_ip);
 
+// Will hold the stepping method
+using StepFunction = void (*)(mfem::ParMesh&,
+                              ElectricFieldCoeff&,
+                              const ElementAdjacency&,
+                              const TpcGeometry&,
+                              const ElectronTraceParams&,
+                              bool,
+                              int,
+                              const mfem::IntegrationPoint&,
+                              double,
+                              mfem::Vector&,
+                              int&,
+                              mfem::IntegrationPoint&,
+                              double&,
+                              bool&,
+                              bool&,
+                              ElectronExitCode&);
 
-
-// ============================================================================
-// Public API
-// ============================================================================
-
+// Trace  A single electron through the TPC
+ElectronTraceResult TraceSingleElectronLine(
+    mfem::ParMesh                &mesh,
+    ElectricFieldCoeff           &E_coeff,
+    const ElementAdjacency       &adj,
+    const TpcGeometry            &geom,
+    const ElectronTraceParams    &params,
+    int                           start_elem,
+    const mfem::IntegrationPoint &start_ip,
+    bool                          axisymmetric,
+    bool                          save_pathlines);
 
 // Trace all supplied seeds and fill out_results with one ElectronTraceResult
 // per seed. Tracing configuration and geometry come from cfg.tracing_params.
+// The Inner function does the work, the outer does object creation
+void TraceElectronFieldLinesInner(mfem::ParMesh                   &global_mesh,
+                                  mfem::GridFunction              &global_phi,
+                                  const ElementAdjacency          &adj,
+                                  const mfem::FiniteElementCollection *fec_phi,
+                                  int                              ordering_phi,
+                                  const ElectronTraceParams        &params,
+                                  const Config                     &cfg,
+                                  const CivSeeds                   &seeds,
+                                  std::vector<ElectronTraceResult> &out_results,
+                                  bool                             axisymmetric,
+                                  bool                             save_paths,
+                                  const double                     *z_max_overrides);
 void TraceElectronFieldLines(const SimulationResult           &sim,
                              const Config                     &cfg,
                              const CivSeeds                   &seeds,
                              std::vector<ElectronTraceResult> &out_results);
-
-double compute_civ(const Config &cfg, const SimulationResult &result);

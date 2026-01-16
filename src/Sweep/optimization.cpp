@@ -239,20 +239,25 @@ ObjectiveFn make_objective_function(const OptimizationSettings &opt)
 OptimizationMetrics compute_metrics(const Config &cfg, const SimulationResult &result)
 {
     OptimizationMetrics m;
-
-    m.CIV = compute_civ(cfg, result);
-
-    if (cfg.optimize.print_results)
+    if ((cfg.optimize.objective == "CIV") || (cfg.optimize.objective == "self_weighting"))
     {
-        std::cout << "[OPT] CIV: " << m.CIV << std::endl;
+        m.CIV = compute_civ(cfg, result);
+        if (cfg.optimize.print_results)
+        {
+            std::cout << "[OPT] CIV: " << m.CIV << std::endl;
+        }
     }
+    
 
-    m.FieldSpread = computeFieldSpreadMetric(cfg, result);
-    if (cfg.optimize.print_results)
+    if ((cfg.optimize.objective == "FieldSpread") || (cfg.optimize.objective == "self_weighting"))
     {
-        std::cout << "[OPT] FieldSpread: " << m.FieldSpread << std::endl;
+        m.FieldSpread = computeFieldSpreadMetric(cfg, result);
+        if (cfg.optimize.print_results)
+        {
+            std::cout << "[OPT] FieldSpread: " << m.FieldSpread << std::endl;
+        }
     }
-
+    
     return m;
 }
 
@@ -516,4 +521,5 @@ void run_metrics_only(const Config &cfg)
 
     OptimizationMetrics m = compute_metrics(cfg, result);
     std::cout << "[METRICS] CIV = " << m.CIV << "\n";
+    std::cout << "[METRICS] FieldSpread = " << m.FieldSpread << "\n";
 }

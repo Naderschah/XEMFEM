@@ -58,7 +58,6 @@ static int run_sim(Config init_cfg) {
         ++run_counter; // used only for naming run_0001
 
         std::filesystem::path save_root(init_cfg.save_path);
-        write_sweep_meta(init_cfg.geometry_id, save_root, records);
         return 0;
     }
     return 0;
@@ -97,21 +96,20 @@ int main(int argc, char** argv)
     if (!config_str_opt) { config_str_opt = args.get("--config"); }
 
     // Plot may not require a config
+    std::filesystem::path config_path;
     if (!config_str_opt && cmd != "plot") {
-        std::cerr << "Error: missing required argument -c/--config\n";
-        cli::print_usage(argv[0]);
-        return 1;
+        std::cout << "Using Default config path ../geometry/config.yaml \n";
+        config_path = cli::to_absolute("../geometry/config.yaml");
+    }
+    else {
+        config_path = cli::to_absolute(*config_str_opt);
     }
 
-    std::filesystem::path config_path;
-    if (config_str_opt) {
-        config_path = cli::to_absolute(*config_str_opt);
-        if (!std::filesystem::exists(config_path)) {
-            std::cerr << "Error: config file not found: " << config_path << "\n";
-            return 1;
-        }
-        std::cout << "[Config] " << config_path << "\n";
+    if (!std::filesystem::exists(config_path)) {
+        std::cout << "Error: config file not found: " << config_path << "\n";
+        return 1;
     }
+    std::cout << "[Config] " << config_path << "\n";
 
     // ---------------------- Load Config ------------------------------
     Config init_cfg;
