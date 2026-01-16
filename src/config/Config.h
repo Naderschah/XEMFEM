@@ -8,9 +8,14 @@
 // -------------------- Mesh Specific ----------------------------
 struct Boundary {
     int bdr_id = -1;        // bdr_id
-    std::string type;       // "dirichlet" | "neumann" | "robin"
+    std::string type;       // "dirichlet" | "neumann" | "neumann_internal" | "robin"
     double value = 0.0;
-
+    // Used for depth dependent neumann only so far
+    bool depth_dependent = false;
+    double z_bot = 0.0;
+    double z_top = 0.0;
+    double value_bot = 0.0;
+    double value_top = 0.0;
 };
 
 struct Material {

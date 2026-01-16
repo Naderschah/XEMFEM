@@ -35,7 +35,7 @@ boundaries:
     type: dirichlet
     value: 0
   BC_Cryostat:
-    bdr_id: 147
+    bdr_id: 148
     type: dirichlet
     value: 0
   BC_GateElectrode:
@@ -46,6 +46,14 @@ boundaries:
     bdr_id: 6
     type: dirichlet
     value: -1500
+  PTFE_Wall_Charge:
+    bdr_id: 147
+    type: neumann
+    depth_dependent: true
+    z_bot: -1.5015999999999998
+    z_top: -0.0008
+    value_bot: -1e-07
+    value_top: -5e-07
   BC_FieldShapingRings0:
     bdr_id: 79
     type: dirichlet

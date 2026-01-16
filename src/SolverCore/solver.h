@@ -7,7 +7,7 @@
 #include "Config.h"
 using namespace mfem;
 
-std::unique_ptr<mfem::ParGridFunction> SolvePoisson(ParFiniteElementSpace &pfes, const mfem::Array<int> &dirichlet_attr, const std::shared_ptr<const Config>& cfg);
+std::unique_ptr<mfem::ParGridFunction> SolvePoisson(ParFiniteElementSpace &pfes, const BoundaryConditionGroups BCs, const std::shared_ptr<const Config>& cfg);
 
 // Residual file logging instead of terminal dump
 class ResidualFileMonitor : public mfem::IterativeSolverMonitor

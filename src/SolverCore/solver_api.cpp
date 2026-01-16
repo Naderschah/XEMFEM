@@ -45,11 +45,10 @@ SimulationResult run_simulation(std::shared_ptr<Config> cfg,
   auto pfes = std::make_unique<mfem::ParFiniteElementSpace>(mesh.get(), fec.get());
 
   // 3. Get Dirichlet boundary attributes
-  Array<int> dirichlet_arr = GetDirichletAttributes(mesh.get(), cfg);
-  // FIXME: For Neumann and Robin and axisymmetric we still need to supply boundary markers
+  BoundaryConditionGroups BCs = GetBoundaryConditionGroups(mesh.get(), cfg);
 
   // 4. Solve Poisson
-  auto V = SolvePoisson(*pfes, dirichlet_arr, cfg);
+  auto V = SolvePoisson(*pfes, BCs, cfg);
 
   std::unique_ptr<mfem::FiniteElementSpace> vec_fes, scalar_fes;
   mfem::ParMesh *pmesh = mesh.get();  // mesh is std::unique_ptr<ParMesh>

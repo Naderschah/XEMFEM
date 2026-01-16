@@ -134,16 +134,18 @@ def resolve_boundary_name(boundaries: dict, candidates: list[str]) -> str | None
     return None
 
 BC_NAME = {
-    "TOP_SCREEN":    ["BC_TopScreeningElectrode", "BC_TopScreen"],
-    "ANODE":         ["BC_AnodeElectrode", "BC_Anode"],
-    "GATE":          ["BC_GateElectrode", "BC_Gate"],
-    "CATHODE":       ["BC_CathodeElectrode", "BC_Cathode"],
-    "BOTTOM_SCREEN": ["BC_BottomScreeningElectrode", "BC_BottomScreen"],
-    "PMTS":          ["BC_AllPMTs", "BC_PMT"],
-    "BELL":          ["BC_Bell"],
-    "COPPER_RING":   ["BC_CopperRing"],
-    "CRYOSTAT":      ["BC_Cryostat"],
+    "TOP_SCREEN":       ["BC_TopScreeningElectrode", "BC_TopScreen"],
+    "ANODE":            ["BC_AnodeElectrode", "BC_Anode"],
+    "GATE":             ["BC_GateElectrode", "BC_Gate"],
+    "CATHODE":          ["BC_CathodeElectrode", "BC_Cathode"],
+    "BOTTOM_SCREEN":    ["BC_BottomScreeningElectrode", "BC_BottomScreen"],
+    "PMTS":             ["BC_AllPMTs", "BC_PMT"],
+    "BELL":             ["BC_Bell"],
+    "COPPER_RING":      ["BC_CopperRing"],
+    "CRYOSTAT":         ["BC_Cryostat"],
+    "PTFE_WALL_CHARGE": ["PTFE_Wall_Charge"],
 }
+
 
 bc_top_screen   = resolve_boundary_name(boundaries_raw, BC_NAME["TOP_SCREEN"])
 bc_anode        = resolve_boundary_name(boundaries_raw, BC_NAME["ANODE"])
@@ -154,6 +156,7 @@ bc_pmts         = resolve_boundary_name(boundaries_raw, BC_NAME["PMTS"])
 bc_bell         = resolve_boundary_name(boundaries_raw, BC_NAME["BELL"])
 bc_copper_ring  = resolve_boundary_name(boundaries_raw, BC_NAME["COPPER_RING"])
 bc_cryostat     = resolve_boundary_name(boundaries_raw, BC_NAME["CRYOSTAT"])
+bc_ptfe_wall_charge = resolve_boundary_name(boundaries_raw, BC_NAME["PTFE_WALL_CHARGE"])
 
 required = {
     "TOP_SCREEN": bc_top_screen,
@@ -165,6 +168,7 @@ required = {
     "BELL": bc_bell,
     "COPPER_RING": bc_copper_ring,
     "CRYOSTAT": bc_cryostat,
+    "PTFE_WALL_CHARGE": bc_ptfe_wall_charge,
 }
 missing = [k for k, v in required.items() if v is None]
 if missing:
@@ -178,6 +182,9 @@ if missing:
 # ============================================================
 
 fixed_boundaries = {
+    bc_ptfe_wall_charge: {"type": "neumann", "depth_dependent": True, 
+                            # For now taken from https://xe1t-wiki.lngs.infn.it/doku.php?id=xenon:xenonnt:ftoschi:electric_field_matching_xenonnt&s[]=wall&s[]=charge
+                            "z_bot": -0.0008 - 1.5008, "z_top": -0.0008, "value_bot": -0.1e-6, "value_top": -0.5e-6},
     bc_top_screen:   {"type": "dirichlet", "value": -1500},
     bc_anode:        {"type": "dirichlet", "value": 6500},
     bc_gate:         {"type": "dirichlet", "value": -1000},
@@ -192,6 +199,7 @@ fixed_boundaries = {
     bc_bell:         grounded,
     bc_copper_ring:  grounded,
     bc_cryostat:     grounded,
+    
 }
 
 fixed_boundaries = {k: v for k, v in fixed_boundaries.items() if k is not None}
@@ -426,7 +434,24 @@ for name, bc in fixed_boundaries.items():
         print(f"[warning] Fixed boundary '{name}' not found in phys_map; skipping.")
         continue
     tag = boundaries_raw[name]["bdr_id"]
-    boundaries_fixed_out[name] = {"bdr_id": tag, "type": bc["type"], "value": bc["value"]}
+    bcout = {"bdr_id": tag, "type": bc["type"]}
+
+    if bc["type"] == "dirichlet":
+        bcout["value"] = bc["value"]
+
+    elif bc["type"] in ("neumann"):
+        # simple constant Neumann
+        if not bc.get("depth_dependent", False):
+            bcout["value"] = bc["value"]
+        # depth-dependent Neumann
+        else:
+            # keep the exact fields you provided
+            bcout["depth_dependent"] = True
+            bcout["z_bot"] = bc["z_bot"]
+            bcout["z_top"] = bc["z_top"]
+            bcout["value_bot"] = bc["value_bot"]
+            bcout["value_top"] = bc["value_top"]
+    boundaries_fixed_out[name] = bcout
 
 # Rings/guards output
 boundaries_rings = {}
@@ -539,7 +564,20 @@ with output_path.open("w") as out:
         out.write(f"  {name}:\n")
         out.write(f"    bdr_id: {v['bdr_id']}\n")
         out.write(f"    type: {v['type']}\n")
-        out.write(f"    value: {v['value']}\n")
+
+        if v["type"] == "dirichlet":
+            out.write(f"    value: {v['value']}\n")
+
+        elif v["type"] in ("neumann"):
+            if not v.get("depth_dependent", False):
+                out.write(f"    value: {v['value']}\n")
+            else:
+                out.write(f"    depth_dependent: true\n")
+                out.write(f"    z_bot: {v['z_bot']}\n")
+                out.write(f"    z_top: {v['z_top']}\n")
+                out.write(f"    value_bot: {v['value_bot']}\n")
+                out.write(f"    value_top: {v['value_top']}\n")
+
 
     for name in sorted(boundaries_rings, key=sort_key_ring):
         if name in boundaries_fixed_out:

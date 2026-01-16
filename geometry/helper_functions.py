@@ -13,6 +13,7 @@ from GeomAPI import GeomAPI_ShapeExplorer
 import SHAPERSTUDY
 from salome.smesh import smeshBuilder
 import SMESH
+from ModelHighAPI import ModelHighAPI_Selection
 
 # ------------------------------- Sketching Functions ----------------------------------------------
 def make_anchors(Sketch, lines, pts, line_indices):

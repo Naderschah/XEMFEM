@@ -833,10 +833,10 @@ static void FindWallColumnSeedCI(TracerContext &ctx,
     const double min_col_pos = cfg.civ_params.min_col_pos;
 
     // Wall-near radius (bounds checks handled inside tracer) FIXME : DEBUG
-    const double r0 = 0.66;//r_max - geom_tol;
+    const double r0 = r_max - 2*geom_tol;
 
     // Start at 1/4 height
-    const double z_start = z_min + 0.25 * (z_max - z_min);
+    const double z_start = z_min + 0.5 * (z_max - z_min);
 
     // Probe schedule: (K-1) halving heights + explicit near-bottom probe
     int K = std::max(2, cfg.compute.threads.num);

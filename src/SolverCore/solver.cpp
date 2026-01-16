@@ -78,7 +78,7 @@ static PWConstCoefficient BuildEpsilonPWConst(const Mesh &mesh, const std::share
     for (const auto& [name, mat] : cfg->materials)
     {
       // Skip materials that have no explicit attr_id (e.g. "Default")
-      if (mat.id > 0)  set_eps(mat.id, mat.epsilon_r);
+      if (mat.id > 0)  set_eps(mat.id, mat.epsilon_r * 8.8541878188e-12);
       else if (name == "Default")
       {
         // Fill in any remaining attributes that were not explicitly set
@@ -94,8 +94,8 @@ static PWConstCoefficient BuildEpsilonPWConst(const Mesh &mesh, const std::share
 }
 
 std::unique_ptr<mfem::ParGridFunction> SolvePoisson(ParFiniteElementSpace &pfes,
-                                                const mfem::Array<int> &dirichlet_attr,
-                                                const std::shared_ptr<const Config>& cfg)
+                                                    const BoundaryConditionGroups BCs,
+                                                    const std::shared_ptr<const Config>& cfg)
 {
   using namespace mfem;
 
@@ -142,16 +142,20 @@ std::unique_ptr<mfem::ParGridFunction> SolvePoisson(ParFiniteElementSpace &pfes,
     return prec;
   };
 
-  ApplyDirichletValues(*V, dirichlet_attr, cfg);
-
+  // Apply BC Markers
+  ApplyDirichletValues(*V, BCs.dirichlet_attr, cfg);
+  
   a->AddDomainIntegrator(new DiffusionIntegrator(weps));
-  a->Assemble();                
+  a->Assemble();       
+
+  std::vector<std::unique_ptr<mfem::Coefficient>> neumann_coeffs; // Required for functional bcs to not go out of scope
+  std::vector<mfem::Array<int>> neumann_markers;
+  if (BCs.has_neumann()) { ApplyNeumannValues(*b, BCs.neumann_attr, cfg, *w, neumann_coeffs, neumann_markers); }         
 
   b->Assemble();
 
   Array<int> ess_tdof;
-
-  pfes.GetEssentialTrueDofs(dirichlet_attr, ess_tdof);
+  pfes.GetEssentialTrueDofs(BCs.dirichlet_attr, ess_tdof);
 
   a->FormLinearSystem(ess_tdof, *V, *b, A, X, B);  
 

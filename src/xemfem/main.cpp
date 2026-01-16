@@ -97,7 +97,7 @@ int main(int argc, char** argv)
 
     // Plot may not require a config
     std::filesystem::path config_path;
-    if (!config_str_opt && cmd != "plot") {
+    if (!config_str_opt) {
         std::cout << "Using Default config path ../geometry/config.yaml \n";
         config_path = cli::to_absolute("../geometry/config.yaml");
     }

@@ -29,7 +29,7 @@ compute:
 optimize:
   enabled: false
   print_results: true
-  objective: "CIV"
+  objective: CIV
   max_evals: 1
   max_iters: 1
   rel_tol_f: 0.001
@@ -40,17 +40,17 @@ optimize:
   z_min: -1.5025
   z_max: 0.004
   trace_params:
-    method: "RK45"
-    c_step: 0.15
-    c_min_factor: 0.01
-    c_max_factor: 0.3
-    tol_rel: 1e-4 #0.1mm
+    method: RK23
+    c_step: 0.5
+    c_min_factor: 0.1
+    c_max_factor: 1.0
+    tol_rel: 1e-2
     adapt_shrink: 0.5
     adapt_grow: 1.1
     geom_tol: 1e-6
     max_steps: 1000000
   civ_params:
-    method: "RandomSample" 
+    method: InformedSweep
     num_seed_elements: 32
     n_slices: 1
     min_col_pos: 0.001
@@ -104,6 +104,14 @@ materials:
     attr_id: 3
     epsilon_r: 2.1
 boundaries:
+  PTFE_Wall_Charge:
+    bdr_id: 147
+    type: neumann
+    depth_dependent: true
+    z_bot: -1.5015999999999998
+    z_top: -0.0008
+    value_bot: -1000
+    value_top: -5000
   BC_TopScreeningElectrode:
     bdr_id: 6
     type: dirichlet
@@ -137,7 +145,7 @@ boundaries:
     type: dirichlet
     value: 0
   BC_Cryostat:
-    bdr_id: 147
+    bdr_id: 148
     type: dirichlet
     value: 0
   BC_FieldShapingRings0:

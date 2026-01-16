@@ -195,12 +195,11 @@ for seed_id, pts in paths.items():
 
     plt.plot(r, z, '-', linewidth=0.8, color=color, alpha=0.5)
     if len(paths.keys())==1:
-        plt.scatter(r[:-2], z[:-2], s=1, marker="o", color=color)
+        plt.scatter(r[:-2], z[:-2], s=1, marker="o", markeredgecolor=color, color=color)
     plt.scatter(r[-1], z[-1], s=3, marker="x", color=color)
 
     if np.isclose((r - np.roll(r, 1))[1:-2], np.zeros(r.shape)[1:-2]).all() and np.isclose((z - np.roll(z, 1))[1:-2], np.zeros(z.shape)[1:-2]).all():
-      print("Pathline Did not move in exit code", exit_code)
-      plt.scatter([r[0]], [z[0]], s=8, marker='x')
+      plt.scatter([r[0]], [z[0]], s=8, marker='x', color = color)
 
 ax = plt.gca()
 
@@ -258,7 +257,7 @@ handles = [
     Line2D([0], [0],
            marker='x', linestyle='None',
            color=color, markeredgecolor=color,
-           markersize=4, markeredgewidth=1.5,
+           markersize=4, markeredgewidth=1.5, 
            label=label)
     for _, (label, color) in sorted(code_colors.items())
 ]

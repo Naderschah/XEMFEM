@@ -514,8 +514,17 @@ static void parse_boundary_params(Config &cfg, const YAML::Node &root)
         b.type   = node["type"].as<std::string>("dirichlet");
         b.value  = node["value"].as<double>(0.0);
 
+        b.depth_dependent = node["depth_dependent"].as<bool>(b.depth_dependent);
+        b.z_bot           = node["z_bot"].as<double>(b.z_bot);
+        b.z_top           = node["z_top"].as<double>(b.z_top);
+        b.value_bot       = node["value_bot"].as<double>(b.value_bot);
+        b.value_top       = node["value_top"].as<double>(b.value_top);
+
         if (b.bdr_id <= 0)
             throw std::runtime_error("Boundary '" + name + "' is missing a valid bdr_id");
+
+        if (b.depth_dependent && (b.z_bot >= b.z_top))
+            throw std::runtime_error("Boundary '" + name + "' depth dependent but z bounds are inconsistent");
 
         cfg.boundaries[name] = b;
     }
