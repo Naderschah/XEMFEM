@@ -102,7 +102,7 @@ materials:
     epsilon_r: 1.95
   PTFE:
     attr_id: 3
-    epsilon_r: 2.1
+    epsilon_r: 2.1 
 boundaries:
   PTFE_Wall_Charge:
     bdr_id: 147

@@ -21,3 +21,4 @@ sim_results/
 *.bak
 # Misc I have in this folder
 COMSOL_res
+plots
