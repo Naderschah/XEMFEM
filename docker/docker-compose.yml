@@ -4,6 +4,8 @@ services:
       context: .
       network: host
     user: felix
+    labels:
+      keep: "true"
     container_name: mfem_shell
     network_mode: host # My OMARCHY install didnt compile with required kernel modules so this is fine 
     tty: true
