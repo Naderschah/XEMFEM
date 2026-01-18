@@ -7,6 +7,7 @@
 #include <array>
 #include <string>
 #include <vector>
+#include <filesystem>
 
 #include <vtkSmartPointer.h>
 
@@ -401,3 +402,4 @@ PlotInput PreparePlotInput(const char* raw_path);
 // Main entry point for a standalone tool (optional)
 int make_plots(int argc, char** argv);
 
+int _make_plots(std::filesystem::path pvd);

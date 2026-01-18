@@ -2500,7 +2500,7 @@ PlotInput PreparePlotInput(const char* raw_path)
 } // namespace FEMPlot
 
 // -----------------------------------------------------------------------------
-// Example standalone main entry
+// Standalone main entry
 // -----------------------------------------------------------------------------
 
 int make_plots(int argc, char** argv)
@@ -2518,4 +2518,14 @@ int make_plots(int argc, char** argv)
     FEMPlot::PlotStandardViewsForPotentialAndEnorm(input.grid, input, opts);
 
     return 0;
+}
+
+int _make_plots(std::filesystem::path pvd){
+  std::string path = pvd.string();
+  auto input = FEMPlot::PreparePlotInput(path.c_str());
+  FEMPlot::PlottingOptions opts;
+  FEMPlot::PlotStandardViewsForPotentialAndEnorm(
+      input.grid, input, opts
+  );
+  return 0;
 }

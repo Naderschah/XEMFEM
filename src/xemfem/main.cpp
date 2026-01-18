@@ -6,7 +6,7 @@
 #include "optimization.h"
 #include "sweeps.h"
 #include "parallelization.h"
-
+#include "plotting_api.h"
 
 static int run_sim(Config init_cfg) {
     const auto &sweeps = init_cfg.sweeps;
@@ -69,8 +69,7 @@ static int run_metrics(Config init_cfg) {
 }
 
 static int run_plot(Config init_cfg) {
-    std::cout << "[XEMFEM] Plotting to be implemented\n";
-    // TODO: return xemfem_plot_main(argc, argv);
+    make_plot_api(init_cfg);
     return 0;
 }
 

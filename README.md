@@ -32,9 +32,11 @@ mesh:
   # No need to modify this the mesh postprocessor writes the correct path
   path: "/home/felix/work/geometry/mesh/mesh22.msh"
   # Which geometry to generate in meshing, currently only SR3 is supported
-  geometry: "SR3"
+  geometry: SR3
+  # Set of voltages (.py file in same directory as preprocessor - see existing for more info) to use
+  voltages: SR3
   # Wheter or not to autoappend the generated boundaries and attributes to the currently used config file
-  autoappend: "True"
+  autoappend: true
 
 # Where Simulation results should be saved
 save_path: "/home/felix/work/sim_results"

@@ -45,6 +45,7 @@ endif()
 # Core plotting library (reused by PLOT and xemfem)
 add_library(plotting STATIC
     FEMPlotVTK.cpp
+    plotting_api.cpp
 )
 
 target_include_directories(plotting
@@ -55,6 +56,7 @@ target_include_directories(plotting
 target_link_libraries(plotting
     PUBLIC
         ${VTK_LIBRARIES}
+        config
 )
 
 # Thin wrapper executable
