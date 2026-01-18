@@ -235,6 +235,21 @@ boundaries:
     type: dirichlet
     # At Voltage
     value: -1300
+  # Some name for a surface charge
+  BC_SurfaceCharge:
+    bdr_id: 3
+    # Neumann boundaries impose flux insertion over surface
+    type: neumann 
+    # If false applied constant over surface, otherwise linearly z dependent 
+    depth_dependent: true
+    # bottom z coordinate
+    z_bot: -1.50016
+    # Top z coordinate
+    z_top: -0.0008
+    # C/m at the bottom 
+    value_bot: -1
+    # C/m at the top
+    value_top: -5
   # And So on 
   
 # Voltages can also be autocomputed as a funcion of others
