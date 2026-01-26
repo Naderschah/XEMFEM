@@ -3,7 +3,7 @@ services:
     build:
       context: .
       network: host
-    user: felix
+    user: "${UID}:${GID}"
     labels:
       keep: "true"
     container_name: mfem_shell
@@ -14,13 +14,13 @@ services:
     profiles: ["shell"]
     environment:
       - DISPLAY=${DISPLAY}
-      - XAUTHORITY=/home/felix/.Xauthority
+      - XAUTHORITY=/tmp/.Xauthority
       - XDG_RUNTIME_DIR=/tmp            # silence SDL/Wayland runtime dir error
       - QT_X11_NO_MITSHM=1
     volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw     # X11 socket
-      - $HOME/.Xauthority:/home/felix/.Xauthority:ro  # X auth (if used)
-      - /home/felix/MFEMElectrostatics:/home/felix/work:rw,delegated
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw       # X11 (for paraview and the like)
+      - $XAUTHORITY:/tmp/.Xauthority:ro        # X auth (for paraview and the like)
+      - $XEMFEM_PATH:/work:rw,delegated
     devices:
       - /dev/dri:/dev/dri                    # optional: hardware accel
 
@@ -29,18 +29,20 @@ services:
     build:
       context: .
       network: host
-    user: felix 
+    user: "${UID}:${GID}"
     container_name: mfem_jupyter
     ports:
       - "8888:8888"
     command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --NotebookApp.token=''
     environment:
-      - DISPLAY=${DISPLAY}               # propagate DISPLAY
+      - DISPLAY=${DISPLAY}
+      - XAUTHORITY=/tmp/.Xauthority
+      - XDG_RUNTIME_DIR=/tmp            # silence SDL/Wayland runtime dir error
       - QT_X11_NO_MITSHM=1
     volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw     # X11 socket
-      - $HOME/.Xauthority:/home/felix/.Xauthority:ro  # X auth (if used)
-      - /home/felix/MFEMElectrostatics:/home/felix/work:rw,delegated
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw       # X11 (for paraview and the like)
+      - $XAUTHORITY:/tmp/.Xauthority:ro        # X auth (for paraview and the like)
+      - $XEMFEM_PATH:/work:rw,delegated
     devices:
-      - /dev/dri:/dev/dri                    # optional: hardware accel
+      - /dev/dri:/dev/dri                  # optional: hardware accel
 

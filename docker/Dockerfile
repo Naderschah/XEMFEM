@@ -44,9 +44,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && locale-gen en_US.UTF-8 \
     && rm -rf /var/lib/apt/lists/*
 
-
-
-    
 # Create user
 ARG USER_ID=1000
 ARG GROUP_ID=100
@@ -231,7 +228,5 @@ RUN git clone --depth 1 https://github.com/glvis/glvis.git /home/felix/glvis && 
 # Nelder-Mead header keeps being annoying
 RUN git clone --depth 1 https://github.com/YibaiMeng/nelder-mead.git /home/felix/third_party/nelder-mead
 
-
-WORKDIR /home/felix/work
-EXPOSE 8888
+WORKDIR /work
 
