@@ -22,3 +22,6 @@ sim_results/
 # Misc I have in this folder
 COMSOL_res
 plots
+*.pyc
+mount/
+geometry/createGeometryFromCAD/out
