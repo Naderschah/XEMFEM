@@ -29,7 +29,6 @@
 #include <vtkPolyDataConnectivityFilter.h>
 #include <vtkCellData.h>
 
-
 #include <vtkPolyData.h>
 #include <vtkSmartPointer.h>
 #include <vtkCellArray.h>
@@ -81,6 +80,9 @@
 #include <vtkUnstructuredGrid.h>
 #include <vtkWindowToImageFilter.h>
 #include <vtkXMLUnstructuredGridReader.h>
+
+#include <vtkStaticCellLocator.h>
+#include <vtkGenericCell.h>
 
 namespace FEMPlot
 {
@@ -153,7 +155,8 @@ namespace
         Text,
         Regions,
         LayoutHorizontal,
-        LayoutVertical
+        LayoutVertical,
+        Streamlines
     };
 
     SectionKind SectionFromName(const std::string& name)
@@ -168,6 +171,7 @@ namespace
         if (name == "regions")      return SectionKind::Regions;
         if (name == "layout.horizontal")return SectionKind::LayoutHorizontal;
         if (name == "layout.vertical")  return SectionKind::LayoutVertical;
+        if (name == "streamlines")  return SectionKind::Streamlines;
         return SectionKind::None;
     }
 
@@ -338,6 +342,32 @@ bool LoadPlotConfig(const std::string& path, PlotConfig& cfg)
             }
             break;
         }
+
+        case SectionKind::Streamlines:
+        {
+            // aliases so your existing keys continue to work
+            if (key == "fieldline_r_min" || key == "streamline_r_min")      iss >> cfg.streamlines.r_min;
+            else if (key == "fieldline_r_max" || key == "streamline_r_max") iss >> cfg.streamlines.r_max;
+            else if (key == "fieldline_z_min" || key == "streamline_z_min") iss >> cfg.streamlines.z_min;
+            else if (key == "fieldline_z_max" || key == "streamline_z_max") iss >> cfg.streamlines.z_max;
+
+            else if (key == "streamline_dr") iss >> cfg.streamlines.dr;
+            else if (key == "streamline_dz") iss >> cfg.streamlines.dz;
+            else if (key == "streamline_n_seeds") iss >> cfg.streamlines.n_seeds;
+
+            else if (key == "streamline_max_propagation") iss >> cfg.streamlines.max_propagation;
+            else if (key == "streamline_initial_step")    iss >> cfg.streamlines.initial_step;
+            else if (key == "streamline_min_step")        iss >> cfg.streamlines.min_step;
+            else if (key == "streamline_max_step")        iss >> cfg.streamlines.max_step;
+            else if (key == "streamline_max_steps")       iss >> cfg.streamlines.max_steps;
+
+            else if (key == "streamline_follow_negative_E")
+            {
+                bool b; if (ParseBool(val, b)) cfg.streamlines.follow_negative_E = b;
+            }
+            break;
+        }
+
 
         case SectionKind::Axes:
         {
@@ -605,113 +635,163 @@ ClipToBox(vtkUnstructuredGrid* grid, const double bounds[6])
 
 void AddStreamlines(vtkDataSet* dataset,
                     vtkRenderer* renderer,
-                    const Result& result,
                     const StreamlineConfig& cfg)
 {
+    // ---------------------------------------------------------------------
+    // 0) Basic validation
+    // ---------------------------------------------------------------------
     if (!dataset || !renderer)
     {
         std::cerr << "[AddStreamlines] ERROR: dataset or renderer is null.\n";
         return;
     }
 
-    vtkIdType npts = dataset->GetNumberOfPoints();
+    const vtkIdType npts = dataset->GetNumberOfPoints();
     if (npts <= 0)
     {
         std::cerr << "[AddStreamlines] WARNING: dataset has no points.\n";
         return;
     }
 
-    if (result.E_at_points.size() != static_cast<std::size_t>(npts))
-    {
-        std::cerr << "[AddStreamlines] ERROR: E_at_points size ("
-                  << result.E_at_points.size()
-                  << ") does not match number of VTK points ("
-                  << npts << ").\n";
-        return;
-    }
-
-    // 1) Attach / update vector field E(x) on the dataset
-    auto pd = dataset->GetPointData();
+    vtkPointData* pd = dataset->GetPointData();
     if (!pd)
     {
         std::cerr << "[AddStreamlines] ERROR: dataset has no point data.\n";
         return;
     }
 
-    vtkDataArray* existingE = pd->GetArray("E");
-    vtkSmartPointer<vtkDoubleArray> evec;
-
-    if (existingE)
+    vtkDataArray* eArr = pd->GetArray("E");
+    if (!eArr || eArr->GetNumberOfComponents() != 3 || eArr->GetNumberOfTuples() != npts)
     {
-        if (existingE->GetNumberOfComponents() == 3 &&
-            existingE->GetNumberOfTuples() == npts)
-        {
-            evec = vtkDoubleArray::SafeDownCast(existingE);
-        }
-        else
-        {
-            evec = vtkSmartPointer<vtkDoubleArray>::New();
-            evec->SetName("E");
-            evec->SetNumberOfComponents(3);
-            evec->SetNumberOfTuples(npts);
-            pd->RemoveArray("E");
-            pd->AddArray(evec);
-        }
+        std::cerr << "[AddStreamlines] ERROR: missing/invalid point-vector array 'E'. "
+                  << "Need 3 components and " << npts << " tuples.\n";
+        return;
     }
-    else
-    {
-        evec = vtkSmartPointer<vtkDoubleArray>::New();
-        evec->SetName("E");
-        evec->SetNumberOfComponents(3);
-        evec->SetNumberOfTuples(npts);
-        pd->AddArray(evec);
-    }
-
-    for (vtkIdType i = 0; i < npts; ++i)
-    {
-        const auto& e = result.E_at_points[static_cast<std::size_t>(i)];
-        double tuple[3] = { e[0], e[1], e[2] };
-        evec->SetTuple(i, tuple);
-    }
-
     pd->SetActiveVectors("E");
 
-    // 2) Bounding box → characteristic radius for tube radius
+    // ---------------------------------------------------------------------
+    // 1) Cell locator for robust point-in-cell test
+    // ---------------------------------------------------------------------
+    auto locator = vtkSmartPointer<vtkStaticCellLocator>::New();
+    locator->SetDataSet(dataset);
+    locator->BuildLocator();
+
+    // ---------------------------------------------------------------------
+    // 2) Bounds + seeding plane
+    // ---------------------------------------------------------------------
     double bounds[6];
     dataset->GetBounds(bounds);
-    const double dx = bounds[1] - bounds[0];
-    const double dy = bounds[3] - bounds[2];
-    const double dz = bounds[5] - bounds[4];
-    const double radius = 0.5 * std::max({dx, dy, dz, 1e-6});
 
-    // 3) Seed generator within dataset bounds
-    auto seeds = vtkSmartPointer<vtkBoundedPointSource>::New();
-    seeds->SetNumberOfPoints(cfg.n_seeds);
-    seeds->SetBounds(bounds);
+    // Seed on mid Z plane (same as before)
+    const double midZ = 0.5 * (bounds[4] + bounds[5]);
 
-    // 4) Stream tracer
+    // New strategy:
+    // - start all seeds at y = cfg.z_min
+    // - place N seeds equally spaced along x in [bounds[0], bounds[1]]
+    // - ignore cfg.r_min/r_max/z_max/dr/dz etc.
+    const double y0 = cfg.z_min;
+
+    const int N = std::max(cfg.n_seeds, 1);
+    const double xmin = bounds[0];
+    const double xmax = cfg.r_max;
+    const double dx = (N > 1) ? (xmax - xmin) / static_cast<double>(N - 1) : 0.0;
+
+    auto seedPts  = vtkSmartPointer<vtkPoints>::New();
+    auto seedVert = vtkSmartPointer<vtkCellArray>::New();
+
+    for (int i = 0; i < N; ++i)
+    {
+        const double x = xmin + static_cast<double>(i) * dx;
+        double p[3] = { x, y0, midZ };
+
+        const vtkIdType cellId = locator->FindCell(p);
+        if (cellId < 0)
+            continue;
+
+        const vtkIdType id = seedPts->InsertNextPoint(p);
+        seedVert->InsertNextCell(1);
+        seedVert->InsertCellPoint(id);
+    }
+
+    const vtkIdType nSeeds = seedPts->GetNumberOfPoints();
+    if (nSeeds <= 0)
+    {
+        std::cerr << "[AddStreamlines] WARNING: 0 seeds inside cells. "
+                  << "z_min=" << y0 << " may be outside mesh, or the mesh is not in (x,y) as assumed.\n";
+        return;
+    }
+
+    auto seedPoly = vtkSmartPointer<vtkPolyData>::New();
+    seedPoly->SetPoints(seedPts);
+    seedPoly->SetVerts(seedVert);
+
+    // ---------------------------------------------------------------------
+    // 3) Stream tracer
+    // ---------------------------------------------------------------------
     auto rk4 = vtkSmartPointer<vtkRungeKutta4>::New();
 
     auto tracer = vtkSmartPointer<vtkStreamTracer>::New();
     tracer->SetInputData(dataset);
-    tracer->SetSourceConnection(seeds->GetOutputPort());
+    tracer->SetSourceData(seedPoly);
     tracer->SetIntegrator(rk4);
-    tracer->SetIntegrationDirectionToBoth();
-    tracer->SetMaximumPropagation(cfg.max_propagation);
+    tracer->SetTerminalSpeed(0.0);
+    // Follow -E
+    if (cfg.follow_negative_E)
+        tracer->SetIntegrationDirectionToBackward();
+    else
+        tracer->SetIntegrationDirectionToForward();
+
+    tracer->SetComputeVorticity(false);
+
+    const double driftLen = std::abs(bounds[3] - cfg.z_min); // y_max - y_start (assuming y is vertical)
+    const double maxProp  = std::max(cfg.max_propagation, 2.0 * driftLen);
+
+    tracer->SetMaximumPropagation(maxProp);
     tracer->SetInitialIntegrationStep(cfg.initial_step);
     tracer->SetMinimumIntegrationStep(cfg.min_step);
     tracer->SetMaximumIntegrationStep(cfg.max_step);
     tracer->SetMaximumNumberOfSteps(cfg.max_steps);
-    tracer->SetComputeVorticity(false);
 
-    // 5) Tubes
+    tracer->SetInputArrayToProcess(
+        0, 0, 0,
+        vtkDataObject::FIELD_ASSOCIATION_POINTS,
+        "E"
+    );
+
+    tracer->Update();
+
+    vtkPolyData* traceOut = tracer->GetOutput();
+    const vtkIdType outPts   = traceOut ? traceOut->GetNumberOfPoints() : 0;
+    const vtkIdType outCells = traceOut ? traceOut->GetNumberOfCells()  : 0;
+
+    std::cerr << "[AddStreamlines] seeds_in_cells=" << nSeeds
+              << " tracer_out_pts=" << outPts
+              << " tracer_out_cells=" << outCells << "\n";
+
+    if (!traceOut || outPts == 0 || outCells == 0)
+    {
+        std::cerr << "[AddStreamlines] WARNING: StreamTracer output empty. "
+                  << "Try: larger max_propagation, smaller initial_step, "
+                  << "or verify E magnitude and that seeds are inside cells.\n";
+        return;
+    }
+
+    // ---------------------------------------------------------------------
+    // 4) Tubes
+    // ---------------------------------------------------------------------
+    const double by = bounds[3] - bounds[2];
+    const double bz = bounds[5] - bounds[4];
+    const double diag = std::max({xmax - xmin, by, bz, 1e-6});
+
     auto tubes = vtkSmartPointer<vtkTubeFilter>::New();
     tubes->SetInputConnection(tracer->GetOutputPort());
-    tubes->SetRadius(radius * cfg.tube_radius_rel);
+    tubes->SetRadius(diag * cfg.tube_radius_rel);
     tubes->SetNumberOfSides(10);
     tubes->CappingOn();
 
-    // 6) Mapper + Actor
+    // ---------------------------------------------------------------------
+    // 5) Mapper + actor
+    // ---------------------------------------------------------------------
     auto mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
     mapper->SetInputConnection(tubes->GetOutputPort());
     mapper->ScalarVisibilityOff();
@@ -1596,7 +1676,7 @@ bool AttachGradientEAndMagnitude(vtkUnstructuredGrid* grid,
 void PlotScalarFieldView(vtkUnstructuredGrid* grid,
                          const ScalarViewRequest& request,
                          const PlottingOptions& plotting,
-                         const StreamlineConfig* /*stream_cfg*/)
+                         const StreamlineConfig* stream_cfg)
 {
     if (!grid)
     {
@@ -1984,8 +2064,7 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
     // 9) Streamlines — not yet wired into new pipeline
     if (request.show_streamlines)
     {
-        std::cerr << "[PlotScalarFieldView] NOTE: show_streamlines requested "
-                     "but streamlines are not yet wired into the new view pipeline.\n";
+        AddStreamlines(dataset_to_plot, field_renderer, *stream_cfg);
     }
 
     // 10) Camera setup and zoom
@@ -2349,7 +2428,7 @@ void PlotStandardViewsForPotentialAndEnorm(vtkUnstructuredGrid* grid,
     if (haveEnorm)
     {
         const ContentConfig& ce = cfg.content_E;
-        StreamlineConfig stream_cfg; // placeholder
+        StreamlineConfig stream_cfg = cfg.streamlines;
 
         std::string eScalarName = !ce.scalar_name.empty()
                                   ? ce.scalar_name

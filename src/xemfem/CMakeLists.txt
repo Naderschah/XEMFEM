@@ -13,10 +13,13 @@ target_include_directories(XEMFEM PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/..          # src/
   ${CMAKE_CURRENT_SOURCE_DIR}/../Sweep/
   ${CMAKE_CURRENT_SOURCE_DIR}/../config/
+  ${CMAKE_CURRENT_SOURCE_DIR}/../interpolator/
 )
 
 target_link_libraries(XEMFEM PRIVATE
   SolverCore
   plotting
   sweep_objects
+  interpolator
+  neldermead_headers
 )

@@ -7,6 +7,7 @@
 #include "sweeps.h"
 #include "parallelization.h"
 #include "plotting_api.h"
+#include "interpolator.h"
 
 static int run_sim(Config init_cfg) {
     const auto &sweeps = init_cfg.sweeps;
@@ -73,6 +74,11 @@ static int run_plot(Config init_cfg) {
     return 0;
 }
 
+static int run_interpolate(Config init_cfg) {
+    do_interpolate(init_cfg);
+    return 0;
+}
+
 int main(int argc, char** argv)
 {
     // -------------------- Check Subcommand ----------------------
@@ -127,6 +133,10 @@ int main(int argc, char** argv)
     if (cmd == "plot") {
         // TODO Needs extra args?
         return run_plot(init_cfg);
+    }
+    if (cmd == "interpolate") {
+        // TODO Needs extra args?
+        return run_interpolate(init_cfg);
     }
 
     std::cerr << "Error: unknown subcommand '" << cmd << "'\n";

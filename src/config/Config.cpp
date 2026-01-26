@@ -427,6 +427,30 @@ static void parse_civ_params(Config &cfg, const YAML::Node &root)
     cfg.civ_params.min_col_pos = O["min_col_pos"].as<double>(cfg.civ_params.min_col_pos);
     
 }
+
+static void parse_interp_params(Config &cfg, const YAML::Node &root)
+{
+    if (!root["interpolate"]) {
+        return; // not required
+    }
+
+    const YAML::Node O = root["interpolate"];
+
+    // cfg.interp.res_x = O["res_x"].as<double>(cfg.interp.res_x);
+    // cfg.interp.res_y = O["res_y"].as<double>(cfg.interp.res_y);
+    // cfg.interp.res_z = O["res_z"].as<double>(cfg.interp.res_z);
+    cfg.interp.Nx = O["Nx"].as<double>(cfg.interp.Nx);
+    cfg.interp.Ny = O["Ny"].as<double>(cfg.interp.Ny);
+    cfg.interp.Nz = O["Nz"].as<double>(cfg.interp.Nz);
+    cfg.interp.H1_project = O["H1_project"].as<bool>(cfg.interp.H1_project);
+
+    if ((cfg.interp.Nx == 0) || (cfg.interp.Ny == 0))
+    {
+        throw std::runtime_error("Interpolation input producess 0 elements in x or y");
+        
+    }
+}
+
 // -----------------------------------------------------------------------------
 // Debug settings
 // -----------------------------------------------------------------------------
@@ -566,6 +590,7 @@ Config LoadFromNode(const YAML::Node &root) {
   parse_optimization(cfg, root);
   parse_trace_params(cfg, root);
   parse_civ_params(cfg, root);
+  parse_interp_params(cfg, root);
   
   return cfg;
 }

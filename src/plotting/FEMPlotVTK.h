@@ -11,6 +11,8 @@
 
 #include <vtkSmartPointer.h>
 
+#include "Config.h"
+
 // Forward declarations for VTK types
 class vtkDataSet;
 class vtkRenderer;
@@ -68,13 +70,20 @@ struct PlottingOptions
 // Streamline configuration for E-field visualization.
 struct StreamlineConfig
 {
-    int    n_seeds           = 500;   // number of seed points
-    double max_propagation   = 1.0;   // integration length
+    double r_min = 0.0;
+    double r_max = 0.664;
+    double z_min = -1.5024;
+    double z_max = 0.003;
+    double dr = 0.0;
+    double dz = 0.0;
+    int    n_seeds           = 50;   // number of seed points
+    double max_propagation   = 1.5028;   // integration length
     double initial_step      = 0.01;
     double min_step          = 1e-4;
     double max_step          = 0.1;
-    int    max_steps         = 2000;
-    double tube_radius_rel   = 0.005; // tube radius relative to domain size
+    int    max_steps         = 20000000;
+    double tube_radius_rel   = 0.0005; // tube radius relative to domain size
+    bool follow_negative_E = true;
 };
 
 // Input description for a plotting run.
@@ -238,6 +247,7 @@ struct ContentConfig
     std::string title_stack_top;
     std::string title_stack_bottom;
     std::string title_bar;
+
 };
 
 struct AxesConfig
@@ -280,8 +290,10 @@ struct PlotConfig
     TextConfig   text;
     RegionConfig regions;
 
-    // NEW: viewport layout configuration
     LayoutConfig layout;
+
+    StreamlineConfig streamlines;
+
 };
 // Load config from an INI file; returns true on success.
 // Unspecified fields remain at their default values.
@@ -351,7 +363,6 @@ bool AttachGradientEAndMagnitude(vtkUnstructuredGrid* grid,
 // the given dataset.
 void AddStreamlines(vtkDataSet* dataset,
                     vtkRenderer* renderer,
-                    const Result& result,
                     const StreamlineConfig& cfg);
 
 // Offscreen rendering helper for a single renderer.

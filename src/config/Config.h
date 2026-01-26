@@ -70,7 +70,7 @@ struct DebugSettings
     // If true, TraceElectronFieldLines (Optimization: CIV Computation) should:
     //   - only trace seed with index debug_single_seed_index,
     //   - optionally override c_step for that seed to a very small value.
-    bool   debug_single_seed         = false;
+    bool   debug_single_seed         = false; // TODO: Remove
     int    debug_single_seed_index   = -1; // Internal dont touch
     double debug_c_step_override = 0.; // Overwrite c_step in debug mode
 };
@@ -183,6 +183,10 @@ struct SolverSettings {
 // Field Line tracing parameters 
 struct ElectronTraceParams
 {
+
+    // ------------- New Mesh Tracing -----------
+    double limit_steps = 0;
+    // -------------- Mesh Tracing ---------------
     // Which propagation method to use
     // Euler-Cauchy, RK23, RK45
     std::string method    = "RK34";
@@ -196,10 +200,39 @@ struct ElectronTraceParams
     // Adaptive step resizing, factor by which estimate drops/grows
     double adapt_grow     = 1.5; 
     double adapt_shrink   = 0.25;
+    
+    
+
+    // ------------ Grid Tracing -----------------
+    // Pathline integrator (true) vs Newtonian (false)
+    bool use_mobility_model = true;
+    // Mobility Model: dr/dt = mobility Er, dz/dt = mobility Ez
+    double mobility = 0.2;
+    
+    double abs_tol = 1e-10;
+    double rel_tol = 1e-6;
+    double dt_initial = 1e-6;
+    double dt_max = 1e-3;
+    double dt_min = 5e-8;
+
+    // To be shared 
+    double stride = 4;
+    int max_rejected_steps = 50000;
+
+    // ---- Not Exposed
+    // Newtonian Model: dr/dt = vr, dz/dt = vz, dvr/dt = (q/m) Er, dvz/dt = (q/m) Ez : Taken from CODATA
+    double q_over_m = -1.75882000838e11;
+    double vx0 = 0; // Initial Velocity in Newtonian
+    double vy0 = 0; // Initial Velocity in Newtonian
+    double vz0 = 0; // Initial Velocity in Newtonian
+
+
+    // ------------- Common ----------------------
     // Tolerance for r,z boundary checks (axis clamp, z-range, etc.)
     double geom_tol       = 1e-12;
     // Maximum integration steps not counting retries due to too high error
     int    max_steps      = 200;
+
 
     // ---- Not Exposed
     // If true, treat r <= geom_tol as an exit condition 
@@ -212,9 +245,21 @@ struct ElectronTraceParams
     // TODO : To be Removed
     double tracing_z_max = 0.004;
 };
+// ------------------------- Interpolation --------------
+struct Interpolate
+{
+  int Nx = 1;
+  int Ny = 1;
+  int Nz = 1;
+  bool H1_project;
+  // Not Exposed
+  bool accept_surface_projection = false;
+  // TODO Integrate the below, requires knowledge of mesh dimensions
+  double res_x = 0;
+  double res_y = 0;
+  double res_z = 0;
 
-
-
+};
 // ------------------------- Actual Config Struct -------------------------------
 struct Config {
     int schema_version = 1;
@@ -245,6 +290,9 @@ struct Config {
 
     // CIV Computation parameters
     CIVSettings civ_params;
+
+    // Interpolation settings
+    Interpolate interp;
 
     // Load from path
     static Config Load(const std::string& path);
