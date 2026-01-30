@@ -98,6 +98,7 @@ void ApplyDirichletValues(GridFunction &V, const Array<int> &dirichlet_attr, con
     { std::cerr << "\033[33m" << "WARNING: boundary " << name << "'(bdr_id= " << bc.bdr_id << ")' not present in mesh!\n" << "\033[0m\n"; }
   }
 }
+
 // Depth dependent charge profile
 static std::unique_ptr<mfem::Coefficient> MakeLinearZProfileCoeff(double z_bot, double z_top, double sigma_bot, double sigma_top)
 {
@@ -109,73 +110,95 @@ static std::unique_ptr<mfem::Coefficient> MakeLinearZProfileCoeff(double z_bot, 
     };
     return std::make_unique<FunctionCoefficient>(f);
 }
-void ApplyNeumannValues(ParLinearForm &b, const Array<int> &neumann_attr, const std::shared_ptr<const Config>& cfg, mfem::Coefficient &w, std::vector<std::unique_ptr<mfem::Coefficient>> &owned_coeffs, std::vector<mfem::Array<int>> &owned_markers)
+
+void ApplyNeumannValues(ParLinearForm &b,
+                        const Array<int> & /*neumann_attr*/,
+                        const std::shared_ptr<const Config> &cfg,
+                        mfem::Coefficient &w,
+                        std::vector<std::unique_ptr<mfem::Coefficient>> &owned_coeffs,
+                        std::vector<mfem::Array<int>> &owned_markers)
 {
-  ParFiniteElementSpace *pfes = b.ParFESpace();
-  MFEM_VERIFY(pfes != nullptr, "ApplyNeumannValues: ParLinearForm has no ParFESpace.");
-  Mesh *mesh = pfes->GetMesh();
+    ParFiniteElementSpace *pfes = b.ParFESpace();
+    MFEM_VERIFY(pfes != nullptr, "ApplyNeumannValues: ParLinearForm has no ParFESpace.");
+    Mesh *mesh = pfes->GetMesh();
 
-  if (cfg->debug.printBoundaryConditions) { std::cout << "[DEBUG:NeumannBC]\n"; }
+    if (cfg->debug.printBoundaryConditions) { std::cout << "[DEBUG:NeumannBC]\n"; }
 
-  // Iterate config elements with neumann attributes
-  for (const auto &[name, bc] : cfg->boundaries)
-  {
-    if (bc.type != "neumann") { continue; }
-
-    owned_markers.emplace_back(MakeBdrMarker(mesh, {bc.bdr_id}));
-    mfem::Array<int> &marker = owned_markers.back();
-
-    // If this MPI rank has no boundary attributes, or this attribute is absent, skip.
-    if (marker.Size() == 0) { continue; }
-    if (marker.Max() == 0)  { continue; }
-    // Shouldnt be higher 
-    if (marker.Max() != 1) { std::cerr << "\033[33m" << "WARNING: boundary " << name << "'(bdr_id= " << bc.bdr_id << ")' not present in mesh!\n" << "\033[0m\n"; }
-    // Default branch - Constant charge density on boundary 
-    if (!bc.depth_dependent)
+    // ---- Reserve marker storage to keep MFEM's internal marker pointers valid ----
+    size_t n_neumann = 0;
+    for (const auto &[name, bc] : cfg->boundaries)
     {
-      auto g  = std::make_unique<ConstantCoefficient>(bc.value);
-      auto wg = std::make_unique<ProductCoefficient>(w, *g);  // axisym weight
-
-      b.AddBoundaryIntegrator(new BoundaryLFIntegrator(*wg), marker);
-      
-      owned_coeffs.emplace_back(std::move(g));
-      owned_coeffs.emplace_back(std::move(wg));
-
-      if (cfg->debug.printBoundaryConditions)
-      {
-        std::cout << "\t\t" << name << " '(bdr_id = " << bc.bdr_id
-                  << ")' constant value=" << bc.value << "\n";
-      }
+        if (bc.type == "neumann") { ++n_neumann; }
     }
-    else
-    { // Depth dependent Neumann Boundary (per-boundary parameters assumed pre-validated)
-      const double z_bot     = /* p.z_bot */     0.0;
-      const double z_top     = /* p.z_top */     1.0;
-      const double sigma_bot = /* p.sigma_bot */ -0.1e-6; // C/m^2
-      const double sigma_top = /* p.sigma_top */ -0.5e-6; // C/m^2
+    owned_markers.reserve(owned_markers.size() + n_neumann);
+    // ---------------------------------------------------------------------------
 
-      auto sigma_z = [=](const Vector &x) -> double
-      {
-        const double z = x[1];
-        const double t = (z - z_bot) / (z_top - z_bot); // assume validated z_top != z_bot
-        return sigma_bot + t * (sigma_top - sigma_bot);
-      };
+    for (const auto &[name, bc] : cfg->boundaries)
+    {
+        if (bc.type != "neumann") { continue; }
 
-      auto g  = std::make_unique<FunctionCoefficient>(sigma_z);
-      auto wg = std::make_unique<ProductCoefficient>(w, *g);
-      b.AddBoundaryIntegrator(new BoundaryLFIntegrator(*wg), marker);
-      
-      owned_coeffs.emplace_back(std::move(g));
-      owned_coeffs.emplace_back(std::move(wg));
+        owned_markers.emplace_back(MakeBdrMarker(mesh, {bc.bdr_id}));
+        mfem::Array<int> &marker = owned_markers.back();
 
-      if (cfg->debug.printBoundaryConditions)
-      {
-        std::cout << "\t\t" << name << " '(bdr_id = " << bc.bdr_id
-                  << ")' depth-dependent sigma(z): " << sigma_bot
-                  << " -> " << sigma_top << " C/m^2"
-                  << " over z=[" << z_bot << ", " << z_top << "]\n";
-      }
+        // If this MPI rank has no boundary attributes, or this attribute is absent, skip.
+        if (marker.Size() == 0) { continue; }
+        if (marker.Max() == 0)  { continue; }
+
+        // Shouldn't be higher
+        if (marker.Max() != 1)
+        {
+            std::cerr << "\033[33m"
+                      << "WARNING: boundary " << name << "'(bdr_id= " << bc.bdr_id
+                      << ")' not present in mesh!\n"
+                      << "\033[0m\n";
+        }
+
+        if (!bc.depth_dependent)
+        {
+            auto g  = std::make_unique<ConstantCoefficient>(bc.value);
+            auto wg = std::make_unique<ProductCoefficient>(w, *g);  // axisym weight
+
+            b.AddBoundaryIntegrator(new BoundaryLFIntegrator(*wg), marker);
+
+            owned_coeffs.emplace_back(std::move(g));
+            owned_coeffs.emplace_back(std::move(wg));
+
+            if (cfg->debug.printBoundaryConditions)
+            {
+                std::cout << "\t\t" << name << " '(bdr_id = " << bc.bdr_id
+                          << ")' constant value=" << bc.value << "\n";
+            }
+        }
+        else
+        {
+            const double z_bot     = bc.z_bot;
+            const double z_top     = bc.z_top;
+            const double sigma_bot = bc.value_bot;
+            const double sigma_top = bc.value_top;
+
+            auto sigma_z = [=](const Vector &x) -> double
+            {
+                const double z = x[1];
+                const double t = (z - z_bot) / (z_top - z_bot); // assume validated z_top != z_bot
+                return sigma_bot + t * (sigma_top - sigma_bot);
+            };
+
+            auto g  = std::make_unique<FunctionCoefficient>(sigma_z);
+            auto wg = std::make_unique<ProductCoefficient>(w, *g);
+
+            b.AddBoundaryIntegrator(new BoundaryLFIntegrator(*wg), marker);
+
+            owned_coeffs.emplace_back(std::move(g));
+            owned_coeffs.emplace_back(std::move(wg));
+
+            if (cfg->debug.printBoundaryConditions)
+            {
+                std::cout << "\t\t" << name << " '(bdr_id = " << bc.bdr_id
+                          << ")' depth-dependent sigma(z): " << sigma_bot
+                          << " -> " << sigma_top << " C/m^2"
+                          << " over z=[" << z_bot << ", " << z_top << "]\n";
+            }
+        }
     }
-  }
 }
 
