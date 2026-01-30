@@ -2,10 +2,11 @@ import os
 import sys
 import yaml
 import time 
+from pathlib import Path
+import importlib.util
 
 # ============== Paths for path unaware TUI =====================
-# FIXME: Find a better way of doing this
-base_path = '/home/felix/MFEMElectrostatics/geometry/'
+base_path = '/work/geometry/'
 sys.path.insert(0, base_path)
 from helper_functions import *
 
@@ -16,10 +17,16 @@ with open(base_path + "config.yaml") as stream:
     except yaml.YAMLError as exc:
         print(exc)
 
-if config['mesh']['geometry'] == "SR3":
-    import SR3_constants as geometry
+# Resolve which geometry file to use
+fname = [base_path + i for i in os.listdir(base_path) if (config['mesh']['geometry'] in i) and (".py" in i)]
+if len(fname) == 1:
+    module_name = Path(fname[0]).stem # Strip .py
+    spec = importlib.util.spec_from_file_location(module_name, fname[0])
+    geometry = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(geometry)
 else:
-    raise Exception("Geometry for " + config['mesh']['geometry'] + " not Implemented")
+    raise Exception("Found " + len(fname) + " choices for geometry source " + config['mesh']['geometry'])
+
 # ==============  Debug Options ===========================
 makeface = True
 stop_after_sketch = False
@@ -254,42 +261,51 @@ smesh = smeshBuilder.New()
 mesh = smesh.Mesh(SuperMesh)
 NETGEN_1D_2D = mesh.Triangle(algo=smeshBuilder.NETGEN_1D2D)
 # ---------- Configure Netgen Meshing rules -----------
+
+params = config['mesh']['NetgenParams']
 # https://docs.salome-platform.org/latest/gui/NETGENPLUGIN/netgen_2d_3d_hypo_page.html
 NETGEN_2D_Params = NETGEN_1D_2D.Parameters()
 # Get a preset
-NETGEN_2D_Params.SetFineness(smeshBuilder.VeryFine)          # VeryCoarse, Coarse, Moderate, Fine, VeryFine, Custom
+preset = None
+if params["preset"] == "VeryFine": preset = smeshBuilder.VeryFine
+elif params["preset"] == "Fine": preset = smeshBuilder.Fine
+elif params["preset"] == "Moderate": preset = smeshBuilder.Moderate
+elif params["preset"] == "Coarse": preset = smeshBuilder.Coarse
+elif params["preset"] == "VeryCoarse": preset = smeshBuilder.VeryCoarse
+else: raise Exception("Netgen Preset " + params["preset"] + " not recognized")
+NETGEN_2D_Params.SetFineness(preset)  
 # --- General sizing ---
 # Min and max edge lengths
-NETGEN_2D_Params.SetMaxSize(ptfe_sketches["PTFEWall"]["Height"] / 100) # 1/100 of our largest part
-NETGEN_2D_Params.SetMinSize(0)        # Dont set a minimum
-NETGEN_2D_Params.SetGrowthRate(0.1)  # Mesh element growth rate relative to one another 
+NETGEN_2D_Params.SetMaxSize(params['maxSize']) # 1/100 of our largest part
+NETGEN_2D_Params.SetMinSize(params['minSize'])        # Dont set a minimum
+NETGEN_2D_Params.SetGrowthRate(params['growthRate'])  # Mesh element growth rate relative to one another 
 # --- Curvature-driven sizing ---
 # Lots of curves we want to optimize against
-NETGEN_2D_Params.SetUseSurfaceCurvature(1)
+NETGEN_2D_Params.SetUseSurfaceCurvature(params['UseSurfaceCurvature'])
 # Minimum segments per topological edge
-NETGEN_2D_Params.SetNbSegPerEdge(2)
+NETGEN_2D_Params.SetNbSegPerEdge(params['NBSegmentsPerEdge'])
 # For a circle the local target size is radius / N
 # Number of segments on a circle then 2piR / (R/N) = 2piN
 # So with N NbSegPerRadius we get ~2piN segments around the circle
 # So for 12 edges on a circle we want ~2=N
-NETGEN_2D_Params.SetNbSegPerRadius(1) # 8  
+NETGEN_2D_Params.SetNbSegPerRadius(params['NBSegmentsPerEdge']) # 8  
 # Alternatively we can use this with a maximum allowed deviation - not enabled
-NETGEN_2D_Params.SetChordalErrorEnabled(0)
-NETGEN_2D_Params.SetChordalError(electrode_sketches["AnodeElectrode"]["sub_sketches"]["AnodeWires"]["Radius"] * 0.1)
+NETGEN_2D_Params.SetChordalErrorEnabled(params['UseChordalError'])
+NETGEN_2D_Params.SetChordalError(params['ChordalErrorValue'])
 # --- Local Size Control ---
 # This can be used to set local sizes on individual shapes
 # A source file can also be used
 #NETGEN_2D_Params.SetLocalSizeOnShape
 # --- Advanced Quality Algorithms ---
-NETGEN_2D_Params.SetElemSizeWeight(0.5) # Prioritize mesh quality over accuracy
-NETGEN_2D_Params.SetUseDelauney(1) # advancing front is a bit more fragile but sometimes nicer mesh
-NETGEN_2D_Params.SetCheckOverlapping(1) # Surface elements cant overlap
-NETGEN_2D_Params.SetCheckChartBoundary(2) # Strict checking
-NETGEN_2D_Params.SetFuseEdges(1)        # Avoid Duplicate edges 
+NETGEN_2D_Params.SetElemSizeWeight(params['AQ_ElemSizeWeight']) # Prioritize mesh quality over accuracy
+NETGEN_2D_Params.SetUseDelauney(params['AQ_UseDelauney']) # advancing front is a bit more fragile but sometimes nicer mesh
+NETGEN_2D_Params.SetCheckOverlapping(params['AQ_CheckOverlapping']) # Surface elements cant overlap
+NETGEN_2D_Params.SetCheckChartBoundary(params['AQ_CheckChartBoundary']) # Strict checking
+NETGEN_2D_Params.SetFuseEdges(params['AQ_FuseEdges'])        # Avoid Duplicate edges 
 # --- Element Types and Optimization ---
-NETGEN_2D_Params.SetQuadAllowed(False)  # Dont allow quad meshes
-NETGEN_2D_Params.SetSecondOrder(0)      # Overkill for our purposes - also not sure MFEM supports this by default
-NETGEN_2D_Params.SetOptimize(True)      # Post meshing optimization of the mesh 
+NETGEN_2D_Params.SetQuadAllowed(params['Opt_QuadAllowed'])  # Dont allow quad meshes
+NETGEN_2D_Params.SetSecondOrder(params['Opt_SecondOrder'])      # Overkill for our purposes - also not sure MFEM supports this by default
+NETGEN_2D_Params.SetOptimize(params['Opt_Optimize'])      # Post meshing optimization of the mesh 
 
 # ================================ Surface Groups ====================================
 MSH_GXe_face_group  = mesh.GroupOnGeom(GXeMesh,  "GXe",  SMESH.FACE)
@@ -320,20 +336,25 @@ def on_axis(node_id):
     return abs(x) < tol
 edge_ids = free_borders_clean.GetIDs()
 keep_edges = []
+r0_edges = []
 for eid in edge_ids:
     nodes = mesh.GetElemNodes(eid)
     if not (on_axis(nodes[0]) and on_axis(nodes[1])):
         keep_edges.append(eid)
+    else:
+        r0_edges.append(eid)
+
 cleaned = mesh.CreateEmptyGroup(SMESH.EDGE, "BC_Cryostat")
 cleaned.Add(keep_edges)
 cleaned = mesh.ConvertToStandalone(cleaned)
+
+cleaned2 = mesh.CreateEmptyGroup(SMESH.EDGE, "BC_r0")
+cleaned2.Add(keep_edges)
+cleaned2 = mesh.ConvertToStandalone(cleaned2)
 # Delete helpers 
 mesh.RemoveGroup(free_borders_clean)
 mesh.RemoveGroup(all_bc_edges)
 mesh.RemoveGroup(free_border_edges)
-
-# ------------------------------ Mark the inside of the PTFE Wall  -----------------------------------
-# This is for surface charge
 
 
 # --------------------------------- And save the mesh --------------------------------- 

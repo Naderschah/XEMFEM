@@ -6,6 +6,7 @@ def get_bc():
         "PTFE_Wall_Charge": {"type": "neumann", "depth_dependent": True, 
                                 # For now taken from https://xe1t-wiki.lngs.infn.it/doku.php?id=xenon:xenonnt:ftoschi:electric_field_matching_xenonnt&s[]=wall&s[]=charge
                                 "z_bot": -0.0008 - 1.5008, "z_top": -0.0008, "value_bot": -0.1e-6, "value_top": -0.5e-6},
+        "BC_r0":                        {"type": "neumann", "value": 0},
         "BC_TopScreeningElectrode":    {"type": "dirichlet", "value": -1500},
         "BC_AnodeElectrode":           {"type": "dirichlet", "value": 6500},
         "BC_GateElectrode":            {"type": "dirichlet", "value": -1000},

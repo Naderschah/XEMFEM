@@ -20,5 +20,6 @@ def get_bc():
         "BC_Bell":                     grounded,
         "BC_CopperRing":               grounded,
         "BC_Cryostat":                 grounded,
+        "PTFE_Wall_Charge":            {"type": "neumann", "depth_dependent": False, "value": 0}
     }
     return fixed_boundaries
