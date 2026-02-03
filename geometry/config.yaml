@@ -51,7 +51,7 @@ optimize:
   z_min: -1.5025
   z_max: 0.004
   trace_params:
-    provider: VTK
+    provider: BOOST
     method: RK4
     c_step: 10
     geom_tol: 1e-6

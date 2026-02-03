@@ -319,6 +319,8 @@ struct TraceObserver
         {
             out.exit_code = ClassifyExit(geom, x, p.geom_tol);
             throw TraceExitEvent{};
+            // Need the final position 
+            if (not save) {MaybePush(out, x, true);}
         }
     }
 };
@@ -340,7 +342,7 @@ static inline ElectronTraceResult RunFixedNSteps(Stepper stepper,
     if (!geom.Inside(x[0], x[1]))
     {
         out.exit_code = ClassifyExit(geom, x, p.geom_tol);
-        MaybePush(out, x, save_pathlines);
+        MaybePush(out, x, true);
         return out;
     }
 
@@ -359,6 +361,7 @@ static inline ElectronTraceResult RunFixedNSteps(Stepper stepper,
         boost::numeric::odeint::integrate_n_steps(stepper, rhs, x, 0.0, ds, N, obs);
         // If we get here, we did all N steps without leaving the domain.
         out.exit_code = ElectronExitCode::MaxSteps;
+        MaybePush(out, x, true);
     }
     catch (const TraceExitEvent &)
     {

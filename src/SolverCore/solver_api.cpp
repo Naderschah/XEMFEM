@@ -165,6 +165,43 @@ find_first_with_prefix(const std::filesystem::path &dir,
 }
 } // namespace
 
+// We need to match the partitioning of the ParMesh for any Par Objects we create s
+static mfem::Array<int> BuildElementPartitioningFromParMesh(mfem::ParMesh &pmesh)
+{
+    MPI_Comm comm = pmesh.GetComm();
+    int rank = 0, size = 1;
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &size);
+
+    const long long gNE_ll = pmesh.GetGlobalNE();
+    MFEM_VERIFY(gNE_ll > 0, "Invalid global number of elements.");
+    MFEM_VERIFY(gNE_ll <= std::numeric_limits<int>::max(), "Global NE too large for int.");
+    const int gNE = (int)gNE_ll;
+
+    mfem::Array<int> part(gNE);
+    part = -1;
+
+    const int lNE = pmesh.GetNE(); // locally-owned elements
+    for (int le = 0; le < lNE; ++le)
+    {
+        const long long ge_ll = pmesh.GetGlobalElementNum(le);
+        MFEM_VERIFY(ge_ll >= 0 && ge_ll < gNE_ll, "Invalid global element id.");
+        part[(int)ge_ll] = rank;
+    }
+
+    // Each global element is owned by exactly one rank => MAX works
+    MPI_Allreduce(MPI_IN_PLACE, part.GetData(), gNE, MPI_INT, MPI_MAX, comm);
+
+    // sanity
+    for (int ge = 0; ge < gNE; ++ge)
+    {
+        MFEM_VERIFY(part[ge] >= 0 && part[ge] < size, "Unassigned element owner.");
+    }
+
+    return part;
+}
+
+
 SimulationResult load_results(const Config &cfg,
                               const std::filesystem::path &root_path)
 {
@@ -214,17 +251,18 @@ SimulationResult load_results(const Config &cfg,
     V_s = std::make_unique<mfem::GridFunction>(&serial_mesh, vin);
 
     // --- 3) Convert to PAR objects required by SimulationResult ---
-    result.mesh = std::make_unique<ParMesh>(MPI_COMM_WORLD, serial_mesh);
+    result.mesh = std::make_unique<mfem::ParMesh>(MPI_COMM_WORLD, serial_mesh);
+
+    // Build element->rank partitioning for THIS ParMesh distribution
+    mfem::Array<int> part = BuildElementPartitioningFromParMesh(*result.mesh);
 
     const int dim = result.mesh->Dimension();
-    result.fec  = std::make_unique<H1_FECollection>(cfg.solver.order, dim);
-    result.pfes = std::make_unique<ParFiniteElementSpace>(result.mesh.get(), result.fec.get(), 1);
+    result.fec  = std::make_unique<mfem::H1_FECollection>(cfg.solver.order, dim);
+    result.pfes = std::make_unique<mfem::ParFiniteElementSpace>(result.mesh.get(), result.fec.get(), 1);
 
-    result.V = std::make_unique<ParGridFunction>(result.pfes.get());
-    {
-        GridFunctionCoefficient Vcoeff(V_s.get());
-        result.V->ProjectCoefficient(Vcoeff);
-    }
+    // IMPORTANT: construct ParGridFunction by distributing serial GridFunction using partitioning.
+    // This avoids ProjectCoefficient(GridFunctionCoefficient(...)) and the refinement-transform path.
+    result.V = std::make_unique<mfem::ParGridFunction>(result.mesh.get(), V_s.get(), part.GetData());
 
     // --- 4) Rebuild E/Emag from components as you already do ---
     try
