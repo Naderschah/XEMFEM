@@ -1,5 +1,4 @@
 #include "optimization.h"
-#include "nelder-mead.h" 
 
 // ===================================== Main Loop ==================================== 
 
@@ -235,6 +234,56 @@ ObjectiveFn make_objective_function(const OptimizationSettings &opt)
     // Default / unknown objective: error
     throw std::runtime_error("Unknown optimization objective: '" + name + "'");
 }
+
+double compute_civ(const Config &cfg, const SimulationResult &result)
+/*
+Compute Charge Insensitive Volume on the mesh
+Ie 1-(Volume where electrons reach liquid gas interface) / (Total Volume)
+*/
+{
+    std::chrono::steady_clock::time_point t_start;
+    if (cfg.debug.debug)
+    {
+        t_start = std::chrono::steady_clock::now();
+        std::cout << "[DEBUG:CIV] Timing: start CIV" << std::endl;
+    }
+
+    const std::string &method = cfg.civ_params.method; // "InformedSweep" or "RandomSample"
+    double civ = 1.0;
+
+    if (method == "RandomSample")
+    {
+        civ = ComputeCIV_RandomSample(cfg, result);
+    }
+    else if (method == "Grid")
+    {
+        civ = ComputeCIV_FixedGrid(cfg, result);
+    }
+    else if (method == "AdaptiveGrid")
+    {
+        civ = ComputeCIV_AdaptiveGrid(cfg, result);
+    }
+    else if (method == "RowSweep")
+    {
+        civ = ComputeCIV_RowSweep(cfg, result);
+    }
+    else
+    {
+        std::cerr << "[WARN:OPTIMIZATION] Unknown CIV method '" << method << "',\n";
+        civ = 1.0;
+    }
+
+    if (cfg.debug.debug)
+    {
+        auto t_end = std::chrono::steady_clock::now();
+        auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count();
+        std::cout << "[DEBUG:CIV] Timing: end CIV (" << dt << " ms)" << std::endl;
+    }
+
+    return civ;
+}
+
+
 
 OptimizationMetrics compute_metrics(const Config &cfg, const SimulationResult &result)
 {
@@ -484,7 +533,7 @@ static std::vector<std::string> read_root_level_runs_from_meta(const std::filesy
     return runs;
 }
 
-
+// TODO add option for multiple runs 
 void run_metrics_only(const Config &cfg)
 {
     std::filesystem::path save_root(cfg.save_path);

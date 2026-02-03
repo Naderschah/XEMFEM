@@ -29,7 +29,7 @@ struct MeshSettings {
 
 // -------------------- Compute / Runtime Settings ----------------------------
 struct MPISettings {
-    bool enabled = false;
+    bool enabled = true;
     bool ranks_auto = true;     // true if "auto" was given
     int  ranks = 1;             // ignored if ranks_auto=true
     bool repartition_after_refine = true;
@@ -62,17 +62,9 @@ struct DebugSettings
     bool dry_run                 = false; // TODO Remove? 
     bool printBoundaryConditions = true;
     bool printHypreWarnings      = true;
-    // TOOD SkipMPI - might get involved
 
     // Dump data to file where applicable
     bool dumpdata              = false;
-
-    // If true, TraceElectronFieldLines (Optimization: CIV Computation) should:
-    //   - only trace seed with index debug_single_seed_index,
-    //   - optionally override c_step for that seed to a very small value.
-    bool   debug_single_seed         = false; // TODO: Remove
-    int    debug_single_seed_index   = -1; // Internal dont touch
-    double debug_c_step_override = 0.; // Overwrite c_step in debug mode
 };
 
 // -------------------- Circuit Computation --------------------------
@@ -130,7 +122,6 @@ struct OptimizeVar {
 struct OptimizationSettings {
     bool enabled = false;
     bool metrics_only = false; // Triggers no mesh simulation but computes metrics for all available simulations
-
     bool print_results = false;
 
     // Optimization target
@@ -157,15 +148,23 @@ struct CIVSettings {
     std::string method = "ColumnSweep";
     // Random Sample config
     int num_seed_elements = 512;
-    // Column Sweep Config
-    int n_slices = 24; 
-    // Wheter to save the boundary line of the CIV
-    bool dump_civ_boundary = false;
-    double min_col_pos = 0.1;
+    // For grid searches
+    int nr = 100;
+    int nz = 12;
+    // For adaptive grid
+    int max_levels = 5;
+    // For row scanning 
+    int block_size = 64;
+    // ---------- Not Exposed
     // Integration order
     int    ir_order       = 1;
     // Random Sampling seed - Expose?
     int    rng_seed       = 67; 
+};
+
+struct FieldSpreadParams {
+    double lower = 0.5;
+    double upper = 0.95;
 };
 
 // -------------------- Compute / Runtime Settings ----------------------------
@@ -183,67 +182,23 @@ struct SolverSettings {
 // Field Line tracing parameters 
 struct ElectronTraceParams
 {
-
-    // ------------- New Mesh Tracing -----------
-    double limit_steps = 0;
-    // -------------- Mesh Tracing ---------------
-    // Which propagation method to use
-    // Euler-Cauchy, RK23, RK45
+    std::string provider  = "VTK";
     std::string method    = "RK34";
-    // The step size = c_step * hk, where hk is the shortest vertex to vertex distance inside the current mesh element 
-    double c_step         = 0.25;
-    // Step allowed if error_metric / hK  < tol_rel
-    double tol_rel        = 1e-3;
-    // these * hk produce the smallest and maximal step sizes 
-    double c_min_factor  = 0.01;
-    double c_max_factor  = 1.5; 
-    // Adaptive step resizing, factor by which estimate drops/grows
-    double adapt_grow     = 1.5; 
-    double adapt_shrink   = 0.25;
-    
-    
-
-    // ------------ Grid Tracing -----------------
-    // Pathline integrator (true) vs Newtonian (false)
-    bool use_mobility_model = true;
-    // Mobility Model: dr/dt = mobility Er, dz/dt = mobility Ez
-    double mobility = 0.2;
-    
-    double abs_tol = 1e-10;
-    double rel_tol = 1e-6;
-    double dt_initial = 1e-6;
-    double dt_max = 1e-3;
-    double dt_min = 5e-8;
-
-    // To be shared 
-    double stride = 4;
-    int max_rejected_steps = 50000;
-
-    // ---- Not Exposed
-    // Newtonian Model: dr/dt = vr, dz/dt = vz, dvr/dt = (q/m) Er, dvz/dt = (q/m) Ez : Taken from CODATA
-    double q_over_m = -1.75882000838e11;
-    double vx0 = 0; // Initial Velocity in Newtonian
-    double vy0 = 0; // Initial Velocity in Newtonian
-    double vz0 = 0; // Initial Velocity in Newtonian
-
-
-    // ------------- Common ----------------------
+    // Relative to the smallest mesh element 
+    double c_step         = 2;
     // Tolerance for r,z boundary checks (axis clamp, z-range, etc.)
     double geom_tol       = 1e-12;
-    // Maximum integration steps not counting retries due to too high error
-    int    max_steps      = 200;
 
+    // tracing region
+    double r_min = 0.0;
+    double r_max = 0.664;
+    double z_min = -1.5028;
+    double z_max = 0.004;
+    // Overwrite for z_max to speed up tracing
+    double tracing_z_max;
 
-    // ---- Not Exposed
-    // If true, treat r <= geom_tol as an exit condition 
-    bool   terminate_on_axis = true;
-    // Overwritten by what is given in optimization
-    double r_min          = 0.0;
-    double r_max          = 0.664;
-    double z_min          = -1.5028;
-    double z_max          = 0.004;
-    // TODO : To be Removed
-    double tracing_z_max = 0.004;
+    // Steps to let electrons traverse n times, if 0 infinite loop
+    double max_traversals = 10;
 };
 // ------------------------- Interpolation --------------
 struct Interpolate
@@ -290,6 +245,9 @@ struct Config {
 
     // CIV Computation parameters
     CIVSettings civ_params;
+
+    // FieldSpread Parameters
+    FieldSpreadParams  field_spread;
 
     // Interpolation settings
     Interpolate interp;

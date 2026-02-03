@@ -1,0 +1,16 @@
+version: "3.8"
+
+services:
+  occ:
+    image: local/freecad-cli:1.0.2
+    build:
+      context: ./.freecad-docker
+      dockerfile: Dockerfile
+    working_dir: /work
+    volumes:
+      - ../../:/work:rw
+    tty: true
+    stdin_open: true
+    command: ["bash", "-i"]
+    environment:
+      - TERM=xterm-256color

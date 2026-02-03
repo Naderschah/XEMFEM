@@ -538,18 +538,20 @@ static void WriteGridSampleBinary(const GridSample &g,
 int do_interpolate(Config cfg)
 {
   // Mess with mpi so only Rank 0 machine does interpolation
-  int mpi_inited = 0;
-  MPI_Initialized(&mpi_inited);
-  int world_rank = 0, world_size = 1;
-  if (mpi_inited)
-  {
-    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+  if (cfg.compute.mpi.enabled)
+  {  
+    int mpi_inited = 0;
+    MPI_Initialized(&mpi_inited);
+    int world_rank = 0, world_size = 1;
+    if (mpi_inited)
+    {
+      MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+      MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+    }
+    // Rank-0-only execution
+    if (world_rank != 0) { return 0; }
+    MPI_Comm comm_for_single_rank = MPI_COMM_SELF;
   }
-  // Rank-0-only execution
-  if (world_rank != 0) { return 0; }
-  MPI_Comm comm_for_single_rank = MPI_COMM_SELF;
-
   // Get filepath
   std::filesystem::path save_root(cfg.save_path);
   std::filesystem::path run_dir;

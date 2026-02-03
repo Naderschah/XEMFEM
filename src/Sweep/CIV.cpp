@@ -19,75 +19,15 @@ static bool IsChargeInsensitive(const ElectronTraceResult &res)
     return (res.exit_code == ElectronExitCode::HitWall);
 }
 
-// Build volume-weighted seeds for CIV / optimization / tracing
-// based on the mesh and cfg.tracing_params.
-static CivSeeds ExtractCivSeeds(const Config &cfg, const SimulationResult &result)
+static Seeds ExtractCivSeeds(const Config &cfg, const SimulationResult &result)
 {
-    mfem::ParMesh &pmesh = *result.mesh;
-    const int dim  = pmesh.Dimension();
+    using namespace mfem;
+    const int sdim = result.mesh->SpaceDimension();
+    const auto &tp = cfg.tracing_params;
+    const double r0 = tp.r_min + cfg.tracing_params.geom_tol, r1 = tp.r_max - cfg.tracing_params.geom_tol;
+    const double z0 = tp.z_min + cfg.tracing_params.geom_tol, z1 = tp.z_max - cfg.tracing_params.geom_tol;
 
-    TpcGeometry geom(cfg.tracing_params);
-
-    const int ir_order = cfg.civ_params.ir_order;
-
-    mfem::IntegrationRules irs;
-    CivSeeds seeds;
-
-    const int ne = pmesh.GetNE();
-    seeds.positions.reserve(ne);
-    seeds.elements.reserve(ne);
-    seeds.ips.reserve(ne);
-
-    std::vector<double> element_volume(ne, 0.0);
-    std::vector<int>    seeds_per_element(ne, 0);
-
-    // ------------------ STEP 1: find geometry-eligible elements ------------------
-    std::vector<int> eligible_elems;
-    eligible_elems.reserve(ne);
-
-    for (int e = 0; e < ne; ++e)
-    {
-        mfem::ElementTransformation *T = pmesh.GetElementTransformation(e);
-        MFEM_ASSERT(T, "ExtractCivSeeds: ElementTransformation is null");
-
-        mfem::Geometry::Type geom_type  = T->GetGeometryType();
-        const mfem::IntegrationRule &ir = irs.Get(geom_type, ir_order);
-        const int n_ip                  = ir.GetNPoints();
-
-        bool any_inside = false;
-
-        for (int i = 0; i < n_ip; ++i)
-        {
-            const mfem::IntegrationPoint &ip = ir.IntPoint(i);
-            T->SetIntPoint(&ip);
-
-            mfem::Vector x(dim);
-            T->Transform(ip, x);
-            const double r = x(0);
-            const double z = x(1);
-
-            if (geom.Inside(r, z))
-            {
-                any_inside = true;
-                break;
-            }
-        }
-
-        if (any_inside)
-        {
-            eligible_elems.push_back(e);
-        }
-    }
-    // ---------------------------------------------------------------------------
-
-    // ------------------ STEP 2: randomly select from eligible elements ---------
-    int num_seed_elements = cfg.civ_params.num_seed_elements;
-    const int n_eligible  = static_cast<int>(eligible_elems.size());
-
-    if (num_seed_elements <= 0 || num_seed_elements > n_eligible)
-    {
-        num_seed_elements = n_eligible; // fall back to all eligible
-    }
+    int n = cfg.civ_params.num_seed_elements;
 
     std::mt19937 rng;
     if (cfg.civ_params.rng_seed != 0)
@@ -100,1842 +40,964 @@ static CivSeeds ExtractCivSeeds(const Config &cfg, const SimulationResult &resul
         rng.seed(rd());
     }
 
-    std::vector<int> selected_elems;
-    selected_elems.reserve(num_seed_elements);
+    std::uniform_real_distribution<double> U01(0.0, 1.0);
+    const bool axisymmetric = cfg.solver.axisymmetric;
+    // Total ROI "volume" used for weights.
+    const double V_total = (!axisymmetric)
+        ? (r1 - r0) * (z1 - z0)
+        : (M_PI * (r1 * r1 - r0 * r0) * (z1 - z0)); // ∫∫ 2π r dr dz
 
-    std::sample(eligible_elems.begin(), eligible_elems.end(),
-                std::back_inserter(selected_elems),
-                num_seed_elements,
-                rng);
-    // ---------------------------------------------------------------------------
+    const double w = (n > 0) ? (V_total / static_cast<double>(n)) : 0.0;
 
-    // ------------------ STEP 3: extract seeds only from selected elements ------
-    for (int idx = 0; idx < num_seed_elements; ++idx)
+    Seeds seeds;
+    seeds.positions.reserve(static_cast<std::size_t>(n));
+    seeds.volumes.reserve(static_cast<std::size_t>(n));
+    for (int i = 0; i < n; ++i)
     {
-        int e = selected_elems[idx];
-
-        mfem::ElementTransformation *T = pmesh.GetElementTransformation(e);
-        MFEM_ASSERT(T, "ExtractCivSeeds: ElementTransformation is null");
-
-        mfem::Geometry::Type geom_type  = T->GetGeometryType();
-        const mfem::IntegrationRule &ir = irs.Get(geom_type, ir_order);
-        const int n_ip                  = ir.GetNPoints();
-
-        double V_e = 0.0;
-
-        for (int i = 0; i < n_ip; ++i)
+        const double uz = U01(rng);
+        const double z  = z0 + uz * (z1 - z0);
+        double r = 0.0;
+        if (!axisymmetric)
         {
-            const mfem::IntegrationPoint &ip = ir.IntPoint(i);
-            T->SetIntPoint(&ip);
+            const double ur = U01(rng);
+            r = r0 + ur * (r1 - r0);
+        }
+        else
+        {
+            // Sample r with pdf(r) ∝ r on [r0, r1] for uniform cylindrical volume.
+            const double u = U01(rng);
+            const double r2 = (r0 * r0) + u * ((r1 * r1) - (r0 * r0));
+            r = std::sqrt(r2);
+        }
+        Vector p(sdim);
+        p = 0.0;
+        p[0] = r;
+        p[1] = z;
+        seeds.positions.push_back(std::move(p));
+        seeds.volumes.push_back(w);
+    }
+    return seeds;
+}
 
-            mfem::Vector x(dim);
-            T->Transform(ip, x);
-            const double r = x(0);
-            const double z = x(1);
+static Seeds ExtractCivFixedGridSeeds(const Config            &cfg,
+                                  const SimulationResult &result)
+{
+    using namespace mfem;
 
-            // Contribution to element volume (axisymmetric without 2π)
-            const double detJ  = T->Weight();   // |det(J)| in (r,z)
-            const double w_ref = ip.weight;     // reference weight
-            const double dV    = r * detJ * w_ref;
+    if (!result.mesh)
+    {
+        throw std::runtime_error("ExtractCivFixedGridSeeds: result.mesh is null");
+    }
 
-            V_e += dV;
+    const int sdim = result.mesh->SpaceDimension();
+    if (sdim < 2)
+    {
+        throw std::runtime_error("ExtractCivFixedGridSeeds: mesh.SpaceDimension() < 2");
+    }
 
-            if (!geom.Inside(r, z))
+    const auto &tp = cfg.tracing_params;
+
+    const double r0 = tp.r_min;
+    const double r1 = tp.r_max;
+    const double z0 = tp.z_min;
+    const double z1 = tp.z_max;
+
+    const int nr = cfg.civ_params.nr;
+    const int nz = cfg.civ_params.nz;
+
+    if (nr <= 0 || nz <= 0)
+    {
+        throw std::runtime_error("ExtractCivFixedGridSeeds: cfg.civ_params.nr/nz must be > 0");
+    }
+
+    const double dr = (r1 - r0) / static_cast<double>(nr);
+    const double dz = (z1 - z0) / static_cast<double>(nz);
+
+    Seeds seeds;
+    seeds.positions.resize(static_cast<std::size_t>(nr) * static_cast<std::size_t>(nz));
+    seeds.volumes.resize(seeds.positions.size());
+
+    const bool axisymmetric = cfg.solver.axisymmetric;
+
+    // Cell-center sampling, row-major indexing: k = iz*nr + ir
+    for (int iz = 0; iz < nz; ++iz)
+    {
+        const double z = z0 + (static_cast<double>(iz) + 0.5) * dz;
+
+        for (int ir = 0; ir < nr; ++ir)
+        {
+            const double r = r0 + (static_cast<double>(ir) + 0.5) * dr;
+
+            const std::size_t k = static_cast<std::size_t>(iz) * static_cast<std::size_t>(nr)
+                                + static_cast<std::size_t>(ir);
+
+            Vector p(sdim);
+            p = 0.0;
+            p[0] = r;
+            p[1] = z;
+            // If sdim == 3, p[2] stays 0.0; fixed-grid CIV is intended for (r,z).
+            seeds.positions[k] = std::move(p);
+
+            double dV = dr * dz;
+            if (axisymmetric)
             {
-                continue;
+                dV *= (2.0 * M_PI * r);
             }
+            seeds.volumes[k] = dV;
+        }
+    }
 
-            seeds.positions.push_back(x);
-            seeds.elements.push_back(e);
+    return seeds;
+}
 
-            mfem::IntegrationPoint ip_copy = ip;
-            seeds.ips.push_back(ip_copy);
+static Seeds ExtractCivSeeds_Row(const Config &cfg,
+                            const SimulationResult &result,
+                            int iz_row,
+                            int ir_begin,
+                            int ir_end_inclusive)
+{
+    using namespace mfem;
 
-            seeds_per_element[e]++;
+    if (!result.mesh)
+    {
+        throw std::runtime_error("ExtractCivSeeds_Row: result.mesh is null");
+    }
+
+    const int sdim = result.mesh->SpaceDimension();
+    if (sdim < 2)
+    {
+        throw std::runtime_error("ExtractCivSeeds_Row: mesh.SpaceDimension() < 2");
+    }
+
+    const int nr = cfg.civ_params.nr;
+    const int nz = cfg.civ_params.nz;
+
+    if (nr <= 0 || nz <= 0)
+    {
+        throw std::runtime_error("ExtractCivSeeds_Row: cfg.civ_params.nr/nz must be > 0");
+    }
+    if (iz_row < 0 || iz_row >= nz)
+    {
+        throw std::runtime_error("ExtractCivSeeds_Row: iz_row out of range");
+    }
+
+    const auto &tp = cfg.tracing_params;
+    const double r0 = tp.r_min, r1 = tp.r_max;
+    const double z0 = tp.z_min, z1 = tp.z_max;
+
+    if (!(r1 > r0) || !(z1 > z0))
+    {
+        throw std::runtime_error("ExtractCivSeeds_Row: invalid bounds (r/z)");
+    }
+
+    const double dr = (r1 - r0) / static_cast<double>(nr);
+    const double dz = (z1 - z0) / static_cast<double>(nz);
+
+    // Normalize segment bounds to a list of ir values.
+    const int step = (ir_begin <= ir_end_inclusive) ? 1 : -1;
+    const int nseg = std::abs(ir_end_inclusive - ir_begin) + 1;
+
+    if (ir_begin < 0 || ir_begin >= nr || ir_end_inclusive < 0 || ir_end_inclusive >= nr)
+    {
+        throw std::runtime_error("ExtractCivSeeds_Row: ir range out of bounds");
+    }
+
+    Seeds seeds;
+    seeds.positions.resize(static_cast<std::size_t>(nseg));
+    seeds.volumes.resize(seeds.positions.size());
+
+    const bool axisymmetric = cfg.solver.axisymmetric;
+
+    const double z = z0 + (static_cast<double>(iz_row) + 0.5) * dz;
+
+    int ir = ir_begin;
+    for (int k = 0; k < nseg; ++k, ir += step)
+    {
+        const double r = r0 + (static_cast<double>(ir) + 0.5) * dr;
+
+        Vector p(sdim);
+        p = 0.0;
+        p[0] = r;
+        p[1] = z;
+
+        seeds.positions[static_cast<std::size_t>(k)] = std::move(p);
+
+        double dV = dr * dz;
+        if (axisymmetric)
+        {
+            dV *= (2.0 * M_PI * r);
+        }
+        seeds.volumes[static_cast<std::size_t>(k)] = dV;
+    }
+
+    return seeds;
+}
+
+// ------------------- Adaptive Sampling Helpers --------------
+Seeds ExtractCivSeeds_Column(const Config &cfg,
+                               const SimulationResult &result,
+                               int ir_col)
+{
+    using namespace mfem;
+
+    if (!result.mesh)
+    {
+        throw std::runtime_error("ExtractCivSeeds_Column: result.mesh is null");
+    }
+
+    const int sdim = result.mesh->SpaceDimension();
+    if (sdim < 2)
+    {
+        throw std::runtime_error("ExtractCivSeeds_Column: mesh.SpaceDimension() < 2");
+    }
+
+    const int nr = cfg.civ_params.nr;
+    const int nz = cfg.civ_params.nz;
+
+    if (nr <= 0 || nz <= 0)
+    {
+        throw std::runtime_error("ExtractCivSeeds_Column: cfg.civ_params.nr/nz must be > 0");
+    }
+    if (ir_col < 0 || ir_col >= nr)
+    {
+        throw std::runtime_error("ExtractCivSeeds_Column: ir_col out of range");
+    }
+
+    const auto &tp = cfg.tracing_params;
+    const double r0 = tp.r_min, r1 = tp.r_max;
+    const double z0 = tp.z_min, z1 = tp.z_max;
+
+    if (!(r1 > r0) || !(z1 > z0))
+    {
+        throw std::runtime_error("ExtractCivSeeds_Column: invalid bounds (r/z)");
+    }
+
+    const double dr = (r1 - r0) / static_cast<double>(nr);
+    const double dz = (z1 - z0) / static_cast<double>(nz);
+
+    const double r = r0 + (static_cast<double>(ir_col) + 0.5) * dr;
+
+    Seeds seeds;
+    seeds.positions.resize(static_cast<std::size_t>(nz));
+    seeds.volumes.resize(seeds.positions.size());
+
+    const bool axisymmetric = cfg.solver.axisymmetric;
+
+    for (int iz = 0; iz < nz; ++iz)
+    {
+        const double z = z0 + (static_cast<double>(iz) + 0.5) * dz;
+
+        Vector p(sdim);
+        p = 0.0;
+        p[0] = r;
+        p[1] = z;
+        // If sdim==3, p[2]=0 remains.
+
+        seeds.positions[static_cast<std::size_t>(iz)] = std::move(p);
+
+        double dV = dr * dz;
+        if (axisymmetric)
+        {
+            dV *= (2.0 * M_PI * r);
+        }
+        seeds.volumes[static_cast<std::size_t>(iz)] = dV;
+    }
+
+    return seeds;
+}
+
+void UpdateLeftmostCivFromColumn(const Config &cfg,
+                                 const SimulationResult & /*result*/,
+                                 int ir_col,
+                                 const Seeds &col_seeds,
+                                 const std::vector<ElectronTraceResult> &col_results,
+                                 std::vector<int> &leftmost_civ_per_row,
+                                 bool &column_has_any_civ)
+{
+    const int nz = cfg.civ_params.nz;
+
+    if (nz <= 0)
+    {
+        throw std::runtime_error("UpdateLeftmostCivFromColumn: cfg.civ_params.nz must be > 0");
+    }
+    if (static_cast<int>(leftmost_civ_per_row.size()) != nz)
+    {
+        throw std::runtime_error("UpdateLeftmostCivFromColumn: leftmost_civ_per_row has wrong size");
+    }
+    if (col_seeds.positions.size() != static_cast<std::size_t>(nz) ||
+        col_results.size() != static_cast<std::size_t>(nz))
+    {
+        throw std::runtime_error("UpdateLeftmostCivFromColumn: column seeds/results size mismatch");
+    }
+
+    column_has_any_civ = false;
+
+    for (int iz = 0; iz < nz; ++iz)
+    {
+        const auto &res = col_results[static_cast<std::size_t>(iz)];
+
+        if (IsChargeInsensitive(res))
+        {
+            column_has_any_civ = true;
+
+            int &lm = leftmost_civ_per_row[static_cast<std::size_t>(iz)];
+            if (lm < 0 || ir_col < lm)
+            {
+                lm = ir_col;
+            }
+        }
+    }
+}
+
+
+Seeds ExtractCivSeeds_BoundaryBand(const Config &cfg,
+                                     const SimulationResult &result,
+                                     int level,
+                                     const std::vector<int> &leftmost_civ_prev_level)
+{
+    using namespace mfem;
+
+    if (level <= 0)
+    {
+        throw std::runtime_error("ExtractCivSeeds_BoundaryBand: level must be >= 1");
+    }
+    if (!result.mesh)
+    {
+        throw std::runtime_error("ExtractCivSeeds_BoundaryBand: result.mesh is null");
+    }
+
+    const int sdim = result.mesh->SpaceDimension();
+    if (sdim < 2)
+    {
+        throw std::runtime_error("ExtractCivSeeds_BoundaryBand: mesh.SpaceDimension() < 2");
+    }
+
+    const int nr0 = cfg.civ_params.nr;
+    const int nz0 = cfg.civ_params.nz;
+    if (nr0 <= 0 || nz0 <= 0)
+    {
+        throw std::runtime_error("ExtractCivSeeds_BoundaryBand: cfg.civ_params.nr/nz must be > 0");
+    }
+
+    // Refined dimensions at this level.
+    const int scale = 1 << level;       // 2^level
+    const int NrL   = nr0 * scale;
+    const int NzL   = nz0 * scale;
+
+    // Previous level dimensions must match leftmost_civ_prev_level.
+    const int prev_scale = 1 << (level - 1);
+    const int NzPrev     = nz0 * prev_scale;
+
+    if (static_cast<int>(leftmost_civ_prev_level.size()) != NzPrev)
+    {
+        throw std::runtime_error("ExtractCivSeeds_BoundaryBand: leftmost_civ_prev_level wrong size");
+    }
+
+    const auto &tp = cfg.tracing_params;
+    const double r0 = tp.r_min, r1 = tp.r_max;
+    const double z0 = tp.z_min, z1 = tp.z_max;
+
+    if (!(r1 > r0) || !(z1 > z0))
+    {
+        throw std::runtime_error("ExtractCivSeeds_BoundaryBand: invalid bounds (r/z)");
+    }
+
+    const double dr = (r1 - r0) / static_cast<double>(NrL);
+    const double dz = (z1 - z0) / static_cast<double>(NzL);
+
+    const bool axisymmetric = cfg.solver.axisymmetric;
+
+    // Collect unique (ir,iz) in this level's band.
+    // Key encoding: high 32 bits = iz, low 32 bits = ir.
+    std::vector<std::uint64_t> keys;
+    keys.reserve(static_cast<std::size_t>(NzL) * 18); // rough: 2 r-bases * 3x3 halo
+
+    bool any_parent_has_civ = false;
+
+    for (int iz = 0; iz < NzL; ++iz)
+    {
+        const int iz_parent = iz / 2; // parent row at previous level
+        const int b_prev    = leftmost_civ_prev_level[static_cast<std::size_t>(iz_parent)];
+
+        if (b_prev < 0)
+        {
+            continue; // no CIV known in this parent row -> no band for its children
         }
 
-        element_volume[e] = V_e;
+        any_parent_has_civ = true;
+
+        // Map previous boundary index to this level:
+        // The parent cell splits into two in r, so boundary candidates are {2*b, 2*b+1}.
+        const int ir_base0 = 2 * b_prev;
+        const int ir_base1 = 2 * b_prev + 1;
+
+        const int ir_bases[2] = { ir_base0, ir_base1 };
+
+        for (int ib = 0; ib < 2; ++ib)
+        {
+            const int ir_base = ir_bases[ib];
+
+            // Halo: ±1 in both r and z at current level.
+            for (int diz = -1; diz <= 1; ++diz)
+            {
+                const int iz2 = iz + diz;
+                if (iz2 < 0 || iz2 >= NzL) { continue; }
+
+                for (int dir = -1; dir <= 1; ++dir)
+                {
+                    const int ir2 = ir_base + dir;
+                    if (ir2 < 0 || ir2 >= NrL) { continue; }
+
+                    const std::uint64_t key =
+                        (static_cast<std::uint64_t>(static_cast<std::uint32_t>(iz2)) << 32) |
+                        (static_cast<std::uint64_t>(static_cast<std::uint32_t>(ir2)));
+
+                    keys.push_back(key);
+                }
+            }
+        }
     }
-    // ---------------------------------------------------------------------------
 
-    // ------------------ STEP 4: same volume partition as before ----------------
-    const int n_seeds = static_cast<int>(seeds.positions.size());
-    seeds.volumes.resize(n_seeds);
-
-    for (int j = 0; j < n_seeds; ++j)
+    if (!any_parent_has_civ || keys.empty())
     {
-        const int e         = seeds.elements[j];
-        const int n_in_elem = seeds_per_element[e];
+        return Seeds{}; // empty => nothing to refine
+    }
 
-        MFEM_VERIFY(n_in_elem > 0,
-                    "ExtractCivSeeds: element has seeds reference but zero seeds_per_element");
+    // Unique keys to avoid duplicate seeds.
+    std::sort(keys.begin(), keys.end());
+    keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
 
-        seeds.volumes[j] = element_volume[e] / static_cast<double>(n_in_elem);
+    Seeds seeds;
+    seeds.positions.resize(keys.size());
+    seeds.volumes.resize(keys.size());
+
+    for (std::size_t k = 0; k < keys.size(); ++k)
+    {
+        const std::uint32_t iz = static_cast<std::uint32_t>(keys[k] >> 32);
+        const std::uint32_t ir = static_cast<std::uint32_t>(keys[k] & 0xFFFFFFFFu);
+
+        const double r = r0 + (static_cast<double>(ir) + 0.5) * dr;
+        const double z = z0 + (static_cast<double>(iz) + 0.5) * dz;
+
+        Vector p(sdim);
+        p = 0.0;
+        p[0] = r;
+        p[1] = z;
+
+        seeds.positions[k] = std::move(p);
+
+        double dV = dr * dz;
+        if (axisymmetric)
+        {
+            dV *= (2.0 * M_PI * r);
+        }
+        seeds.volumes[k] = dV;
     }
 
     return seeds;
 }
 
 
+void UpdateLeftmostCivFromBand(const Config &cfg,
+                               const SimulationResult & /*result*/,
+                               int level,
+                               const Seeds &band_seeds,
+                               const std::vector<ElectronTraceResult> &band_results,
+                               std::vector<int> &leftmost_civ_this_level)
+{
+    if (level <= 0)
+    {
+        throw std::runtime_error("UpdateLeftmostCivFromBand: level must be >= 1");
+    }
 
-double ComputeCIV_RandomSample(const Config           &cfg,
+    const int nr0 = cfg.civ_params.nr;
+    const int nz0 = cfg.civ_params.nz;
+    if (nr0 <= 0 || nz0 <= 0)
+    {
+        throw std::runtime_error("UpdateLeftmostCivFromBand: cfg.civ_params.nr/nz must be > 0");
+    }
+
+    const int scale = 1 << level;
+    const int NrL   = nr0 * scale;
+    const int NzL   = nz0 * scale;
+
+    if (band_seeds.positions.size() != band_results.size())
+    {
+        throw std::runtime_error("UpdateLeftmostCivFromBand: seeds/results size mismatch");
+    }
+
+    leftmost_civ_this_level.assign(static_cast<std::size_t>(NzL), -1);
+
+    const auto &tp = cfg.tracing_params;
+    const double r0 = tp.r_min, r1 = tp.r_max;
+    const double z0 = tp.z_min, z1 = tp.z_max;
+
+    const double dr = (r1 - r0) / static_cast<double>(NrL);
+    const double dz = (z1 - z0) / static_cast<double>(NzL);
+
+    // Map each seed position back to its (ir,iz) at this level.
+    // Since we generated exact centers, this should be stable.
+    for (std::size_t k = 0; k < band_results.size(); ++k)
+    {
+        if (!IsChargeInsensitive(band_results[k]))
+        {
+            continue;
+        }
+
+        const auto &p = band_seeds.positions[k];
+        if (p.Size() < 2)
+        {
+            throw std::runtime_error("UpdateLeftmostCivFromBand: seed position has Size() < 2");
+        }
+
+        const double r = p[0];
+        const double z = p[1];
+
+        // Compute indices by inverting center formula.
+        // ir = floor((r - r0)/dr), iz = floor((z - z0)/dz)
+        int ir = static_cast<int>(std::floor((r - r0) / dr));
+        int iz = static_cast<int>(std::floor((z - z0) / dz));
+
+        // Clamp indices defensively to grid bounds (not tolerance clamping).
+        ir = std::min(std::max(ir, 0), NrL - 1);
+        iz = std::min(std::max(iz, 0), NzL - 1);
+
+        int &lm = leftmost_civ_this_level[static_cast<std::size_t>(iz)];
+        if (lm < 0 || ir < lm)
+        {
+            lm = ir;
+        }
+    }
+}
+
+
+
+double IntegrateCIVFromBoundary(const Config &cfg,
+                                const SimulationResult & /*result*/,
+                                int level,
+                                const std::vector<int> &leftmost_civ_per_row)
+{
+    const int nr0 = cfg.civ_params.nr;
+    const int nz0 = cfg.civ_params.nz;
+
+    if (nr0 <= 0 || nz0 <= 0)
+    {
+        throw std::runtime_error("IntegrateCIVFromBoundary: cfg.civ_params.nr/nz must be > 0");
+    }
+    if (level < 0)
+    {
+        throw std::runtime_error("IntegrateCIVFromBoundary: level must be >= 0");
+    }
+
+    const int scale = 1 << level;
+    const int NrL   = nr0 * scale;
+    const int NzL   = nz0 * scale;
+
+    if (static_cast<int>(leftmost_civ_per_row.size()) != NzL)
+    {
+        throw std::runtime_error("IntegrateCIVFromBoundary: leftmost_civ_per_row has wrong size for level");
+    }
+
+    const auto &tp = cfg.tracing_params;
+    const double r0 = tp.r_min, r1 = tp.r_max;
+    const double z0 = tp.z_min, z1 = tp.z_max;
+
+    if (!(r1 > r0) || !(z1 > z0))
+    {
+        throw std::runtime_error("IntegrateCIVFromBoundary: invalid bounds (r/z)");
+    }
+
+    const double dr = (r1 - r0) / static_cast<double>(NrL);
+    const double dz = (z1 - z0) / static_cast<double>(NzL);
+
+    const bool axisymmetric = cfg.solver.axisymmetric;
+
+    // Total volume/area of ROI under chosen weighting.
+    double V_total = 0.0;
+    if (!axisymmetric)
+    {
+        V_total = (r1 - r0) * (z1 - z0);
+    }
+    else
+    {
+        // ∫∫ 2π r dr dz = π (r1^2 - r0^2) (z1 - z0)
+        V_total = M_PI * (r1 * r1 - r0 * r0) * (z1 - z0);
+    }
+
+    double V_civ = 0.0;
+
+    for (int iz = 0; iz < NzL; ++iz)
+    {
+        int ir_b = leftmost_civ_per_row[static_cast<std::size_t>(iz)];
+
+        if (ir_b < 0)
+        {
+            continue; // no CIV in this row
+        }
+
+        // Defensive bounds (not tolerance clamping).
+        ir_b = std::min(std::max(ir_b, 0), NrL);
+
+        // Boundary at the left edge of leftmost CIV cell.
+        const double r_boundary = r0 + static_cast<double>(ir_b) * dr;
+
+        if (!axisymmetric)
+        {
+            V_civ += (r1 - r_boundary) * dz;
+        }
+        else
+        {
+            // ∫_{r_boundary}^{r1} 2π r dr * dz = π (r1^2 - r_boundary^2) dz
+            V_civ += M_PI * (r1 * r1 - r_boundary * r_boundary) * dz;
+        }
+    }
+
+    return (V_total > 0.0) ? (V_civ / V_total) : 0.0;
+}
+
+
+// -------------------- Random Sample -----------------------
+double ComputeCIV_RandomSample(const Config            &cfg,
                                const SimulationResult &result)
 {
     using namespace mfem;
 
     if (cfg.debug.debug)
     {
-        std::cout << "[DEBUG:OPTIMIZATION] Computing CIV (RandomSample)" << std::endl;
+        std::cout << "[DEBUG:OPTIMIZATION] Computing CIV (RandomSample)\n";
     }
 
-    ParMesh &pmesh = *result.mesh;
+    Seeds seeds = ExtractCivSeeds(cfg, result);
 
-    CivSeeds seeds = ExtractCivSeeds(cfg, result);
+    // Construct Tracing Object
+    ElectronFieldLineTracer tracer;
+    tracer.Setup(result, cfg.tracing_params, cfg, cfg.solver.axisymmetric);
 
-    // If no seeds throw error
     if (seeds.positions.empty())
     {
         throw std::runtime_error("No seeds to compute CIV for");
     }
 
     std::vector<ElectronTraceResult> trace_results;
+    tracer.Trace(seeds, trace_results,
+                 cfg.solver.axisymmetric, 
+                 cfg.debug.dumpdata,
+                 nullptr);
 
-    TraceElectronFieldLines(result, cfg, seeds, trace_results);
-
-    double V_total = 0.0; // active TPC volume
-    double V_civ   = 0.0; // Volume where electrons do not reach liquid gas interface
+    double V_total = 0.0;
+    double V_civ   = 0.0;
 
     for (std::size_t i = 0; i < seeds.positions.size(); ++i)
     {
-        const double                dV  = seeds.volumes[i];
-        const ElectronTraceResult  &res = trace_results[i];
+        const double               dV  = seeds.volumes[i];
+        const ElectronTraceResult &res = trace_results[i];
 
         V_total += dV;
 
-        // charge-insensitive if it does NOT reach liquid-gas interface
         if (IsChargeInsensitive(res))
         {
             V_civ += dV;
         }
     }
-
-    if (V_total <= 0.0)
-    {
-        return 0.0;
-    }
-
-    // Return volume fraction
-    return V_civ / V_total;
+    if (cfg.debug.debug) { std::cout << "Traced " << seeds.positions.size() << " seed points" << std::endl;}
+    return (V_total > 0.0) ? (V_civ / V_total) : 0.0;
 }
-
-
-// ============================================================================
-// CIV by binary search 
-// ============================================================================
-static bool FindElementForPointGlobal(
-    mfem::ParMesh          &mesh,
-    const mfem::Vector     &x_phys,
-    int                    &out_elem,
-    mfem::IntegrationPoint &out_ip)
+// --------------------------  Fixed Grid ---------------------------
+double ComputeCIV_FixedGrid(const Config            &cfg,
+                            const SimulationResult &result)
 {
-    using namespace mfem;
-
-    const int ne = mesh.GetNE();
-
-    for (int e = 0; e < ne; ++e)
+    if (cfg.debug.debug)
     {
-        ElementTransformation *T = mesh.GetElementTransformation(e);
-        MFEM_ASSERT(T, "FindElementForPointGlobal: ElementTransformation is null");
-
-        InverseElementTransformation invT(T);
-
-        IntegrationPoint ip_trial;
-        int res = invT.Transform(x_phys, ip_trial);
-        if (res == InverseElementTransformation::Inside)
-        {
-            out_elem = e;
-            out_ip   = ip_trial;
-            return true;
-        }
+        std::cout << "[DEBUG:OPTIMIZATION] Computing CIV (FixedGrid) "
+                  << "nr=" << cfg.civ_params.nr << " nz=" << cfg.civ_params.nz << "\n";
     }
 
-    // No element contains x_phys
-    return false;
-}
+    Seeds seeds = ExtractCivFixedGridSeeds(cfg, result);
 
-// TODO: Whats the point of this again
-struct TracerContext
-{
-    // Per-thread-owned MFEM objects
-    mfem::ParMesh               mesh;        // local copy of global mesh
-    mfem::ParFiniteElementSpace fes_phi;     // H1 space for potential
-    mfem::GridFunction          phi;         // potential on local mesh
-    ElectricFieldCoeff          E_coeff;     // E = -grad(phi)
+    // Construct Tracing Object
+    ElectronFieldLineTracer tracer;
+    tracer.Setup(result, cfg.tracing_params, cfg, cfg.solver.axisymmetric);
 
-    // Shared read-only data (references or pointers)
-    const ElementAdjacency              &adj;
-
-    // Physics / configuration
-    TpcGeometry         tpc;
-    ElectronTraceParams params;
-    bool                axisymmetric;
-    Config              cfg;
-
-    TracerContext(mfem::ParMesh                     &global_mesh,
-                  const mfem::FiniteElementCollection *fec_phi,
-                  int                                  ordering,
-                  const mfem::GridFunction           &global_phi,
-                  const ElementAdjacency             &adj_ref,
-                  const Config                       &cfg)
-        : mesh(global_mesh),
-          fes_phi(&mesh, fec_phi, /*vdim=*/1, ordering),
-          phi(&fes_phi),
-          E_coeff(phi, -1.0),
-          adj(adj_ref),
-          tpc(cfg.tracing_params),
-          params(cfg.tracing_params),
-          axisymmetric(cfg.solver.axisymmetric),
-          cfg(cfg)
-    {
-        phi = global_phi; // copy potential DOFs into local mesh
-    }
-
-    TracerContext(const TracerContext&) = delete;
-    TracerContext& operator=(const TracerContext&) = delete;
-    TracerContext(TracerContext&&) = default;
-    TracerContext& operator=(TracerContext&&) = default;
-};
-// Trace a single electron starting from physical (r,z).
-// Returns true if the point was inside the mesh and we traced it.
-// On success, fills 'res' and 'start_elem'.
-static bool TraceSingleCIProbe(TracerContext       &ctx,
-                               double               r,
-                               double               z,
-                               int                 &elem_guess,
-                               ElectronTraceResult &res)
-{
-    using namespace mfem;
-
-    // Reject points outside the TPC region
-    if (!ctx.tpc.Inside(r, z))
-    {
-        return false;
-    }
-
-    // Physical coordinate vector
-    const int dim = ctx.mesh.SpaceDimension();
-
-    Vector x_phys(dim);
-    x_phys[0] = r;
-    x_phys[1] = z;
-
-    int              elem = -1;
-    IntegrationPoint ip;
-
-    // 1) try local search from elem_guess if valid
-    if (elem_guess >= 0 &&
-        elem_guess < ctx.mesh.GetNE() &&
-        FindElementForPointLocal(ctx.mesh, ctx.adj, elem_guess, x_phys, elem, ip))
-    {
-        elem_guess = elem;
-    }
-    // 2) otherwise global search
-    else if (!FindElementForPointGlobal(ctx.mesh, x_phys, elem, ip))
-    {
-        return false; // not in mesh
-    }
-    else
-    {
-        elem_guess = elem;
-    }
-
-    // Now trace from (elem, ip) using existing RK4 integrator
-    res = TraceSingleElectronLine(ctx.mesh,
-                                  ctx.E_coeff,
-                                  ctx.adj,
-                                  ctx.tpc,
-                                  ctx.params,
-                                  elem,
-                                  ip,
-                                  ctx.axisymmetric,
-                                  /*save_pathlines=*/false);
-
-    return true;
-}
-
-
-// Used to do simple downwards integration of the resulting boundaries instead of 
-// summing mesh elements
-static double ComputeCIV_FromInterface(const Config                  &cfg,
-                                       const std::vector<InterfacePoint> &iface)
-{
-    if (iface.empty())
-    {
-        return 0.0;
-    }
-
-    TpcGeometry tpc(cfg.tracing_params);
-
-    const double r_min = tpc.r_min;
-    const double r_max = tpc.r_max;
-    const double z_min = tpc.z_min;
-
-    // Use the same "top of active drift region" as in the old element-based
-    // ComputeCIVFromInterface (z_check_max = cfg.tracing_params.z_max).
-    const double z_top = cfg.tracing_params.z_max;  // or tpc.z_max if you prefer
-
-    if (r_max <= r_min || z_top <= z_min)
-    {
-        return 0.0;
-    }
-
-    std::vector<InterfacePoint> pts = iface;
-
-    auto clamp_z = [&](double z) -> double {
-        if (z < z_min) return z_min;
-        if (z > z_top) return z_top;
-        return z;
-    };
-
-    double A_ci = 0.0; // CI area in (r,z)
-
-    // Segment from r_min up to first interface point: use z_ci = pts.front().z_ci
-    const double r0 = pts.front().r;
-    if (r_min < r0)
-    {
-        double zc = clamp_z(pts.front().z_ci);
-        double h  = zc - z_min;
-        if (h > 0.0)
-        {
-            A_ci += h * (r0 - r_min);
-        }
-    }
-
-    // Interior segments: piecewise linear between successive interface points
-    const int n = static_cast<int>(pts.size());
-    for (int i = 0; i + 1 < n; ++i)
-    {
-        const double ra = pts[i].r;
-        const double rb = pts[i+1].r;
-        if (rb <= ra) { continue; }
-
-        double za = clamp_z(pts[i].z_ci);
-        double zb = clamp_z(pts[i+1].z_ci);
-
-        double ha = za - z_min;
-        double hb = zb - z_min;
-
-        // Clip negative heights (if z_ci dips below z_min numerically)
-        if (ha < 0.0) ha = 0.0;
-        if (hb < 0.0) hb = 0.0;
-
-        if (ha == 0.0 && hb == 0.0) { continue; }
-
-        // Trapezoidal area under a linear segment: (average height) * width
-        const double dr    = rb - ra;
-        const double h_avg = 0.5 * (ha + hb);
-        A_ci += h_avg * dr;
-    }
-
-    // Segment from last interface point up to r_max: use z_ci = pts.back().z_ci
-    const double rn = pts.back().r;
-    if (rn < r_max)
-    {
-        double zc = clamp_z(pts.back().z_ci);
-        double h  = zc - z_min;
-        if (h > 0.0)
-        {
-            A_ci += h * (r_max - rn);
-        }
-    }
-
-    // Total area of the active rectangle in (r,z)
-    const double A_tot = (r_max - r_min) * (z_top - z_min);
-
-    return A_ci / A_tot;
-}
-// ============================================================================
-// CIV by radial column sweeps (fixed r-slices, z-search per slice)
-// ============================================================================
-double ComputeCIV_ColumnSweep(const SimulationResult &sim,
-                              const Config           &cfg)
-{
-    using namespace mfem;
-
-    MFEM_VERIFY(sim.mesh, "ComputeCIV_ColumnSweep: mesh is null");
-    ParMesh &global_mesh = *sim.mesh;
-
-    MFEM_VERIFY(sim.V, "ComputeCIV_ColumnSweep: potential V is null");
-    GridFunction &global_phi = *sim.V;
-
-    const FiniteElementSpace      *fes_phi = global_phi.FESpace();
-    const FiniteElementCollection *fec     = fes_phi->FEColl();
-    const int                      ordering = fes_phi->GetOrdering();
-
-    // Shared geometry/connectivity
-    ElementAdjacency              adj         = BuildAdjacency(global_mesh);
-
-    // Base tracer context
-    TracerContext base_ctx(global_mesh,
-                           fec,
-                           ordering,
-                           global_phi,
-                           adj,
-                           cfg);
-    // Speed up by not requiring to traverse the entire TPC 
-
-    // Geometry limits and params
-    TpcGeometry tpc(cfg.tracing_params);
-    const double r_min    = tpc.r_min;
-    const double r_max    = tpc.r_max;
-    const double z_min    = tpc.z_min;
-    const double z_max    = tpc.z_max;
-    const double geom_tol = cfg.tracing_params.geom_tol;
-    const bool   debug    = cfg.debug.debug;
-
-    if (debug)
-    {
-        std::cout << "[DEBUG:CIV] r_min=" << r_min
-                  << " r_max=" << r_max
-                  << " z_min=" << z_min
-                  << " z_max=" << z_max
-                  << " geom_tol=" << geom_tol << "\n";
-    }
-
-    // Number of radial slices
-    const int n_r_slices = cfg.civ_params.n_slices; 
-
-    // Radial range we actually sample (avoid exact boundaries)
-    const double r_lo = r_min + geom_tol;
-    const double r_hi = r_max - geom_tol;
-    if (r_hi <= r_lo)
-    {
-        if (debug)
-        {
-            std::cout << "[DEBUG:CIV] Invalid radial range in ColumnSweep: r_hi <= r_lo\n";
-        }
-        return 0.0;
-    }
-
-    // Max number of traces per column
-    int n_threads = cfg.compute.threads.num;
-    if (n_threads <= 0) { n_threads = 1; }
-    const int max_probes_per_column = 50; // TOOD Config hook
-
-    if (debug)
-    {
-        std::cout << "[DEBUG:CIV] n_slices=" << n_r_slices
-                  << " threads=" << n_threads
-                  << " max_probes_per_column=" << max_probes_per_column << "\n";
-    }
-
-    // Build per-thread contexts
-    int n_used_threads = std::max(1, n_threads);
-    std::vector<std::unique_ptr<TracerContext>> extra;
-    extra.reserve(n_used_threads - 1);
-
-    std::vector<TracerContext*> ctx_pool(n_used_threads);
-    ctx_pool[0] = &base_ctx;
-
-    for (int t = 1; t < n_used_threads; ++t)
-    {
-        extra.emplace_back(std::make_unique<TracerContext>(
-            base_ctx.mesh, fec, ordering, base_ctx.phi,
-            adj, cfg));
-        ctx_pool[t] = extra.back().get();
-    }
-
-    // Storage for interface points (per slice) and flags
-    std::vector<InterfacePoint> iface_tmp(n_r_slices);
-    std::vector<bool>           col_found(n_r_slices, false);
-
-    // Parallel over radial slices; each thread uses its own TracerContext
-    #pragma omp parallel for num_threads(n_used_threads)
-    for (int k = 0; k < n_r_slices; ++k)
-    {
-        int tid = omp_get_thread_num();
-        if (tid >= n_used_threads) { tid %= n_used_threads; }
-
-        TracerContext &ctx_k = *ctx_pool[tid];
-
-        // Radial location for this column
-        const double t   = (k + 0.5) / static_cast<double>(n_r_slices);
-        const double r_k = r_lo + t * (r_hi - r_lo);
-
-        // -----------------------------------------
-        // REUSE elem_guess across all z probes in this column
-        // -----------------------------------------
-        int elem_guess = -1;
-
-        // Bracket top/bottom
-        double z_top = -1.5;//z_max - geom_tol; //TODO add config entry
-        double z_bot = z_min + geom_tol; 
-
-        // Top probe
-        bool ok_top = false, ci_top = false;
-        {
-            double rr = r_k, zz = z_top;
-            ElectronTraceResult res;
-            ok_top = TraceSingleCIProbe(ctx_k, rr, zz, elem_guess, res);
-            ci_top = ok_top && IsChargeInsensitive(res);
-        }
-
-        // Bottom probe (reuses elem_guess)
-        bool ok_bot = false, ci_bot = false;
-        {
-            double rr = r_k, zz = z_bot;
-            ElectronTraceResult res;
-            ok_bot = TraceSingleCIProbe(ctx_k, rr, zz, elem_guess, res);
-            ci_bot = ok_bot && IsChargeInsensitive(res);
-        }
-
-        bool   found_ci = false;
-        double z_ci     = 0.0;
-
-        if (!ok_bot || !ci_bot)
-        {
-            // No CI even at bottom -> this column contributes nothing
-            found_ci = false;
-        }
-        else if (ci_top)
-        {
-            // CI already at top -> whole column CI
-            found_ci = true;
-            z_ci     = z_top;
-        }
-        else
-        {
-            // Bisection between z_top (non-CI) and z_bot (CI)
-            double z_hi = z_top;
-            double z_lo = z_bot;
-            z_ci        = z_lo;
-
-            int remaining = max_probes_per_column - 2;
-
-            while (remaining > 0 && (z_hi - z_lo) > 5.0 * geom_tol)
-            {
-                double z_mid = 0.5 * (z_hi + z_lo);
-                double rr = r_k, zz = z_mid;
-
-                ElectronTraceResult res;
-                bool ok_mid = TraceSingleCIProbe(ctx_k, rr, zz, elem_guess, res);
-                bool ci_mid = ok_mid && IsChargeInsensitive(res);
-
-                if (ci_mid)
-                {
-                    z_ci = z_mid;
-                    z_lo = z_mid;   // CI side moves up
-                }
-                else
-                {
-                    z_hi = z_mid;   // non-CI side moves down
-                }
-
-                --remaining;
-            }
-
-            found_ci = true;
-        }
-
-        if (found_ci)
-        {
-            col_found[k] = true;
-            InterfacePoint ip;
-            ip.r          = r_k;
-            ip.z_ci       = z_ci;
-            ip.elem       = elem_guess;  // optional; not needed for volume
-            ip.cathode_ci = false;
-            ip.wall_ci    = false;
-            iface_tmp[k]  = ip;
-        }
-        else
-        {
-            col_found[k] = false;
-        }
-    }    // end parallel over columns
-
-    // Compact interface points to only those columns where we found CI
-    std::vector<InterfacePoint> iface;
-    iface.reserve(n_r_slices);
-    for (int k = 0; k < n_r_slices; ++k)
-    {
-        if (col_found[k])
-        {
-            iface.push_back(iface_tmp[k]);
-        }
-    }
-
-    if (iface.empty())
-    {
-        if (debug)
-        {
-            std::cout << "[DEBUG:CIV] ColumnSweep: no interface points found; CIV = 0.\n";
-        }
-        return 0.0;
-    }
-
-    // Sort by radius so EvaluateInterfaceZ works correctly
-    std::sort(iface.begin(), iface.end(),
-              [](const InterfacePoint &a, const InterfacePoint &b)
-              {
-                  return a.r < b.r;
-              });
-
-    if (cfg.civ_params.dump_civ_boundary)
-    {
-        namespace fs = std::filesystem;
-        fs::path outdir(cfg.save_path);
-        fs::path fname = outdir / "civ_interface_boundary_columnsweep.csv";
-        std::ofstream ofs(fname);
-        ofs << "# r, z_ci\n";
-        for (const auto &ip : iface)
-            ofs << ip.r << "," << ip.z_ci << "\n";
-
-        if (debug)
-        {
-            std::cout << "[DEBUG:CIV] Dumped ColumnSweep CIV boundary to: "
-                      << fname.string() << "\n";
-        }
-    }
-    double V_CI = ComputeCIV_FromInterface(cfg, iface);
-
-    double V_total = (r_max - r_min) * (z_max - z_min ); //vres.V_total;
-    //double V_CI    = vres.V_CI;
-    double frac    = (V_total > 0.0) ? (V_CI / V_total) : 0.0;
-
-    if (debug)
-    {
-        std::cout << "\n----- Charge Insensitive Volume (ColumnSweep) -----\n";
-        std::cout << "Total Volume considered: " << V_total << "\n";
-        std::cout << "CIV Volume:              " << V_CI    << "\n";
-        std::cout << "CIV Fraction:            " << frac    << "\n";
-        std::cout << "---------------------------------------------------\n";
-    }
-
-    return frac;
-}
-// ============================================================================
-// Informed Sweep 
-// ============================================================================
-struct ElementGeometryData
-{
-    std::vector<double> r_centroid;
-    std::vector<double> z_centroid;
-    std::vector<double> volume;
-};
-static ElementGeometryData ComputeElementGeometry(mfem::ParMesh &mesh)
-{
-    using namespace mfem;
-
-    const int ne  = mesh.GetNE();
-    const int dim = mesh.SpaceDimension();
-
-    ElementGeometryData geom;
-    geom.r_centroid.resize(ne);
-    geom.z_centroid.resize(ne);
-    geom.volume.resize(ne);
-
-    IntegrationRules irs;
-
-    for (int e = 0; e < ne; ++e)
-    {
-        ElementTransformation *T = mesh.GetElementTransformation(e);
-        MFEM_ASSERT(T, "ComputeElementGeometry: ElementTransformation is null");
-
-        Geometry::Type geom_type = T->GetGeometryType();
-        // Order 2 is enough for centroid and volume here
-        const IntegrationRule &ir = irs.Get(geom_type, 2);
-        const int n_ip            = ir.GetNPoints();
-
-        double V_e   = 0.0;
-        double r_acc = 0.0;
-        double z_acc = 0.0;
-
-        for (int i = 0; i < n_ip; ++i)
-        {
-            const IntegrationPoint &ip = ir.IntPoint(i);
-            T->SetIntPoint(&ip);
-
-            Vector x(dim);
-            T->Transform(ip, x);
-            const double r = x(0);
-            const double z = x(1);
-
-            const double detJ  = T->Weight();
-            const double w_ref = ip.weight;
-            const double dV    = r * detJ * w_ref; // axisymmetric, no 2π
-
-            V_e   += dV;
-            r_acc += r * dV;
-            z_acc += z * dV;
-        }
-
-        if (V_e > 0.0)
-        {
-            geom.r_centroid[e] = r_acc / V_e;
-            geom.z_centroid[e] = z_acc / V_e;
-        }
-        else
-        {
-            geom.r_centroid[e] = 0.0;
-            geom.z_centroid[e] = 0.0;
-        }
-
-        geom.volume[e] = V_e;
-    }
-
-    return geom;
-}
-static const char* ToString(ElectronExitCode c)
-{
-    switch (c)
-    {
-        case ElectronExitCode::None:               return "None";
-        case ElectronExitCode::HitCathode:         return "HitCathode";
-        case ElectronExitCode::HitLiquidGas:       return "HitLiquidGas";
-        case ElectronExitCode::HitWall:             return "HitWall";
-        case ElectronExitCode::LeftVolume:         return "LeftVolume";
-        case ElectronExitCode::MaxSteps:           return "MaxSteps";
-        case ElectronExitCode::DegenerateTimeStep: return "DegenerateTimeStep";
-        case ElectronExitCode::HitAxis:             return "HitAxis";
-        default:                                   return "Unknown";
-    }
-}
-// Do initial column sweep
-static void FindWallColumnSeedCI(TracerContext &ctx, 
-                                const ElementGeometryData &elem_geom, 
-                                bool &seed_found, 
-                                int &seed_elem, 
-                                double &seed_r, 
-                                double &seed_z_boundary,
-                                bool debug)
-{
-    using namespace mfem;
-
-    seed_found      = false;
-    seed_elem       = -1;
-    seed_r          = 0.0;
-    seed_z_boundary = 0.0;
-
-    ParMesh      &global_mesh = ctx.mesh;
-    GridFunction &global_phi  = ctx.phi;
-
-    const ElementAdjacency &adj = ctx.adj;
-    const Config           &cfg = ctx.cfg;
-
-    // Geometry bounds (used only to generate probe heights)
-    const TpcGeometry &tpc = ctx.tpc;
-    const double r_max = tpc.r_max;
-    const double z_min = tpc.z_min;
-    const double z_max = tpc.z_max;
-
-    const double geom_tol    = ctx.params.geom_tol;
-    const double min_col_pos = cfg.civ_params.min_col_pos;
-
-    // Wall-near radius (bounds checks handled inside tracer) FIXME : DEBUG
-    const double r0 = r_max - 2*geom_tol;
-
-    // Start at 1/4 height
-    const double z_start = z_min + 0.5 * (z_max - z_min);
-
-    // Probe schedule: (K-1) halving heights + explicit near-bottom probe
-    int K = std::max(2, cfg.compute.threads.num);
-
-    std::vector<double> z_probes;
-    z_probes.reserve((std::size_t)K);
-
-    // Halving toward z_min: z = z_min + (z_start - z_min) * 2^{-k}
-    // k=0 -> z_start, k=1 -> halfway toward z_min, ...
-    for (int k = 0; k < K - 1; ++k)
-    {
-        const double frac = std::pow(0.5, k);
-        double z = z_min + (z_start - z_min) * frac;
-        if (z < z_min) z = z_min;
-        if (z > z_max) z = z_max;
-        z_probes.push_back(z);
-    }
-
-    const double z_bottom = std::max(z_min, std::min(z_max, z_min + min_col_pos));
-    z_probes.push_back(z_bottom);
-
-    MFEM_VERIFY(!z_probes.empty(), "FindWallColumnSeedCI: z_probes unexpectedly empty");
-
-    // Verify ordering assumption; if violated, warn and recover by sorting desc
-    const double last_halving = z_probes[z_probes.size() - 2];
-
-    if (last_halving < z_bottom)
-    {
-        std::cout << "\033[33m"
-                    << "[WARN:CIV] FindWallColumnSeedCI: halving schedule not descending as expected.\n"
-                    << "          z_min=" << z_min
-                    << " last_halving=" << last_halving
-                    << " z_bottom=" << z_bottom
-                    << " min_col_pos=" << min_col_pos
-                    << " -> sorting probes (desc) to recover.\n"
-                    << "          -> min_col_pos likely needs adjusting.\n"
-                    << "\033[0m\n";
-
-        std::sort(z_probes.begin(), z_probes.end(), std::greater<double>());
-    }
-    // ------------------------------------------------------------
-    // Map probes to elements/IPs and trace in one batch
-    // ------------------------------------------------------------
-    CivSeeds seeds;
-    seeds.positions.reserve(z_probes.size());
-    seeds.elements.reserve(z_probes.size());
-    seeds.ips.reserve(z_probes.size());
-    seeds.volumes.reserve(z_probes.size()); // unused here
-
-    std::vector<double> z_eval;
-    z_eval.reserve(z_probes.size());
-
-    const int dim = global_mesh.SpaceDimension();
-    if (dim != 2) { return; }
-
-    // TODO Pragma parallel
-    for (double z : z_probes)
-    {
-        Vector x(dim);
-        x[0] = r0;
-        x[1] = z;
-
-        int elem = -1;
-        IntegrationPoint ip;
-        if (!FindElementForPointGlobal(global_mesh, x, elem, ip))
-        {
-            continue;
-        }
-
-        seeds.positions.push_back(x);
-        seeds.elements.push_back(elem);
-        seeds.ips.push_back(ip);
-        seeds.volumes.push_back(1.0);
-        z_eval.push_back(z);
-    }
 
     if (seeds.positions.empty())
     {
-        throw std::runtime_error("[CRITICAL_ERROR:CIV] FindWallColumnSeedCI: Seed positions empty in column Sweep -> Something is wrong with the mesh (maybe?)");
+        throw std::runtime_error("ComputeCIV_FixedGrid: no seeds generated");
+    }
+    if (seeds.volumes.size() != seeds.positions.size())
+    {
+        throw std::runtime_error("ComputeCIV_FixedGrid: volumes/positions size mismatch");
     }
 
-    std::vector<ElectronTraceResult> results(seeds.positions.size());
+    std::vector<ElectronTraceResult> trace_results;
+    tracer.Trace(seeds, trace_results,
+                 cfg.solver.axisymmetric, 
+                 cfg.debug.dumpdata,
+                 nullptr);
 
-    const FiniteElementCollection *fec_phi      = ctx.fes_phi.FEColl();
-    const int                      ordering_phi = ctx.fes_phi.GetOrdering();
-
-    const ElectronTraceParams params = ctx.params;
-
-    const bool axisymmetric = cfg.solver.axisymmetric;
-    const bool save_paths   = cfg.debug.dumpdata;
-
-    // Per-seed z_max overrides:
-    //  - first seed traces to cfg.optimize.z_max
-    //  - each subsequent seed traces only up to the previous seed's start height
-    std::vector<double> zmax_overrides;
-    zmax_overrides.reserve(seeds.positions.size());
-
-    for (std::size_t i = 0; i < z_eval.size(); ++i)
+    if (trace_results.size() != seeds.positions.size())
     {
-        if (i == 0) { zmax_overrides.push_back(cfg.optimize.z_max); }
-        else        { zmax_overrides.push_back(z_eval[i - 1]);     }
+        throw std::runtime_error("ComputeCIV_FixedGrid: trace_results size mismatch");
     }
-    // In case the order is wrong
-    std::sort(zmax_overrides.begin(), zmax_overrides.end(), std::greater<double>());
 
-    TraceElectronFieldLinesInner(global_mesh,
-                                 global_phi,
-                                 adj,
-                                 fec_phi,
-                                 ordering_phi,
-                                 params,
-                                 cfg,
-                                 seeds,
-                                 results,
-                                 axisymmetric,
-                                 save_paths,
-                                 zmax_overrides.data());
+    double V_total = 0.0;
+    double V_civ   = 0.0;
 
-    // ------------------------------------------------------------
-    // Find first CI (assumes descending z order) and bracket
-    // ------------------------------------------------------------
-    std::cout << "Entering Loop "<< std::endl;
-    int i_first_ci = -1;
-    for (int i = 0; i < (int)results.size(); ++i)
+    for (std::size_t i = 0; i < seeds.positions.size(); ++i)
     {
-        std::cout << "Index " << i << std::boolalpha << IsChargeInsensitive(results[i]) << std::endl;
-        if (IsChargeInsensitive(results[i]))
+        const double dV = seeds.volumes[i];
+        V_total += dV;
+
+        if (IsChargeInsensitive(trace_results[i]))
         {
-            i_first_ci = i;
+            V_civ += dV;
+        }
+    }
+
+    if (cfg.debug.debug) { std::cout << "Traced " << seeds.positions.size() << " seed points" << std::endl;}
+    return (V_total > 0.0) ? (V_civ / V_total) : 0.0;
+}
+
+// ----------------------- Compute CIV Adaptive Grid -------------------
+
+double ComputeCIV_AdaptiveGrid(const Config            &cfg,
+                               const SimulationResult &result)
+{
+    if (cfg.civ_params.nr <= 0 || cfg.civ_params.nz <= 0)
+    {
+        throw std::runtime_error("ComputeCIV_AdaptiveGrid: cfg.civ_params.nr/nz must be > 0");
+    }
+    int seed_count = 0;
+
+    const int nr0 = cfg.civ_params.nr;
+    const int nz0 = cfg.civ_params.nz;
+
+    if (cfg.debug.debug)
+    {
+        std::cout << "[DEBUG:OPTIMIZATION] Computing CIV (AdaptiveGrid)\n"
+                  << "  coarse nr=" << nr0 << " nz=" << nz0 << "\n";
+    }
+
+    // Construct Tracing Object
+    ElectronFieldLineTracer tracer;
+    tracer.Setup(result, cfg.tracing_params, cfg, cfg.solver.axisymmetric);
+
+    // -------------------------------------------------------------------------
+    // Level 0: right-to-left coarse column sweep
+    // -------------------------------------------------------------------------
+    std::vector<int> leftmost_civ_lvl0(static_cast<std::size_t>(nz0), -1);
+
+    bool prev_col_had_any_civ = true; // allow at least one column to be processed
+    int  last_traced_col      = nr0 - 1;
+
+    for (int ir = nr0 - 1; ir >= 0; --ir)
+    {
+        // Termination rule: stop once the *previous* column had no CIV.
+        if (!prev_col_had_any_civ)
+        {
             break;
         }
-    }
 
-    if (i_first_ci < 0)
-    {
-        if (debug) { std::cout << "[DEBUG:CIV] FindWallColumnSeedCI: No CI element found in initial column sweep" << std::endl; }
-        return; // no CIV on this wall-near column
-    }
-
-    // Previous non-CI above the first CI (preferred boundary estimate)
-    // TODO Remove the loop when know this works
-    int i_prev_non_ci = i_first_ci - 1;
-
-
-    for (std::size_t i = 0; i < results.size(); ++i) {
-        std::cout
-            << "Index " << i
-            << " r " << seeds.positions[i][0]
-            << " z " << seeds.positions[i][1]
-            << " exit Condition " << ToString(results[i].exit_code)
-            << " charge insensitive? "
-            << std::boolalpha
-            << IsChargeInsensitive(results[i])
-            << std::endl;
-    }
-    std::cout << "First charge insensitive index " <<i_first_ci <<std::endl;
-
-
-    if (!IsChargeInsensitive(results[i_first_ci - 1]))
-    {
-        throw std::runtime_error("[CRITICAL_ERROR:CIV] FindWallColumnSeedCI: Initial CI element search failed -> Implementation Error");
-    }
-
-    double z_hi = (i_prev_non_ci >= 0) ? z_eval[i_prev_non_ci] : z_eval[i_first_ci]; // non-CI (preferred)
-    double z_lo = z_eval[i_first_ci];                                                // CI
-
-    int elem_lo = seeds.elements[i_first_ci];
-
-    // ------------------------------------------------------------
-    // Refine bracket between z_hi (non-CI) and z_lo (CI), if we have both
-    // Output boundary = highest non-CI (z_hi).
-    // ------------------------------------------------------------
-    if (debug) {
-    std::cout
-        << "[DEBUG:CIV] FindWallColumnSeedCI: Found z bound on first try : "
-        << std::boolalpha
-        << !(i_prev_non_ci >= 0 && (z_hi - z_lo) > 0.0)
-        << std::endl;
-    }
-    // TODO Change to nthreads samples at a time 
-    if (i_prev_non_ci >= 0 && (z_hi - z_lo) > 0.0)
-    {
-        const double z_tol = std::max(geom_tol, 1e-12);
-
-        CivSeeds one;
-        one.positions.resize(1);
-        one.elements.resize(1);
-        one.ips.resize(1);
-        one.volumes.resize(1, 1.0);
-
-        std::vector<ElectronTraceResult> one_res(1);
-
-        // In refinement, keep the same "previous-start" cap: trace up to z_hi (non-CI side)
-        double one_zmax = z_hi;
-
-        for (int it = 0; it < 64 && (z_hi - z_lo) > z_tol; ++it)
+        Seeds col_seeds = ExtractCivSeeds_Column(cfg, result, ir);
+        seed_count += col_seeds.positions.size();
+        if (col_seeds.positions.empty())
         {
-            const double z_mid = 0.5 * (z_hi + z_lo);
-
-            if (debug)
-            {
-                std::cout << "[DEBUG:CIV] FindWallColumnSeedCI: testing z_lo : " << z_lo << " z_max : " << z_max << std::endl;
-            }
-
-            Vector x(dim);
-            x[0] = r0;
-            x[1] = z_mid;
-
-            int elem_mid = -1;
-            IntegrationPoint ip_mid;
-            if (!FindElementForPointGlobal(global_mesh, x, elem_mid, ip_mid))
-            {
-                z_lo = z_mid;
-                continue;
-            }
-
-            one.positions[0] = x;
-            one.elements[0]  = elem_mid;
-            one.ips[0]       = ip_mid;
-
-            TraceElectronFieldLinesInner(global_mesh,
-                                         global_phi,
-                                         adj,
-                                         fec_phi,
-                                         ordering_phi,
-                                         params,
-                                         cfg,
-                                         one,
-                                         one_res,
-                                         axisymmetric,
-                                         save_paths,
-                                         &one_zmax);
-
-            if (IsChargeInsensitive(one_res[0]))
-            {
-                z_lo   = z_mid;
-                elem_lo = one.elements[0];
-            }
-            else
-            {
-                z_hi = z_mid;
-                one_zmax = z_hi; // keep cap consistent with current non-CI height
-            }
-        }
-    }
-
-    seed_found      = true;
-    seed_elem       = elem_lo; // CI element at/just below boundary
-    seed_r          = r0;
-    seed_z_boundary = z_hi;    // last known non-CI height ("previous to CI")
-}
-static void GetFaceNeighbors_LeftEligible(mfem::ParMesh          &mesh,
-                                  const ElementAdjacency &adj,
-                                  int                     e,
-                                  double                  r_ref,
-                                  double                  eps_r,
-                                  std::vector<int>       &out,
-                                  mfem::Array<int>       &verts,
-                                  const std::vector<uint8_t> &visited)
-{
-    out.clear();
-
-    const int ne = mesh.GetNE();
-    const auto &face = adj.neighbors[e];
-
-    out.reserve(face.size());
-
-    for (int nb : face)
-    {
-        if (nb < 0 || nb >= ne) continue;
-        if (visited[(std::size_t)nb]) continue;
-
-        verts.SetSize(0);
-        mesh.GetElementVertices(nb, verts);
-
-        bool left_ok = false;
-        for (int i = 0; i < verts.Size(); ++i)
-        {
-            const auto *X = mesh.GetVertex(verts[i]);
-            if (X[0] <= r_ref + eps_r) { left_ok = true; break; }
-        }
-        if (left_ok) out.push_back(nb);
-    }
-}
-static void GetVertexNeighbors_LeftEligible(mfem::ParMesh                        &mesh,
-                                    const std::vector<std::vector<int>>  &unified_adj,
-                                    int                                   e,
-                                    double                                r_ref,
-                                    double                                eps_r,
-                                    std::vector<int>                     &out,
-                                    mfem::Array<int>                     &verts,
-                                    const std::vector<uint8_t>           &visited)
-{
-    out.clear();
-
-    const int ne = mesh.GetNE();
-    const auto &nbrs = unified_adj[e];
-
-    out.reserve(nbrs.size());
-
-    for (int nb : nbrs)
-    {
-        if (nb < 0 || nb >= ne) continue;
-        if (visited[(std::size_t)nb]) continue;
-
-        verts.SetSize(0);
-        mesh.GetElementVertices(nb, verts);
-
-        bool left_ok = false;
-        for (int i = 0; i < verts.Size(); ++i)
-        {
-            const auto *X = mesh.GetVertex(verts[i]);
-            if (X[0] <= r_ref + eps_r) { left_ok = true; break; }
-        }
-        if (left_ok) out.push_back(nb);
-    }
-}
-
-static void GetNeighbors_DownCandidates(mfem::ParMesh                       &mesh,
-                                const std::vector<std::vector<int>> &unified_adj,
-                                int                                  e,
-                                double                               z_ref,
-                                double                               eps_z,
-                                std::vector<int>                    &out,
-                                mfem::Array<int>                    &verts,
-                                const std::vector<uint8_t>          &visited)
-{
-    out.clear();
-
-    const int ne = mesh.GetNE();
-    const auto &nbrs = unified_adj[e];
-
-    out.reserve(nbrs.size());
-
-    for (int nb : nbrs)
-    {
-        if (nb < 0 || nb >= ne) continue;
-        if (visited[(std::size_t)nb]) continue;
-
-        verts.SetSize(0);
-        mesh.GetElementVertices(nb, verts);
-
-        bool down_ok = false;
-        for (int i = 0; i < verts.Size(); ++i)
-        {
-            const auto *X = mesh.GetVertex(verts[i]);
-            if (X[1] < z_ref - eps_z) { down_ok = true; break; }
-        }
-        if (down_ok) out.push_back(nb);
-    }
-}
-
-static bool IsAtBottomBoundary(mfem::ParMesh &mesh,
-                        int            e,
-                        double         z_min,
-                        double         eps_z,
-                        mfem::Array<int> &verts)
-{
-    verts.SetSize(0);
-    mesh.GetElementVertices(e, verts);
-
-    for (int i = 0; i < verts.Size(); ++i)
-    {
-        const auto *X = mesh.GetVertex(verts[i]);
-        if (X[1] <= z_min + eps_z) { return true; }
-    }
-    return false;
-}
-static std::vector<std::vector<int>> BuildVertexAdjacency(mfem::ParMesh &mesh)
-{
-    using namespace mfem;
-
-    const int ne = mesh.GetNE();
-    const int nv = mesh.GetNV();
-
-    // vertex -> elements containing that vertex
-    std::vector<std::vector<int>> vertex_to_elems(nv);
-
-    Array<int> verts;
-    for (int e = 0; e < ne; ++e)
-    {
-        mesh.GetElementVertices(e, verts);
-        for (int k = 0; k < verts.Size(); ++k)
-        {
-            int v = verts[k];
-            MFEM_ASSERT(v >= 0 && v < nv, "Invalid vertex index");
-            vertex_to_elems[v].push_back(e);
-        }
-    }
-
-    // element -> vertex neighbors (all elems sharing any vertex)
-    std::vector<std::vector<int>> elem_vertex_neighbors(ne);
-
-    for (int e = 0; e < ne; ++e)
-    {
-        mesh.GetElementVertices(e, verts);
-        auto &nbrs = elem_vertex_neighbors[e];
-
-        for (int k = 0; k < verts.Size(); ++k)
-        {
-            int v = verts[k];
-            for (int ee : vertex_to_elems[v])
-            {
-                if (ee != e)
-                {
-                    nbrs.push_back(ee);
-                }
-            }
+            throw std::runtime_error("ComputeCIV_AdaptiveGrid: ExtractCivSeeds_Column produced no seeds");
         }
 
-        // optional: deduplicate
-        std::sort(nbrs.begin(), nbrs.end());
-        nbrs.erase(std::unique(nbrs.begin(), nbrs.end()), nbrs.end());
+        std::vector<ElectronTraceResult> col_results;
+        tracer.Trace(col_seeds, col_results,
+                 cfg.solver.axisymmetric, 
+                 cfg.debug.dumpdata,
+                 nullptr);
+
+        if (col_results.size() != col_seeds.positions.size())
+        {
+            throw std::runtime_error("ComputeCIV_AdaptiveGrid: column trace size mismatch");
+        }
+
+        bool col_has_any_civ = false;
+        UpdateLeftmostCivFromColumn(cfg, result, ir,
+                                    col_seeds, col_results,
+                                    leftmost_civ_lvl0,
+                                    col_has_any_civ);
+
+        prev_col_had_any_civ = col_has_any_civ;
+        last_traced_col      = ir;
     }
 
-    return elem_vertex_neighbors;
-}
-static std::vector<std::vector<int>>
-BuildUnifiedAdjacency(const ElementAdjacency &adj,
-                      const std::vector<std::vector<int>> &vertex_adj,
-                      int ne)
-{
-    std::vector<std::vector<int>> unified(ne);
-
-    for (int e = 0; e < ne; ++e)
-    {
-        auto &u = unified[e];
-
-        // insert face neighbors
-        const auto &fn = adj.neighbors[e];
-        u.insert(u.end(), fn.begin(), fn.end());
-
-        // insert vertex neighbors
-        const auto &vn = vertex_adj[e];
-        u.insert(u.end(), vn.begin(), vn.end());
-
-        // remove duplicates & self
-        std::sort(u.begin(), u.end());
-        u.erase(std::unique(u.begin(), u.end()), u.end());
-
-        // safety: remove the element itself if present
-        u.erase(std::remove(u.begin(), u.end(), e), u.end());
-    }
-
-    return unified;
-}
-static void BuildInterfaceSamples_LeftOnly(TracerContext &ctx, 
-                                           const ElementGeometryData &elem_geom, 
-                                           const std::vector<std::vector<int>> &unified_adj, 
-                                           int seed_elem, 
-                                           double seed_r, 
-                                           double seed_z_boundary, 
-                                           std::vector<double> &iface_r, 
-                                           std::vector<double> &iface_z)
-{
-    using namespace mfem;
-
-    iface_r.clear();
-    iface_z.clear();
-
-    // Seed sample (wall column boundary from Step 1)
-    iface_r.push_back(seed_r);
-    iface_z.push_back(seed_z_boundary);
-
-    ParMesh      &mesh = ctx.mesh;
-    GridFunction &phi  = ctx.phi;
-
-    const ElementAdjacency &adj = ctx.adj;
-    const Config           &cfg = ctx.cfg;
-
-    const ElectronTraceParams params = ctx.params;
-
-    const bool axisymmetric = cfg.solver.axisymmetric;
-    const bool save_paths   = cfg.debug.dumpdata;
-
-    const int ne = mesh.GetNE();
-    if (seed_elem < 0 || seed_elem >= ne) { return; }
-
-    // Visited to avoid cycles when allowing <= for "left"
-    std::vector<uint8_t> visited((std::size_t)ne, 0);
-    visited[(std::size_t)seed_elem] = 1;
-
-    const double eps_r = std::max(1e-12, ctx.params.geom_tol);
-    const double eps_z = std::max(1e-12, ctx.params.geom_tol);
-
-    Array<int> verts; // scratch
-
-    // Candidate lists (reused to avoid realloc each iteration)
-    std::vector<int> face_left;
-    std::vector<int> vert_left;
-    std::vector<int> down_cands;
-
-    // Mapping helper: local first, fallback global
-    auto map_point_to_seed = [&](int elem_hint,
-                                 const Vector &x,
-                                 int &out_elem,
-                                 IntegrationPoint &out_ip) -> bool
-    {
-        out_elem = -1;
-        if (FindElementForPointLocal(mesh, adj, elem_hint, x, out_elem, out_ip)) { return true; }
-        return FindElementForPointGlobal(mesh, x, out_elem, out_ip);
-    };
-
-    // Trace candidates in-order; return first CI element.
-    auto trace_first_ci = [&](const std::vector<int> &cands,
-                              int &out_elem_ci) -> bool
-    {
-        out_elem_ci = -1;
-        if (cands.empty()) return false;
-
-        CivSeeds seeds;
-        seeds.positions.reserve(cands.size());
-        seeds.elements.reserve(cands.size());
-        seeds.ips.reserve(cands.size());
-        seeds.volumes.reserve(cands.size()); // unused
-
-        std::vector<double> z_start;
-        z_start.reserve(cands.size());
-
-        const int dim = mesh.SpaceDimension();
-
-        for (int nb : cands)
-        {
-            // (visited already filtered by neighbor builders)
-            Vector x(dim);
-            x[0] = elem_geom.r_centroid[nb];
-            x[1] = elem_geom.z_centroid[nb];
-
-            int elem = -1;
-            IntegrationPoint ip;
-            if (!map_point_to_seed(nb, x, elem, ip)) { continue; }
-
-            seeds.positions.push_back(x);
-            seeds.elements.push_back(elem);
-            seeds.ips.push_back(ip);
-            seeds.volumes.push_back(1.0);
-            z_start.push_back(x[1]);
-        }
-
-        if (seeds.positions.empty()) return false;
-
-        std::vector<ElectronTraceResult> res(seeds.positions.size());
-
-        const FiniteElementCollection *fec_phi      = ctx.fes_phi.FEColl();
-        const int                      ordering_phi = ctx.fes_phi.GetOrdering();
-
-        std::vector<double> zmax_overrides;
-        zmax_overrides.reserve(z_start.size());
-        for (std::size_t i = 0; i < z_start.size(); ++i)
-        {
-            if (i == 0) zmax_overrides.push_back(cfg.optimize.z_max);
-            else        zmax_overrides.push_back(z_start[i - 1]);
-        }
-
-        TraceElectronFieldLinesInner(mesh,
-                                     phi,
-                                     adj,
-                                     fec_phi,
-                                     ordering_phi,
-                                     params,
-                                     cfg,
-                                     seeds,
-                                     res,
-                                     axisymmetric,
-                                     save_paths,
-                                     zmax_overrides.data());
-
-        for (std::size_t i = 0; i < res.size(); ++i)
-        {
-            if (IsChargeInsensitive(res[i]))
-            {
-                out_elem_ci = seeds.elements[i];
-                return true;
-            }
-        }
-        return false;
-    };
-
-    int e = seed_elem;
-
-    while (true)
-    {
-        // Current reference vertex: "top-left-most" (maximize z; tie minimize r)
-        mesh.GetElementVertices(e, verts);
-
-        double r_ref = std::numeric_limits<double>::infinity();
-        double z_ref = -std::numeric_limits<double>::infinity();
-
-        for (int i = 0; i < verts.Size(); ++i)
-        {
-            const auto *X = mesh.GetVertex(verts[i]);
-            const double rv = X[0];
-            const double zv = X[1];
-
-            if (zv > z_ref + eps_z)
-            {
-                z_ref = zv;
-                r_ref = rv;
-            }
-            else if (std::fabs(zv - z_ref) <= eps_z && rv < r_ref)
-            {
-                r_ref = rv;
-            }
-        }
-
-        // Build candidates (helpers filter visited and do vertex tests)
-        GetFaceNeighbors_LeftEligible(mesh, adj, e, r_ref, eps_r, face_left, verts, visited);
-        GetVertexNeighbors_LeftEligible(mesh, unified_adj, e, r_ref, eps_r, vert_left, verts, visited);
-
-        int next_elem = -1;
-
-        // 1) Face-left first CI
-        if (!trace_first_ci(face_left, next_elem))
-        {
-            // 2) Vertex-left first CI
-            if (!trace_first_ci(vert_left, next_elem))
-            {
-                // 3) Down fallback candidates
-                GetNeighbors_DownCandidates(mesh, unified_adj, e, z_ref, eps_z, down_cands, verts, visited);
-
-                if (down_cands.empty())
-                {
-                    if (!IsAtBottomBoundary(mesh, e, ctx.tpc.z_min, eps_z, verts))
-                    {
-                        std::cout << "\033[33m"
-                                  << "[WARN:CIV] Marching stuck before bottom boundary. "
-                                  << "Last z_ref=" << z_ref << "\n"
-                                  << "\033[0m";
-                    }
-                    break;
-                }
-
-                // Trace all down candidates in one batch, then choose:
-                //   smallest z_down_metric (min z among vertices with r <= r_ref+eps_r),
-                //   tie: smallest r_down_metric.
-                CivSeeds seeds;
-                seeds.positions.reserve(down_cands.size());
-                seeds.elements.reserve(down_cands.size());
-                seeds.ips.reserve(down_cands.size());
-                seeds.volumes.reserve(down_cands.size());
-
-                std::vector<double> z_start;
-                z_start.reserve(down_cands.size());
-
-                std::vector<double> z_down_metric;
-                std::vector<double> r_down_metric;
-                z_down_metric.reserve(down_cands.size());
-                r_down_metric.reserve(down_cands.size());
-
-                const int dim = mesh.SpaceDimension();
-
-                for (int nb : down_cands)
-                {
-                    Vector x(dim);
-                    x[0] = elem_geom.r_centroid[nb];
-                    x[1] = elem_geom.z_centroid[nb];
-
-                    int elem = -1;
-                    IntegrationPoint ip;
-                    if (!map_point_to_seed(nb, x, elem, ip)) { continue; }
-
-                    seeds.positions.push_back(x);
-                    seeds.elements.push_back(elem);
-                    seeds.ips.push_back(ip);
-                    seeds.volumes.push_back(1.0);
-                    z_start.push_back(x[1]);
-
-                    // Metrics for down selection (reuse verts scratch)
-                    mesh.GetElementVertices(elem, verts);
-
-                    double z_min_left = std::numeric_limits<double>::infinity();
-                    double r_min_left = std::numeric_limits<double>::infinity();
-
-                    for (int vi = 0; vi < verts.Size(); ++vi)
-                    {
-                        const auto *Xv = mesh.GetVertex(verts[vi]);
-                        const double rv = Xv[0];
-                        const double zv = Xv[1];
-
-                        if (rv <= r_ref + eps_r)
-                        {
-                            if (zv < z_min_left) z_min_left = zv;
-                            if (rv < r_min_left) r_min_left = rv;
-                        }
-                    }
-
-                    z_down_metric.push_back(z_min_left);
-                    r_down_metric.push_back(r_min_left);
-                }
-
-                if (seeds.positions.empty())
-                {
-                    if (!IsAtBottomBoundary(mesh, e, ctx.tpc.z_min, eps_z, verts))
-                    {
-                        std::cout << "\033[33m"
-                                  << "[WARN:CIV] Down fallback produced no mappable seeds. "
-                                  << "Last z_ref=" << z_ref << "\n"
-                                  << "\033[0m";
-                    }
-                    break;
-                }
-
-                std::vector<ElectronTraceResult> res(seeds.positions.size());
-
-                const FiniteElementCollection *fec_phi      = ctx.fes_phi.FEColl();
-                const int                      ordering_phi = ctx.fes_phi.GetOrdering();
-
-                std::vector<double> zmax_overrides;
-                zmax_overrides.reserve(z_start.size());
-                for (std::size_t i = 0; i < z_start.size(); ++i)
-                {
-                    if (i == 0) zmax_overrides.push_back(cfg.optimize.z_max);
-                    else        zmax_overrides.push_back(z_start[i - 1]);
-                }
-
-                TraceElectronFieldLinesInner(mesh,
-                                             phi,
-                                             adj,
-                                             fec_phi,
-                                             ordering_phi,
-                                             params,
-                                             cfg,
-                                             seeds,
-                                             res,
-                                             axisymmetric,
-                                             save_paths,
-                                             zmax_overrides.data());
-
-                bool   found_down_ci = false;
-                double best_zm       = std::numeric_limits<double>::infinity();
-                double best_rm       = std::numeric_limits<double>::infinity();
-                int    best_e        = -1;
-
-                for (std::size_t i = 0; i < res.size(); ++i)
-                {
-                    if (!IsChargeInsensitive(res[i])) continue;
-
-                    const double zm = z_down_metric[i];
-                    const double rm = r_down_metric[i];
-
-                    if (!found_down_ci || zm < best_zm - eps_z ||
-                        (std::fabs(zm - best_zm) <= eps_z && rm < best_rm))
-                    {
-                        found_down_ci = true;
-                        best_zm       = zm;
-                        best_rm       = rm;
-                        best_e        = seeds.elements[i];
-                    }
-                }
-
-                if (!found_down_ci || best_e < 0)
-                {
-                    if (!IsAtBottomBoundary(mesh, e, ctx.tpc.z_min, eps_z, verts))
-                    {
-                        std::cout << "\033[33m"
-                                  << "[WARN:CIV] Marching terminated: no CI found in down fallback. "
-                                  << "Last z_ref=" << z_ref << "\n"
-                                  << "\033[0m";
-                    }
-                    break;
-                }
-
-                next_elem = best_e;
-            }
-        }
-
-        if (next_elem < 0 || next_elem >= ne) break;
-        if (visited[(std::size_t)next_elem])  break;
-
-        // Advance
-        visited[(std::size_t)next_elem] = 1;
-        e = next_elem;
-
-        // Record interface sample for this element: top-left-most vertex
-        mesh.GetElementVertices(e, verts);
-
-        double r_s = std::numeric_limits<double>::infinity();
-        double z_s = -std::numeric_limits<double>::infinity();
-
-        for (int i = 0; i < verts.Size(); ++i)
-        {
-            const auto *X = mesh.GetVertex(verts[i]);
-            const double rv = X[0];
-            const double zv = X[1];
-
-            if (zv > z_s + eps_z)
-            {
-                z_s = zv;
-                r_s = rv;
-            }
-            else if (std::fabs(zv - z_s) <= eps_z && rv < r_s)
-            {
-                r_s = rv;
-            }
-        }
-
-        iface_r.push_back(r_s);
-        iface_z.push_back(z_s);
-    }
-}
-
-static double ComputeCIVFractionFromInterface(const TracerContext &ctx, 
-                                              const ElementGeometryData &elem_geom, 
-                                              const std::vector<double> &r_sorted, 
-                                              const std::vector<double> &z_sorted)
-{
-    using namespace mfem;
-
-    const ParMesh &mesh = ctx.mesh;
-    const int ne = mesh.GetNE();
-
-    if (ne <= 0) { return 0.0; }
-    if (r_sorted.empty() || z_sorted.empty()) { return 0.0; }
-
-    const std::size_t n = std::min(r_sorted.size(), z_sorted.size());
-    if (n == 0) { return 0.0; }
-
-    // --- Evaluate boundary z(r) by piecewise-linear interpolation (clamped) ---
-    auto eval_z_boundary = [&](double r) -> double
-    {
-        if (n == 1) { return z_sorted[0]; }
-
-        if (r <= r_sorted.front()) { return z_sorted.front(); }
-        if (r >= r_sorted.back())  { return z_sorted.back(); }
-
-        // Find segment [i, i+1] with r_sorted[i] <= r <= r_sorted[i+1]
-        // (Linear scan is fine for small n; switch to lower_bound if n grows.)
-        for (std::size_t i = 0; i + 1 < n; ++i)
-        {
-            const double r0 = r_sorted[i];
-            const double r1 = r_sorted[i + 1];
-            if (r >= r0 && r <= r1)
-            {
-                const double z0 = z_sorted[i];
-                const double z1 = z_sorted[i + 1];
-
-                const double dr = (r1 - r0);
-                if (dr <= 0.0) { return std::max(z0, z1); }
-
-                const double t = (r - r0) / dr;
-                return (1.0 - t) * z0 + t * z1;
-            }
-        }
-
-        return z_sorted.back();
-    };
-
-    // --- Integrate volumes by centroid classification ---
-    double V_total = 0.0;
-    double V_ci    = 0.0;
-
-    const TpcGeometry &tpc = ctx.tpc;
-    const ElementGeometryData &geom = elem_geom;
-
-    // Optional region restriction (if you want full domain, remove these)
-    const double z_check_max = ctx.cfg.tracing_params.tracing_z_max;
-
-    for (int e = 0; e < ne; ++e)
-    {
-        const double V_e = geom.volume[e];
-        if (V_e <= 0.0) { continue; }
-
-        const double r_c = geom.r_centroid[e];
-        const double z_c = geom.z_centroid[e];
-
-        if (!tpc.Inside(r_c, z_c)) { continue; }
-        if (z_c > z_check_max)     { continue; }
-
-        V_total += V_e;
-
-        const double z_b = eval_z_boundary(r_c);
-        if (z_c <= z_b)
-        {
-            V_ci += V_e;
-        }
-    }
-
-    if (V_total <= 0.0) { return 0.0; }
-    return V_ci / V_total;
-}
-
-
-static void SortAndCompactInterfaceByR(const std::vector<double> &iface_r, 
-                                       const std::vector<double> &iface_z, 
-                                       double r_wall, 
-                                       double z_wall, 
-                                       double r_radial_min, 
-                                       double eps_r, 
-                                       double eps_z, 
-                                       std::vector<double> &r_sorted, 
-                                       std::vector<double> &z_sorted)
-{
-    r_sorted.clear();
-    z_sorted.clear();
-
-    const std::size_t n = std::min(iface_r.size(), iface_z.size());
-    if (n == 0) { return; }
-
-    struct P { double r, z; };
-    std::vector<P> pts;
-    pts.reserve(n + 2);
-
-    for (std::size_t i = 0; i < n; ++i)
-    {
-        pts.push_back({iface_r[i], iface_z[i]});
-    }
-
-    // Ensure the wall point from Step 1 exists (or is at least represented).
-    {
-        bool have_wall = false;
-        for (const auto &p : pts)
-        {
-            if (std::fabs(p.r - r_wall) <= eps_r && std::fabs(p.z - z_wall) <= eps_z)
-            {
-                have_wall = true;
-                break;
-            }
-        }
-        if (!have_wall)
-        {
-            pts.push_back({r_wall, z_wall});
-        }
-    }
-
-    // Sort by radius ascending (required by later interpolation).
-    std::sort(pts.begin(), pts.end(),
-              [](const P &a, const P &b)
-              {
-                  if (a.r != b.r) return a.r < b.r;
-                  return a.z < b.z;
-              });
-
-    // Compact near-duplicate radii; keep the maximum z at that radius.
-    r_sorted.reserve(pts.size());
-    z_sorted.reserve(pts.size());
-
-    for (std::size_t i = 0; i < pts.size(); ++i)
-    {
-        const double r = pts[i].r;
-        const double z = pts[i].z;
-
-        if (r_sorted.empty())
-        {
-            r_sorted.push_back(r);
-            z_sorted.push_back(z);
-            continue;
-        }
-
-        const double r_prev = r_sorted.back();
-        const double z_prev = z_sorted.back();
-
-        if (std::fabs(r - r_prev) <= eps_r)
-        {
-            // Warn on duplicates (show both points)
-            std::cout << "\033[33m"
-                      << "[WARN:CIV] Interface duplicate/near-duplicate radius detected.\n"
-                      << "          kept:   (r=" << r_prev << ", z=" << z_prev << ")\n"
-                      << "          merged: (r=" << r      << ", z=" << z      << ")\n"
-                      << "\033[0m";
-
-            // Keep the larger z as the boundary at that radius.
-            if (z > z_prev) { z_sorted.back() = z; }
-        }
-        else
-        {
-            r_sorted.push_back(r);
-            z_sorted.push_back(z);
-        }
-    }
-
-    if (r_sorted.empty()) { return; }
-
-    // Ensure we connect horizontally to the radial boundary at the same Z.
-    // (If the marched samples do not reach r_radial_min, add (r_radial_min, z_at_min_r)).
-    if (r_sorted.front() > r_radial_min + eps_r)
-    {
-        const double z_min_r = z_sorted.front();
-        r_sorted.insert(r_sorted.begin(), r_radial_min);
-        z_sorted.insert(z_sorted.begin(), z_min_r);
-    }
-
-    // Ensure the curve includes the exact wall radius point (in case sorting/compaction altered it).
-    // If the last point isn't at r_wall (within eps_r), append a horizontal closure to r_wall at z_wall.
-    if (std::fabs(r_sorted.back() - r_wall) > eps_r)
-    {
-        r_sorted.push_back(r_wall);
-        z_sorted.push_back(z_wall);
-    }
-}
-
-
-double ComputeCIV_Marching(const SimulationResult &sim, const Config &cfg)
-{
-    using namespace mfem;
-    // ------------- Set Up
-    ParMesh      &mesh = *sim.mesh;
-    GridFunction &phi  = *sim.V;
-    const FiniteElementSpace      *fes      = phi.FESpace();
-    const FiniteElementCollection *fec      = fes->FEColl();
-    const int                      ordering = fes->GetOrdering();
-    // Precompute objects
-    ElementAdjacency               adj         = BuildAdjacency(mesh);
-    ElementGeometryData            geom        = ComputeElementGeometry(mesh);
-    std::vector<std::vector<int>>  vertex_adj  = BuildVertexAdjacency(mesh);
-    std::vector<std::vector<int>>  unified_adj = BuildUnifiedAdjacency(adj, vertex_adj, mesh.GetNE());
-    TracerContext ctx(mesh, fec, ordering, phi, adj, cfg);
-
-    // Search along TPC wall halving steps identifying the right most CI to non CI boundary
-    // Highest CI element will be placed in seed_elem 
-    bool   seed_found      = false;
-    int    seed_elem       = -1;
-    double seed_r          = 0.0;
-    double seed_z_boundary = 0.0;
-    FindWallColumnSeedCI(ctx, geom, seed_found, seed_elem, seed_r, seed_z_boundary, cfg.debug.debug);
-
-    if (!seed_found || seed_elem < 0) { return 0.0; }
-
-    // Starting at the last CI element we find the next left CI non CI boundary and repeat this
-    // Until there are no more to be found in the general left down direction 
-    // This will produce a list of CI element boundaries from which we integrate the CIV 
-    std::vector<double> iface_r;
-    std::vector<double> iface_z;
-    BuildInterfaceSamples_LeftOnly(ctx,
-                                   geom,    
-                                   unified_adj,
-                                   seed_elem,
-                                   seed_r,
-                                   seed_z_boundary,
-                                   iface_r,
-                                   iface_z);
-
-    if (iface_r.empty()) { return 0.0; }
-
-    // Step 3: sort + compact interface samples by radius
-    TpcGeometry tpc(cfg.tracing_params);
-    std::vector<double> r_sorted;
-    std::vector<double> z_sorted;
-    SortAndCompactInterfaceByR(iface_r, iface_z,
-                           /*r_wall=*/seed_r,
-                           /*z_wall=*/seed_z_boundary,
-                           /*r_radial_min=*/tpc.r_min,
-                           /*eps_r=*/cfg.tracing_params.geom_tol,
-                           /*eps_z=*/cfg.tracing_params.geom_tol,
-                           r_sorted, z_sorted);
-
-    if (r_sorted.empty()) { return 0.0; }
-
-    // Step 4: integrate CIV by classifying elements below z_boundary(r)
-    // Returns fraction V_CI / V_total in the region of interest.
-    return ComputeCIVFractionFromInterface(ctx, geom, r_sorted, z_sorted);
-}
-
-
-
-
-// ============================================================================
-// Public API: tracing
-// ============================================================================
-
-double compute_civ(const Config &cfg, const SimulationResult &result)
-/*
-Compute Charge Insensitive Volume on the mesh
-Ie 1-(Volume where electrons reach liquid gas interface) / (Total Volume)
-*/
-{
-    auto t_start = std::chrono::steady_clock::now();
     if (cfg.debug.debug)
-        std::cout << "[DEBUG:CIV] Timing: start CIV" << std::endl;
-
-    const std::string &method = cfg.civ_params.method; // "InformedSweep" or "RandomSample"
-
-    if (method == "RandomSample")
     {
-        return ComputeCIV_RandomSample(cfg, result);
+        std::cout << "[DEBUG:OPTIMIZATION] AdaptiveGrid: level0 sweep complete. "
+                  << "last_traced_col=" << last_traced_col << "\n";
     }
-    else if (method == "InformedSweep")
+
+    // -------------------------------------------------------------------------
+    // Refinement levels: bisection around boundary band (one trace call per level)
+    // -------------------------------------------------------------------------
+    const int max_levels = cfg.civ_params.max_levels;
+    const double tol     = cfg.tracing_params.geom_tol;       
+
+    // If you prefer: max_levels can be derived from tol and coarse dr/dz.
+    // For now we treat it as config-driven.
+
+    std::vector<int> leftmost_prev = leftmost_civ_lvl0;
+    int final_level = 0;
+
+    for (int level = 1; level <= max_levels; ++level)
     {
-        return ComputeCIV_Marching(result, cfg);
-    }
-    else if (method == "ColumnSweep")
-    {
+        // Stop condition by tolerance (conceptual here; exact check will be implemented
+        // once we have consistent dr/dz computation for each level).
+        // We keep the skeleton: "if reached tolerance -> break".
+        // The actual criterion will live in a helper later.
+        (void)tol;
+
+        Seeds band_seeds = ExtractCivSeeds_BoundaryBand(cfg, result, level, leftmost_prev);
+
+        seed_count += band_seeds.positions.size();
+        if (band_seeds.positions.empty())
+        {
+            // No interface to refine; accept previous boundary as final.
+            final_level = level - 1;
+            break;
+        }
+
+        std::vector<ElectronTraceResult> band_results;
+        tracer.Trace(band_seeds, band_results,
+                 cfg.solver.axisymmetric, 
+                 cfg.debug.dumpdata,
+                 nullptr);
+
+        if (band_results.size() != band_seeds.positions.size())
+        {
+            throw std::runtime_error("ComputeCIV_AdaptiveGrid: band trace size mismatch");
+        }
+
+        // Build next-level boundary representation. Size should correspond to nz(level).
+        std::vector<int> leftmost_this; // will be sized by updater
+        UpdateLeftmostCivFromBand(cfg, result, level,
+                                  band_seeds, band_results,
+                                  leftmost_this);
+
+        // If updater decides boundary didn't change or nothing to refine further,
+        // it can return identical boundary and/or mark a condition. For now, we just proceed.
+        leftmost_prev = std::move(leftmost_this);
+        final_level = level;
+
         if (cfg.debug.debug)
         {
-            std::cout << "[DEBUG:OPTIMIZATION] Computing CIV (Column Sweep)" << std::endl;
+            std::cout << "[DEBUG:OPTIMIZATION] AdaptiveGrid: completed refinement level "
+                      << level << "\n";
         }
-        double civ = ComputeCIV_ColumnSweep(result, cfg);
-        if (cfg.debug.debug)
-        {
-            auto t_end = std::chrono::steady_clock::now();
-            double ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
-            std::cout << "[DEBUG:CIV] Timing: ColumnSweep took " << ms << " ms" << std::endl;
-        }
-        return civ;
     }
-    else
-    {
-        // Unknown method: default to random sampling, but warn
-        std::cerr << "[WARN:OPTIMIZATION] Unknown CIV method '" << method << "',\n";
-        return 1.0;
-    }
+
+    // If refinement loop never ran, boundary is level0.
+    const std::vector<int> &leftmost_final = (final_level == 0) ? leftmost_civ_lvl0 : leftmost_prev;
+
+    // -------------------------------------------------------------------------
+    // Final integration using boundary representation (Option A)
+    // -------------------------------------------------------------------------
+    const double civ_fraction = IntegrateCIVFromBoundary(cfg, result, final_level, leftmost_final);
+
+    if (cfg.debug.debug) { std::cout << "Traced " << seed_count << " seed points" << std::endl;}
+    return civ_fraction;
 }
 
+
+// Row by Row Sweep fixed grid 
+double ComputeCIV_RowSweep(const Config            &cfg,
+                           const SimulationResult &result)
+{
+    const int nr = cfg.civ_params.nr;
+    const int nz = cfg.civ_params.nz;
+
+    int seed_count = 0;
+
+    // Construct Tracing Object
+    ElectronFieldLineTracer tracer;
+    tracer.Setup(result, cfg.tracing_params, cfg, cfg.solver.axisymmetric);
+
+
+    if (nr <= 0 || nz <= 0)
+    {
+        throw std::runtime_error("ComputeCIV_RowSweep: cfg.civ_params.nr/nz must be > 0");
+    }
+
+    if (cfg.debug.debug)
+    {
+        std::cout << "[DEBUG:OPTIMIZATION] Computing CIV (RowSweep) "
+                  << "nr=" << nr << " nz=" << nz << "\n";
+    }
+
+    std::vector<int> leftmost_civ_per_row(static_cast<std::size_t>(nz), -1);
+
+    // Optional monotonic carry from previous (lower) row:
+    // boundary cannot move right when going up? (not specified)
+    // We do not enforce cross-row monotonicity beyond the stated "below is CIV".
+    // However, we can use the lower-row boundary as a starting point to reduce work:
+    // if below-row boundary is at ir_below, then in the current row CIV (if exists)
+    // cannot start to the right of ir_below (i.e., boundary index <= ir_below) is NOT guaranteed.
+    // So we do NOT apply this unless you confirm. For now, always start at right edge.
+    (void)leftmost_civ_per_row;
+
+    // Bottom -> top
+    for (int iz = 0; iz < nz; ++iz)
+    {
+        int boundary = -1;
+
+        // Scan right -> left in blocks to keep tracing batches sizable.
+        // Block size can be tuned; keep it simple and deterministic.
+        const int block = std::max(1, cfg.civ_params.block_size); // assumed to exist; otherwise set e.g. 64
+
+        int ir_right = nr - 1;
+        bool seen_any_civ = false;
+        bool done = false;
+
+        while (!done && ir_right >= 0)
+        {
+            const int ir_left = std::max(0, ir_right - (block - 1));
+
+            Seeds row_seeds = ExtractCivSeeds_Row(cfg, result, iz, ir_right, ir_left);
+            seed_count += row_seeds.positions.size();
+            std::vector<ElectronTraceResult> row_results;
+            tracer.Trace(row_seeds, row_results,
+                 cfg.solver.axisymmetric, 
+                 cfg.debug.dumpdata,
+                 nullptr);
+
+            if (row_results.size() != row_seeds.positions.size())
+            {
+                throw std::runtime_error("ComputeCIV_RowSweep: row trace size mismatch");
+            }
+
+            // row_seeds are ordered right->left by construction in this call.
+            for (std::size_t k = 0; k < row_results.size(); ++k)
+            {
+                const int ir = ir_right - static_cast<int>(k);
+
+                if (IsChargeInsensitive(row_results[k]))
+                {
+                    seen_any_civ = true;
+                    boundary = ir; // keep updating; we want leftmost CIV
+                }
+                else
+                {
+                    // If we've already seen CIV in this row and now we see non-CIV while moving left,
+                    // then the boundary is between this cell and the previous one. We can stop.
+                    if (seen_any_civ)
+                    {
+                        done = true;
+                        break;
+                    }
+                }
+            }
+
+            ir_right = ir_left - 1;
+        }
+
+        leftmost_civ_per_row[static_cast<std::size_t>(iz)] = boundary;
+    }
+
+    // Integrate using the boundary representation at level 0.
+    if (cfg.debug.debug) { std::cout << "Traced " << seed_count << " seed points" << std::endl;}
+    return IntegrateCIVFromBoundary(cfg, result, /*level=*/0, leftmost_civ_per_row);
+}

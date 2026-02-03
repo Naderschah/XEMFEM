@@ -5,12 +5,14 @@
 
 std::unique_ptr<mfem::ParMesh> CreateSimulationDomain(const std::string &path, MPI_Comm comm)
 {
-  // Load Mesh  -  generate edges false, refine true, fix_orientation false TODO Add flag for the latter once i understand waht exactly it does
-  auto serial = std::make_unique<mfem::Mesh>(path.c_str(), 0, 1, false);
+  // Load Mesh 
+  // TODO Add flags for these options but I need to understand this  
+  auto serial = std::make_unique<mfem::Mesh>(path.c_str(), 0, 0, false);
   if (serial->bdr_attributes.Size() == 0) { 
     std::cerr << "No boundary attributes!\n"; std::exit(1); 
   }
-  serial->EnsureNCMesh();
+  // If I end up doing Adative Mesh Refinement
+  //serial->EnsureNCMesh();
   // Parallelize if required
   auto pmesh = std::make_unique<mfem::ParMesh>(comm, *serial);
   return pmesh;

@@ -1,4 +1,4 @@
-148
+149
 1 4 "BC_AllPMTs"
 1 5 "BC_AnodeElectrode"
 1 6 "BC_TopScreeningElectrode"
@@ -144,6 +144,7 @@
 1 146 "BC_Bell"
 1 147 "PTFE_Wall_Charge"
 1 148 "BC_Cryostat"
+1 149 "BC_r0"
 2 1 "GXe"
 2 2 "LXe"
 2 3 "PTFE"

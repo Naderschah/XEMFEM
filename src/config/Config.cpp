@@ -4,6 +4,31 @@
 #include <stdexcept>
 #include <iostream>
 #include <algorithm>
+#include <sstream>
+#include <cstdlib>
+
+// ------ Print formating TODO Standardize across all modules
+inline bool use_color() {
+    const char* no = std::getenv("NO_COLOR");
+    if (no && *no) return false;
+    return true;
+}
+inline void Warning(const std::string& msg) {
+    if (use_color()) {
+        std::cerr << "\033[33mWarning:\033[0m " << msg << '\n'; // yellow
+    } else {
+        std::cerr << "Warning: " << msg << '\n';
+    }
+}
+[[noreturn]] inline void Error(const std::string& msg) {
+    if (use_color()) {
+        std::cerr << "\033[31mError:\033[0m " << msg << '\n'; // red
+    } else {
+        std::cerr << "Error: " << msg << '\n';
+    }
+    throw std::runtime_error(msg);
+}
+
 
 // read int or "auto"
 static std::pair<int,bool> read_int_or_auto(const YAML::Node& n, int dflt_val, bool dflt_auto=true)
@@ -326,85 +351,61 @@ static void parse_optimization(Config &cfg, const YAML::Node &root)
     }
 }
 
+static void parse_fieldspread(Config &cfg, const YAML::Node &root)
+{
+    if (!root["fieldSpread_params"]) {
+        return; // not required TODO Handle
+    }
+
+    const YAML::Node O = root["fieldSpread_params"];
+
+    cfg.field_spread.lower = O["BottomPercentile"].as<double>(cfg.field_spread.lower);
+    cfg.field_spread.upper = O["UpperPercentile"].as<double>(cfg.field_spread.upper);
+}
+
 // -----------------------------------------------------------------------------
 // Trace params
 // -----------------------------------------------------------------------------
 static void parse_trace_params(Config &cfg, const YAML::Node &root)
 {
     // Start from current config values
-    ElectronTraceParams params = cfg.tracing_params;
+    ElectronTraceParams params;
 
     const auto opt = root["optimize"];
     if (!opt) {
-        cfg.tracing_params = params;
         return;
     }
-
-    const auto tp = opt["trace_params"];
-    if (!tp) {
-        cfg.tracing_params = params;
+    const auto O = opt["trace_params"];
+    if (!O) {
         return;
     }
+    params.provider = O["provider"].as<std::string>(cfg.tracing_params.provider);
+    params.method = O["method"].as<std::string>(cfg.tracing_params.method);
 
-    auto get_d = [&](const char *key, double cur) {
-        const auto n = tp[key];
-        return n ? n.as<double>(cur) : cur;
-    };
-    auto get_i = [&](const char *key, int cur) {
-        const auto n = tp[key];
-        return n ? n.as<int>(cur) : cur;
-    };
-    auto get_b = [&](const char *key, bool cur) {
-        const auto n = tp[key];
-        return n ? n.as<bool>(cur) : cur;
-    };
-    // TODO Make this not required
-    params.r_min = cfg.optimize.r_min;
-    params.r_max = cfg.optimize.r_max;
-    params.z_min = cfg.optimize.z_min;
-    params.z_max = cfg.optimize.z_max;
+    params.c_step = O["c_step"].as<double>(cfg.tracing_params.c_step);
+    params.geom_tol = O["geom_tol"].as<double>(cfg.tracing_params.geom_tol);
 
+    params.r_min = O["r_min"].as<double>(cfg.optimize.r_min);
+    params.r_max = O["r_max"].as<double>(cfg.optimize.r_max);
+    params.z_min = O["z_min"].as<double>(cfg.optimize.z_min);
+    params.z_max = O["z_max"].as<double>(cfg.optimize.z_max);
+    params.tracing_z_max = O["tracing_z_max"].as<double>(params.z_max);
 
-    params.method        = tp["method"].as<std::string>(cfg.tracing_params.method);
-    params.c_step        = get_d("c_step",        params.c_step);
-    params.tol_rel       = get_d("tol_rel",       params.tol_rel);
-    params.c_min_factor  = get_d("c_min_factor",  params.c_min_factor);
-    params.c_max_factor  = get_d("c_max_factor",  params.c_max_factor);
-    params.adapt_shrink  = get_d("adapt_shrink",  params.adapt_shrink);
-    params.adapt_grow    = get_d("adapt_grow",    params.adapt_grow);
-    params.geom_tol      = get_d("geom_tol",      params.geom_tol);
-    params.max_steps     = get_i("max_steps",     params.max_steps);
+    params.max_traversals = O["max_traversals"].as<double>(cfg.tracing_params.max_traversals);
 
-
-    // TODO : To be Removed
-    params.tracing_z_max = get_d("tracing_z_max", params.tracing_z_max);
-
-    // Basic validation
-    if (params.max_steps <= 0) {
-        throw std::runtime_error("Config error: optimize.trace_params: max_steps must be > 0");
-    }
-    if (params.geom_tol <= 0.0) {
-        throw std::runtime_error("Config error: optimize.trace_params: geom_tol must be > 0");
-    }
-    if (params.c_step <= 0.0) {
-        throw std::runtime_error("Config error: optimize.trace_params: c_step must be > 0");
-    }
-    if (params.c_min_factor <= 0.0) {
-        throw std::runtime_error("Config error: optimize.trace_params: c_min_factor must be > 0");
-    }
-    if (params.c_max_factor <= 0.0 || params.c_max_factor < params.c_min_factor) {
-        throw std::runtime_error("Config error: optimize.trace_params: c_max_factor must be >= c_min_factor and > 0");
-    }
-    if (params.adapt_grow < 1.0) {
-        throw std::runtime_error("Config error: optimize.trace_params: adapt_grow must be >= 1");
-    }
-    if (params.adapt_shrink <= 0.0 || params.adapt_shrink >= 1.0) {
-        throw std::runtime_error("Config error: optimize.trace_params: adapt_shrink must be in (0,1)");
-    }
-    if (params.tol_rel <= 0.0) {
-        throw std::runtime_error("Config error: optimize.trace_params: tol_rel must be > 0");
-    }
-
+    if (params.method != "Euler-Cauchy" &&
+        params.method != "RK4" &&
+        params.method != "RK54" &&
+        params.method != "RK45") 
+    { Error("trace_params.method must be one of {Euler-Cauchy, RK4, RK45, RK54}"); }
+    if (params.c_step <= 0) { Error("trace_params.c_step parameter must be larger than 0"); }
+    if (params.geom_tol <= 0) { Error("trace_params.geom_tol parameter must be larger than 0"); }
+    if (params.r_min >= params.r_max) { Error("trace_params.r_min must be smaller than trace_params.r_max"); }
+    if (params.z_min >= params.z_max) { Error("trace_params.z_min must be smaller than trace_params.z_max"); }
+    if (params.max_traversals < 0) { Error("trace_params.max_traversals parameter must at least 0 (0 being no limit)"); }
+    if (params.provider != "VTK" &&
+        params.provider != "BOOST") 
+    { Error("trace_params.provider must be one of {VTK, BOOST}"); }
     cfg.tracing_params = params;
 }
 
@@ -421,11 +422,11 @@ static void parse_civ_params(Config &cfg, const YAML::Node &root)
     const YAML::Node O = root["optimize"]["civ_params"];
 
     cfg.civ_params.method = O["method"].as<std::string>(cfg.civ_params.method);
-    cfg.civ_params.n_slices = O["n_slices"].as<int>(cfg.civ_params.n_slices);
     cfg.civ_params.num_seed_elements = O["num_seed_elements"].as<int>(cfg.civ_params.num_seed_elements);
-    cfg.civ_params.dump_civ_boundary = O["dump_civ_boundary"].as<bool>(cfg.civ_params.dump_civ_boundary);
-    cfg.civ_params.min_col_pos = O["min_col_pos"].as<double>(cfg.civ_params.min_col_pos);
-    
+    cfg.civ_params.nr = O["nr"].as<int>(cfg.civ_params.nr);
+    cfg.civ_params.nz = O["nz"].as<int>(cfg.civ_params.nz);
+    cfg.civ_params.max_levels = O["max_levels"].as<int>(cfg.civ_params.max_levels);
+    cfg.civ_params.block_size = O["block_size"].as<int>(cfg.civ_params.block_size);
 }
 
 static void parse_interp_params(Config &cfg, const YAML::Node &root)
@@ -484,7 +485,6 @@ static void parse_debug_settings(Config &cfg, const YAML::Node &root)
     dbg.printBoundaryConditions = gated("printBoundaryConditions", dbg.printBoundaryConditions);
     dbg.printHypreWarnings      = gated("printHypreWarnings",      dbg.printHypreWarnings);
     dbg.dumpdata                = gated("dumpdata",                dbg.dumpdata);
-    dbg.debug_single_seed       = gated("debug_single_seed",       dbg.debug_single_seed);
 
     cfg.debug = dbg;
 }
@@ -553,7 +553,11 @@ static void parse_boundary_params(Config &cfg, const YAML::Node &root)
         cfg.boundaries[name] = b;
     }
 }
+static void verify_cross_dependence(Config cfg)
+{
+    // TODO Err on MPI > 1 & save_paths or fix the CSV saving and merging of paths
 
+}
 
 // -----------------------------------------------------------------------------
 // Internal common parser
@@ -588,10 +592,13 @@ Config LoadFromNode(const YAML::Node &root) {
   parse_sweeps(cfg, root);
   parse_fieldcage_network(cfg, root);
   parse_optimization(cfg, root);
+  parse_fieldspread(cfg, root);
   parse_trace_params(cfg, root);
   parse_civ_params(cfg, root);
   parse_interp_params(cfg, root);
-  
+
+  verify_cross_dependence(cfg);
+
   return cfg;
 }
 } // namespace

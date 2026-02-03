@@ -6,6 +6,13 @@ Also implements Nelder Mead optimization of metrics computed after simulation
 
 
 
+TODOs:
+
+Mesh based CIV use: FindPointsGSLIB
+
+It is supposed to be quicker than the way I am working at the moment - but need to look into it
+
+
 ### Optimization
 
 

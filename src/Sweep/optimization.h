@@ -17,6 +17,7 @@ No built in bounds or constraints -> We need to handle these manually
 #include <stdexcept>
 #include <limits>
 #include <cmath> 
+#include <chrono>
 #include "mfem.hpp"
 
 #include "solver_api.h"
@@ -25,6 +26,7 @@ No built in bounds or constraints -> We need to handle these manually
 #include "optimization.h"
 #include "CIV.h"
 #include "field_spread.h"
+#include "nelder-mead.h" 
 
 
 
@@ -66,6 +68,8 @@ RunAndMetricsResult run_simulation_and_save(const Config &cfg, std::size_t eval_
 double evaluate_one_optimization_point(const Config &base_cfg, const OptimizationSettings &opt, const std::vector<double> &x, std::size_t eval_index, const ObjectiveFn &objective_fn, std::vector<OptRunRecord> &records, OptimizationLogger *logger);
 
 ObjectiveFn make_objective_function(const OptimizationSettings &opt);
+
+double compute_civ(const Config &cfg, const SimulationResult &result);
 
 OptimizationMetrics compute_metrics(const Config &cfg, const SimulationResult &result);
 

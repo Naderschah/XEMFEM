@@ -18,18 +18,25 @@ with open(base_path + "config.yaml") as stream:
         print(exc)
 
 # Resolve which geometry file to use
-fname = [base_path + i for i in os.listdir(base_path) if (config['mesh']['geometry'] in i) and (".py" in i)]
+import glob
+
+geom = config["mesh"]["geometry"]
+
+fname = glob.glob(
+    os.path.join(base_path, f"*{geom}*.py")
+)
+
 if len(fname) == 1:
     module_name = Path(fname[0]).stem # Strip .py
     spec = importlib.util.spec_from_file_location(module_name, fname[0])
     geometry = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(geometry)
 else:
-    raise Exception("Found " + len(fname) + " choices for geometry source " + config['mesh']['geometry'])
+    raise Exception("Found " + str(len(fname)) + " choices for geometry source " + config['mesh']['geometry'])
 
 # ==============  Debug Options ===========================
 makeface = True
-stop_after_sketch = False
+stop_after_sketch = config['debug']['StopAfterSketh']
 
 #def main():
 shrinkage_factor = 1.0 - 0.014
@@ -45,7 +52,7 @@ Cryostat_doc = Cryostat.document()
 
 # --------------------- Draw sketches
 ptfe_sketch_objs, ptfe_face_map = sketch_from_dict(ptfe_sketches, Cryostat_doc, makeface = makeface,
-                                                apply_shrinkage = False, shrink_below_y = geometry.liquid_level,
+                                                apply_shrinkage = False, shrink_below_y = config['mesh']['liquid_level'],
                                                 shrinkage_factor = shrinkage_factor)
 electrode_sketch_objs, electrode_face_map = sketch_from_dict(electrode_sketches, Cryostat_doc, makeface = makeface)
 xenon_sketch_objs, xenon_face_map = sketch_from_dict(xenon_sketches, Cryostat_doc, makeface = makeface)

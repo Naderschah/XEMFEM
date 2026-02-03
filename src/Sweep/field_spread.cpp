@@ -124,8 +124,8 @@ double computeFieldSpreadMetric(const Config &cfg,
                   return e_vals[a] < e_vals[b];
               });
 
-    const double target5  = 0.05 * total_w;
-    const double target95 = 0.95 * total_w;
+    const double target5  = cfg.field_spread.lower * total_w;
+    const double target95 = cfg.field_spread.upper * total_w;
 
     double cum_w = 0.0;
     double Q5    = e_vals[idx.front()];

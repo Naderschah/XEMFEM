@@ -182,7 +182,42 @@ def make_box(component):
     ]
 
     component["pts"] = pts
+def _ellipse_focus_from_center_axes(cx: float, cy: float,
+                                   a: float, b: float,
+                                   phi_deg: float):
+    """
+    Return (fx, fy): one focus of the ellipse.
 
+    Inputs:
+      cx, cy   center
+      a, b     semi-axis lengths (order may be arbitrary)
+      phi_deg  rotation of the *major axis* in sketch coords (deg)
+
+    Output:
+      fx, fy   coordinates of one focus
+    """
+    a = float(a); b = float(b)
+
+    # Ensure A is semi-major, B is semi-minor
+    if b > a:
+        A, B = b, a
+        # If caller's phi_deg was tied to 'a' axis rather than true major axis,
+        # you'd need phi_deg += 90.0 here.
+        # Only do that if your convention is "phi is direction of axis length a".
+        # If phi is already major-axis direction, do NOT modify it.
+    else:
+        A, B = a, b
+
+    # Focus distance from center
+    c2 = A*A - B*B
+    if c2 < 0:
+        c2 = 0.0  # numerical safety
+    c = math.sqrt(c2)
+
+    phi = math.radians(phi_deg)
+    fx = cx + c * math.cos(phi)
+    fy = cy + c * math.sin(phi)
+    return fx, fy
 def make_shape(Sketch, component, name="<component>"):
     """
     component["pts"]: list of N vertices around boundary.
@@ -200,10 +235,12 @@ def make_shape(Sketch, component, name="<component>"):
         x1, y1 = pts[i][1], pts[i][2]
         x2, y2 = pts[(i + 1) % n][1], pts[(i + 1) % n][2]
 
-        if pts[i][0] == "line":
+        instr = pts[i]
+        kind = pts[i][0]
+        if kind == "line":
             l = Sketch.addLine(x1, y1, x2, y2)
 
-        elif pts[i][0] == "arc":
+        elif kind == "arc":
             if len(pts[i]) == 5:
                 cx, cy = pts[i][3], pts[i][4]
                 direction = True
@@ -218,7 +255,185 @@ def make_shape(Sketch, component, name="<component>"):
                 x2, y2,
                 direction
             )
+        # TODO All below untested
+        elif kind == "ellipse":
+            # Use SHAPER TUI: Sketch.addEllipticArc(CenterX, CenterY, FocusX, FocusY, StartX, StartY, EndX, EndY, Inversed)
+            # Source: SketchAPI_Sketch::addEllipticArc (double,double,double,double,double,double,double,double,bool)
+            # https://docs.salome-platform.org/latest/tui/SHAPER/classSketchAPI__Sketch.html  (addEllipticArc)
+            #
+            # Our format: ["ellipse", x, y, cx, cy, a, b, phi_deg, inversed]
+            if len(instr) < 9:
+                raise ValueError(f"ellipse instruction invalid length={len(instr)} (need 9)")
+            cx, cy = float(instr[3]), float(instr[4])
+            a, b = float(instr[5]), float(instr[6])
+            phi_deg = float(instr[7])
+            inversed = bool(instr[8])
 
+            fx, fy = _ellipse_focus_from_center_axes(cx, cy, a, b, phi_deg)
+
+            l = Sketch.addEllipticArc(
+                cx, cy,
+                fx, fy,
+                x1, y1,
+                x2, y2,
+                inversed
+            )
+
+        elif kind == "bspline":
+            # Use SHAPER TUI: Sketch.addSpline(external=ModelHighAPI_Selection(), degree=-1, poles=..., weights=..., knots=..., multiplicities=..., periodic=False)
+            # Example TUI uses: Sketch_1.addSpline(poles=[(x,y),...], weights=[...], periodic=True/False)
+            # https://docs.salome-platform.org/latest/gui/SHAPER/SketchPlugin/TUI_bsplineFeature.html
+            # and full signature:
+            # https://docs.salome-platform.org/latest/tui/SHAPER/classSketchAPI__Sketch.html  (addSpline)
+            if len(instr) < 4 or not isinstance(instr[3], dict):
+                raise ValueError("bspline instruction missing payload dict at index 3")
+
+            payload = instr[3]
+            poles = payload.get("poles", [])
+            weights = payload.get("weights", [])
+            knots = payload.get("knots", [])
+            mults = payload.get("mults", payload.get("multiplicities", []))
+            degree = payload.get("degree", -1)
+            periodic = bool(payload.get("periodic", False))
+
+            if not poles:
+                raise ValueError("bspline payload has no poles")
+
+            # TUI accepts poles as list of (x,y) tuples
+            poles_xy = [(float(p[0]), float(p[1])) for p in poles]
+
+            kwargs = {
+                "poles": poles_xy,
+                "periodic": periodic,
+            }
+            if degree is not None and int(degree) >= 0:
+                kwargs["degree"] = int(degree)
+            if weights:
+                kwargs["weights"] = [float(w) for w in weights]
+            if knots:
+                kwargs["knots"] = [float(k) for k in knots]
+            if mults:
+                # SHAPER expects list of integers for multiplicities
+                kwargs["multiplicities"] = [int(m) for m in mults]
+
+            l = Sketch.addSpline(**kwargs)
+
+        elif kind == "hyperbola":
+            # Exact hyperbola segment as rational quadratic B-spline (NURBS)
+            # TUI: Sketch.addSpline(degree, poles, weights, knots, multiplicities, periodic)
+            #
+            # Expected: ["hyperbola", x, y, cx, cy, a, b, phi_deg, cw]
+            if len(instr) < 9:
+                raise ValueError(f"hyperbola instruction invalid length={len(instr)} (need 9)")
+
+            cx, cy = float(instr[3]), float(instr[4])
+            a_h, b_h = float(instr[5]), float(instr[6])
+            phi_deg = float(instr[7])
+            cw = bool(instr[8])
+
+            # --- map endpoints into the hyperbola local frame (centered, rotated) ---
+            phi = math.radians(phi_deg)
+            cph, sph = math.cos(phi), math.sin(phi)
+
+            def to_local(px, py):
+                x = px - cx
+                y = py - cy
+                # rotate by -phi
+                xl =  cph * x + sph * y
+                yl = -sph * x + cph * y
+                return xl, yl
+
+            def to_world(xl, yl):
+                # rotate by +phi then translate
+                x = cph * xl - sph * yl + cx
+                y = sph * xl + cph * yl + cy
+                return x, y
+
+            x0l, y0l = to_local(x1, y1)
+            x2l, y2l = to_local(x2, y2)
+
+            # Determine branch sign from start point in local frame
+            sign = 1.0 if x0l >= 0.0 else -1.0
+
+            # Parameterize hyperbola in local frame:
+            #   x = sign * a cosh(u)
+            #   y = b sinh(u)
+            # infer u from y (asinh)
+            def u_from_y(yl):
+                bb = b_h if b_h != 0.0 else 1e-15
+                return math.asinh(yl / bb)
+
+            u0 = u_from_y(y0l)
+            u2 = u_from_y(y2l)
+
+            # enforce direction flag (cw) as a deterministic orientation toggle
+            # (cw has no intrinsic meaning for hyperbola; we use it to choose increasing/decreasing u)
+            if cw and u2 > u0:
+                u0, u2 = u2, u0
+                # also swap endpoints to match direction
+                x1, y1, x2, y2 = x2, y2, x1, y1
+                x0l, y0l, x2l, y2l = x2l, y2l, x0l, y0l
+
+            if (not cw) and u2 < u0:
+                u0, u2 = u2, u0
+                x1, y1, x2, y2 = x2, y2, x1, y1
+                x0l, y0l, x2l, y2l = x2l, y2l, x0l, y0l
+
+            um = 0.5 * (u0 + u2)
+
+            # Endpoints on the hyperbola (recompute to enforce exactness)
+            x0l = sign * a_h * math.cosh(u0)
+            y0l =        b_h * math.sinh(u0)
+            x2l = sign * a_h * math.cosh(u2)
+            y2l =        b_h * math.sinh(u2)
+
+            # Mid "point" on hyperbola at um (used to set middle pole)
+            xm = sign * a_h * math.cosh(um)
+            ym =        b_h * math.sinh(um)
+
+            # --- Conic as quadratic rational Bezier in homogeneous form ---
+            # Use standard conic construction with 3 control points:
+            #   P0 = endpoint0, P2 = endpoint1
+            # Choose P1 such that the curve passes through midpoint at parameter t=0.5.
+            #
+            # For quadratic rational Bezier:
+            #   C(t) = ( (1-t)^2 P0 + 2 w t(1-t) P1 + t^2 P2 ) / ( (1-t)^2 + 2 w t(1-t) + t^2 )
+            #
+            # At t=0.5:
+            #   C(0.5) = ( P0 + 2 w P1 + P2 ) / ( 2 + 2 w )
+            # => P1 = ( (2+2w) * Cm - P0 - P2 ) / (2w)
+            #
+            # Pick weight w from u-span:
+            # For hyperbola, a robust exact conic weight for symmetric parameterization is:
+            #   w = cosh((u2-u0)/2)
+            du2 = 0.5 * (u2 - u0)
+            w1 = math.cosh(du2)
+            if w1 <= 0.0 or not math.isfinite(w1):
+                raise ValueError(f"Invalid hyperbola weight computed: w={w1}")
+
+            # Cm is the mid point on the curve (at u=um)
+            Cm = (xm, ym)
+            P0 = (x0l, y0l)
+            P2 = (x2l, y2l)
+
+            P1x = (((2.0 + 2.0 * w1) * Cm[0]) - P0[0] - P2[0]) / (2.0 * w1)
+            P1y = (((2.0 + 2.0 * w1) * Cm[1]) - P0[1] - P2[1]) / (2.0 * w1)
+
+            # Convert poles back to world frame
+            p0w = to_world(P0[0], P0[1])
+            p1w = to_world(P1x, P1y)
+            p2w = to_world(P2[0], P2[1])
+
+            degree = 2
+            poles = [p0w, p1w, p2w]
+            weights = [1.0, float(w1), 1.0]
+
+            # Single quadratic span (Bezier form) as clamped B-spline:
+            knots = [0.0, 1.0]
+            multiplicities = [3, 3]
+            periodic = False
+
+            obj = Sketch.addSpline(degree, poles, weights, knots, multiplicities, periodic)
         else:
             raise Exception("Argument " + str(pts[i][0]) + " not recognized for line creation in component " + str(name))
 

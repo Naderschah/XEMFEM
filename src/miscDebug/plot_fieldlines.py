@@ -11,17 +11,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import meshio
 
-# Optional deps for -E and -c
-try:
-    import h5py
-except Exception:
-    h5py = None
-
-try:
-    import yaml  # pip install pyyaml
-except Exception:
-    yaml = None
-
+import h5py
+import yaml
 
 # --------------------------------------------------------------------
 # Defaults / CLI
@@ -29,7 +20,7 @@ except Exception:
 DEFAULT_CSV   = Path("../../sim_results/electron_paths_debug.csv")
 DEFAULT_GRID  = Path("../../sim_results/interpolated/E_interpolated.h5")
 DEFAULT_CFG   = Path("../../geometry/config.yaml")
-DEFAULT_MED   = Path("/home/felix/work/geometry/mesh/mesh.med")
+DEFAULT_MED   = Path("../../geometry/mesh/mesh.med")
 
 parser = argparse.ArgumentParser(
     description="Plot traced electron paths; optionally overlay E-field from interpolated grid."
@@ -46,6 +37,17 @@ parser.add_argument(
     "--efield",
     action="store_true",
     help="Overlay E-field (|E| background + sparse quiver) inside optimize bounds.",
+)
+grad_group = parser.add_mutually_exclusive_group()
+grad_group.add_argument(
+    "-dEdx",
+    action="store_true",
+    help="Overlay d|E|/dx (x is the first plotted coordinate, i.e. r).",
+)
+grad_group.add_argument(
+    "-dEdy",
+    action="store_true",
+    help="Overlay d|E|/dy (y is the second plotted coordinate, i.e. z).",
 )
 parser.add_argument(
     "-G",
@@ -84,6 +86,16 @@ parser.add_argument(
     help="Do not draw electron path lines/markers (useful to inspect E-field/TPC only).",
 )
 
+# NEW: filter by exit code(s)
+parser.add_argument(
+    "--exit",
+    type=str,
+    default=None,
+    help=(
+        "Filter which paths to plot by exit code. "
+        "Examples: --exit MaxSteps  |  --exit 5  |  --exit MaxSteps,HitWall  |  --exit 5,3"
+    ),
+)
 
 args = parser.parse_args()
 
@@ -94,7 +106,6 @@ if not csv_path.is_file():
 
 output_path = csv_path.with_suffix(".png")
 plot_TPC = (not args.no_tpc)
-
 
 # --------------------------------------------------------------------
 # YAML bounds (optimize box)
@@ -135,32 +146,10 @@ def load_bounds_from_config(cfg_path: Path):
         raise KeyError("Could not find optimize bounds (r_min,r_max,z_min,z_max) anywhere in config YAML.")
     return b
 
-
 # --------------------------------------------------------------------
 # HDF5 loader for WriteGridSampleBinary output
 # --------------------------------------------------------------------
 def load_grid_for_xy_plot(grid_path: Path):
-    """
-    Load a 2D slice for plotting in the XY plane.
-
-    Assumptions (matching the revised C++ writer):
-      - Coordinates are ALWAYS stored as:
-          /grid/x : (Nx,)
-          /grid/y : (Ny,)
-          /grid/z : (Nz,)
-      - Field is:
-          /E/field : shape (Nz, Ny, Nx, dim)
-        where dim is the number of stored components (2 or 3).
-      - For 2D geometry in (x,y), you typically have Nz == 1 (single plane).
-
-    Returns:
-      X2, Y2 : meshgrid arrays with shape (Ny, Nx)
-      Ex2, Ey2 : field component arrays with shape (Ny, Nx)
-
-    Notes:
-      - We select a z-slice k (default: middle). For true 2D-in-XY data, Nz==1 so k=0.
-      - Ex is component 0, Ey is component 1 (dim==2 is fine).
-    """
     if h5py is None:
         raise RuntimeError("h5py not available. Install with: pip install h5py")
     if not grid_path.is_file():
@@ -195,18 +184,14 @@ def load_grid_for_xy_plot(grid_path: Path):
         if z.shape != (Nz,):
             raise ValueError(f"/grid/z shape {z.shape} does not match Nz={Nz}")
 
-        # Choose z-slice. For 2D XY data Nz==1 so k=0.
         k = Nz // 2
-
         Ex2 = E[k, :, :, 0]
         Ey2 = E[k, :, :, 1]
 
-        # Build coordinate grids with shape (Ny, Nx)
         X2 = np.tile(x[None, :], (Ny, 1))
         Y2 = np.tile(y[:, None], (1, Nx))
 
         return X2, Y2, Ex2, Ey2
-
 
 def overlay_efield(ax, grid_path: Path, cfg_path: Path):
     rmin, rmax, zmin, zmax = load_bounds_from_config(cfg_path)
@@ -214,10 +199,7 @@ def overlay_efield(ax, grid_path: Path, cfg_path: Path):
 
     inb = (R2 >= rmin) & (R2 <= rmax) & (Z2 >= zmin) & (Z2 <= zmax)
     if not np.any(inb):
-        raise ValueError(
-            "No grid points fall inside optimize bounds from config. "
-            "Check config bounds vs /grid coordinates."
-        )
+        raise ValueError("No grid points fall inside optimize bounds from config.")
 
     ii, jj = np.where(inb)
     i0, i1 = int(np.min(ii)), int(np.max(ii))
@@ -231,10 +213,10 @@ def overlay_efield(ax, grid_path: Path, cfg_path: Path):
     Emag = np.sqrt(Er * Er + Ez * Ez)
 
     im = ax.pcolormesh(R, Z, Emag, shading="auto", alpha=0.35)
-    plt.colorbar(im, ax=ax, pad=0.02, label="|E|", location = 'left')
+    plt.colorbar(im, ax=ax, pad=0.02, label="|E|", location="left")
 
     ny, nx = Emag.shape
-    step = max(1, int(max(ny, nx) / 40))
+    step = max(1, int(max(ny, nx) / 80))
     ax.quiver(
         R[::step, ::step],
         Z[::step, ::step],
@@ -250,6 +232,43 @@ def overlay_efield(ax, grid_path: Path, cfg_path: Path):
     ax.set_xlim(rmin, rmax)
     ax.set_ylim(zmin, zmax)
 
+def overlay_efield_gradient(ax, grid_path: Path, cfg_path: Path, which: str):
+    rmin, rmax, zmin, zmax = load_bounds_from_config(cfg_path)
+    R2, Z2, Er2, Ez2 = load_grid_for_xy_plot(grid_path)
+
+    inb = (R2 >= rmin) & (R2 <= rmax) & (Z2 >= zmin) & (Z2 <= zmax)
+    if not np.any(inb):
+        raise ValueError("No grid points fall inside optimize bounds from config.")
+
+    ii, jj = np.where(inb)
+    i0, i1 = int(np.min(ii)), int(np.max(ii))
+    j0, j1 = int(np.min(jj)), int(np.max(jj))
+
+    R = R2[i0:i1+1, j0:j1+1]
+    Z = Z2[i0:i1+1, j0:j1+1]
+    Er = Er2[i0:i1+1, j0:j1+1]
+    Ez = Ez2[i0:i1+1, j0:j1+1]
+
+    Emag = np.sqrt(Er * Er + Ez * Ez)
+
+    x = R[0, :]
+    y = Z[:, 0]
+    dEmag_dy, dEmag_dx = np.gradient(Emag, y, x, edge_order=2)
+
+    if which == "x":
+        field = dEmag_dx
+        cbar_label = "d|E|/dx"
+    elif which == "y":
+        field = dEmag_dy
+        cbar_label = "d|E|/dy"
+    else:
+        raise ValueError("which must be 'x' or 'y'")
+
+    im = ax.pcolormesh(R, Z, field, shading="auto", alpha=0.55)
+    plt.colorbar(im, ax=ax, pad=0.02, label=cbar_label, location="left")
+
+    ax.set_xlim(rmin, rmax)
+    ax.set_ylim(zmin, zmax)
 
 # --------------------------------------------------------------------
 # CSV loader
@@ -262,13 +281,11 @@ def load_paths(csv_path: Path):
             if not row or row[0].startswith("#"):
                 continue
             seed_id = int(row[0])
-            # step = int(row[1])  # not used for plotting
             r = float(row[2])
             z = float(row[3])
             exit_code = int(row[4])
             paths[seed_id].append((r, z, exit_code))
     return paths
-
 
 # --------------------------------------------------------------------
 # MED BC groups for TPC outline
@@ -332,7 +349,6 @@ def extract_bc_groups_from_med(mesh: meshio.Mesh, *, prefer_cell_groups=True):
 
     return bc
 
-
 def draw_tpc_outline(ax, med_path: Path):
     if not med_path.is_file():
         raise FileNotFoundError(f"MED mesh does not exist: {med_path}")
@@ -358,7 +374,6 @@ def draw_tpc_outline(ax, med_path: Path):
                             [pts[n1, 1], pts[n2, 1]],
                             linewidth=0.6, alpha=0.9, color="black")
 
-
 # --------------------------------------------------------------------
 # Plotting
 # --------------------------------------------------------------------
@@ -373,21 +388,67 @@ code_colors = {
     7: ("HitAxis",       "yellow"),
 }
 
+# NEW: parse --exit filter
+def parse_exit_filter(s: str, code_map: dict):
+    """
+    Returns a set of allowed exit codes, or None if no filter.
+    Accepts comma-separated tokens, each token can be integer or a known label key from code_colors.
+    Matching is case-insensitive for labels.
+    """
+    if s is None:
+        return None
+    s = s.strip()
+    if not s:
+        return None
+
+    name_to_code = {label.lower(): code for code, (label, _) in code_map.items()}
+
+    allowed = set()
+    for tok in s.split(","):
+        t = tok.strip()
+        if not t:
+            continue
+        if t.lstrip("+-").isdigit():
+            allowed.add(int(t))
+            continue
+        key = t.lower()
+        if key not in name_to_code:
+            known = ", ".join(sorted(name_to_code.keys()))
+            raise SystemExit(f"Unknown exit label '{t}'. Known labels: {known}")
+        allowed.add(name_to_code[key])
+
+    return allowed if allowed else None
+
+allowed_exit_codes = parse_exit_filter(args.exit, code_colors)
+
 paths = load_paths(csv_path)
 
 plt.figure()
 ax = plt.gca()
 
-if args.efield:
+if args.dEdx:
+    overlay_efield_gradient(ax, args.grid, args.config, which="x")
+elif args.dEdy:
+    overlay_efield_gradient(ax, args.grid, args.config, which="y")
+elif args.efield:
     overlay_efield(ax, args.grid, args.config)
 
 max_r = 0.0
 max_z = 0.0
+
 if not args.no_paths:
     for seed_id, pts in paths.items():
+        if not pts:
+            continue
+
+        exit_code = int(pts[-1][2])
+
+        # NEW: apply filter
+        if allowed_exit_codes is not None and exit_code not in allowed_exit_codes:
+            continue
+
         r = np.array([p[0] for p in pts], dtype=float)
         z = np.array([p[1] for p in pts], dtype=float)
-        exit_code = int(pts[-1][2])
 
         if r.size:
             max_r = max(max_r, float(np.nanmax(np.abs(r))))
@@ -408,15 +469,11 @@ if not args.no_paths:
             dz = (z - np.roll(z, 1))[1:-2]
             if np.isclose(dr, 0.0).all() and np.isclose(dz, 0.0).all():
                 ax.scatter([r[0]], [z[0]], s=18, marker="x", color=color)
+
 if plot_TPC:
     ax.set_aspect("equal", "box")
     draw_tpc_outline(ax, args.mesh_med)
-else:
-    ax.set_xlim(0, ax.get_xlim()[1])
-    if max_r > 1.0:
-        ax.set_xlim(0, 2)
-    if max_z > 10.0:
-        ax.set_ylim(-1.7, 0.2)
+
 
 ax.set_xlabel("r")
 ax.set_ylabel("z")

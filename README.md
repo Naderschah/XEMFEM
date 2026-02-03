@@ -1,25 +1,76 @@
-# ELectrostatics with MFEM
+# Electrostatics with MFEM
 
+## Basic Usage
 Generate Geometry:
 
-run Salome docker image (see ./geometry), generate mesh, run the postprocessor, configure the yaml. 
+- run Salome docker image (`./run_docker.sh` in geometry), 
 
-Compile solver: 
+Start salome on the command line, type Ctrl+t, run `build_geometry.py`, wait until the GUI becomes response, and then salome can be closed. 
+
+Switch to the main docker file, and in geometry run: `python3 postprocess_mesh.py`, note this will rewrite the BC's in the config file and delete all comments present. Votages are sourced from the respective `<Prefix>_constants.py` file where prefix is configured in the yaml. The same goes for the geometry. 
+
+Currenlty implemented geometries are:
+- SR3 
+
+Currently implemented Voltages:
+- design
+- SR0
+- SR1
+- SR2
+
+Note that all currently use the same numbers for wall charge up, so for earlier runs this feature should be disabled (set the Neumann BC to null value or remove the list item entirely)
+
+To solve the mesh.
+
+Compile XEMFEM: 
 ```bash
 mkdir build
 cd build
 cmake ../src && make 
 ```
-Run solver 
+And Run 
 ```bash
-./SWEEP --config /path/to/config.yaml
+./XEMFEM sim 
 ```
+
+config path can be specified but if you didnt change it all defaults should work.
+
+Alongside this the following options are available:
+```bash
+ # Runs a basic simulation, a sweep if sweep parameters are configured, 
+ # or a Nelder-Mead Optimization if parameters are configred (Optimization has priority over sweep)
+./XEMFEM
+./XEMFEM sim 
+# Computes metrics used for optimization (currently CIV and Field homogeneity)
+# for the last saved mesh and results files
+./XEMFEM metrics
+# Produces V and E Plots, Configuration of these via config.yaml not yet implemented
+./XEMFEM plots
+
+ # The config.yaml path defaults to geometry/config.yaml but can be provided with 
+ # --config path/to/config.yaml
+
+```
+
+## Features
+
+Geometry is created via points lists that specify the 2D geometry, these are constructed directly from slices of the master CAD file. Some cleanup has to be applied after the fact, if you have the same CAD file (I used XENT-TPC_20250428.STEP) you should get the exact same output, notably any other format is not guaranteed to work due to the way CAD file formats label their item trees and repeated items. See geometry/createGeometryFromCAD/README.md for more information. 
+
+2D, 2D axisymmetric and 3D simulations are implemented, higher D is possible within MFEM, however, I am not sure the code is general enough to handle this. 3D also currently has limited support, it should work fine with the main simulation suite (haven't tried in a while however), but the metrics computation and plotting do not currently support higher D. 
+
+The field Cage is written as a chain of edges (wires) and nodes (resistors), these are configured by the postprocess_mesh function. Prior to each simulation these are recomputed, agreement between the python script and MFEM implementation was verified. This is only relevant for sweeps.
+
+Multithreading is implemented and supported, GPU support will (likely) be shipped in a seperate branch due to the extra heavy dependencies. OMP (threading) is active by default, so threads = 1 corresponds to the closest thing to single threaded available. MPI is active by default as I originally intended to fully support it, however, the config still must be heavily expanded to support this, alongside this not all code paths are MPI safe, this will eventually be added on the main release branch.
+
+Field Homogeneity is a trivial computation and functions well, it is in its final form, barring code cleanup and possible minor refactoring for MPI and reducing computational cost. Electron tracing prooved nontrivial, with poorly conditioned meshes (TODO What exactly is currently the reason) producing circiling motion in the least variable region of the TPC (close to r = 0 central height range), hence a hard error is thrown in case of Timeout. VTK is the most stable integrator avaialble, however, it is intended for plotting so recording paths is mandatory, the alternate MFEM native implementation is less stable and will not integrate in the inner portion of the TPC, which will be problematic for some CIV strategies. 
+
 
 ## Simulation configuration
 
 The configuration is written as a yaml file. 
 
-Not all options are used by all portions of the code, some options are meshing specific. Most are MFEM solver specific. 
+Not all options are used by all portions of the code, some options are meshing specific and do not impact MFEM. 
+Care should be taken not to modify any meshing specific fields during optimization to avoid result confusion.
 
 An overview of the currently supported options is given below
 ```yaml
@@ -30,61 +81,43 @@ geometry_id: SomeName
 
 mesh:
   # No need to modify this the mesh postprocessor writes the correct path
-  path: "/home/felix/work/geometry/mesh/mesh22.msh"
-  # Which geometry to generate in meshing, currently only SR3 is supported
+  path: "/work/geometry/mesh/mesh22.msh"
+  # Which geometry to generate in meshing (uses <geometry>*.py for finding the file)
   geometry: SR3
-  # Set of voltages (.py file in same directory as preprocessor - see existing for more info) to use
+  # Which set of voltages to use, also defined in the same file (mesh_postprocessor uses this)
   voltages: SR3
-  # Wheter or not to autoappend the generated boundaries and attributes to the currently used config file
+  # Wheter or not to autoappend the generated boundaries and attributes to the currently used config file -> Otherwise BC's and materials need to be copied from the config_autogen file 
   autoappend: true
 
 # Where Simulation results should be saved
-save_path: "/home/felix/work/sim_results"
+save_path: "/work/sim_results"
 # Wheter to overwrite existing files (trashes the directory if true) - meta file is always overwritten
 delete_files_present: true 
 
 # Debug Settings
 debug:
-  # TODO: Make exhaustive list of what this does
+  # General debug prints
   debug: false
-  # TODO: Make exhaustive list of what this does
+  # Executes Sweeps (and Optimization) without running simulation such that settings can be verified
   dry_run: false
-  # Print boundary conditions as loaded in MFEM simulation
+  # Print boundary conditions as loaded in MFEM simulation (mesh gen sanity check)
   printBoundaryConditions: false
   # Wheter or not to print hypre warnings (there is always 1+ as Hypre misinterprets some solver internals)
   printHypreWarnings: false
-  # TODO: Exhaustive list
+  # Saves pathlines in particle tracing (if multiple sets are traced overwrites the old, best used with RandomSample CIV strategy)
   dumpdata: false
-  # TODO: Exhaustive list 
-  debug_single_seed: false
 
 # Compute Settings
 compute:
-  # Multi processing Interface
-  # Used for multimachine computation 
-  # TODO Currently untested -> Config will need extending for this - might also be needed for multi cpu devices
-  mpi: 
-    enabled: false 
-    ranks: auto 
-    repartition_after_refine: true
-  # Multithreading
+  # Multithreading (OMP)
   threads:
-    enabled: true
-    # Automatically assign number of threads based on what OpenMP sees as thread number for CPU 
+    # Number of Threads: -1 Automatically assign number of threads based on what OpenMP sees as thread number for CPU 
     num: -1 
     # scatter or compact, how memory is to be managed between threads 
     affinity: scatter
-  
-  # Currently not respected
-  # Will be once GPU and MPI is figured out 
-  device: 
-    type: none
-    id: auto 
-    per_rank: 1
 
 # Sweep configuration 
-# Sweeps performed if sweeps is non empty
-# Represented as list of items to sweep over 
+# Sweeps performed if sweeps (list) is non empty
 sweeps:
     # Some Name for the sweep 
   - name: "AnodeSweep"
@@ -98,22 +131,22 @@ sweeps:
     end:   4900.0
     # in number steps 
     steps: 4
-  # Or a discrete Sweep 
+  # Or a discrete Sweep (mesh sweeps are currently not possible TODO Should be easy modification)
   - name: "order_sweep"
     path: "solver.order"
     kind: "discrete"
     values: [1, 2, 3]
 
-# Optimization Configuration (minimize some metric relative to some parameters)
-# Uses Nelder-Mead
+# Optimization Configuration (minimize metric relative to some parameters)
 optimize:
   enabled: false
-  # TODO What does this do again
+  # Legacy executable setting
   metrics_only: false
   # Wheter to print per optimization results
   print_restults: true
   # Objective function
-  # Available are: FieldSpread, CIV, self_weighting
+  # Available are: FieldSpread, CIV, self_weighting 
+  # TODO Extra config block for drift v extraction computations
   objective: "self_weighting"
   # Number of evaluations per iteration
   max_evals: 1
@@ -126,58 +159,47 @@ optimize:
   # TODO: What is this again 
   adaptive: true 
 
-  # TPC dimension definition (parts of the detector we care about)
+  # TPC ROI (This is Drift Region in SR3)
   r_min: 0.0         
-  r_max: 0.664       # PanelRadialPosition
-  z_min: -1.5025     # CathodeVerticalPosition + CathodeWireDiameter
+  r_max: 0.664
+  z_min: -1.5025
   z_max: 0.004
 
-  # Electron Tracing Configuration (Charge Insensitive Volume)
-  # TODO Update with good parameters 
-  # TODO Add proper docs
+  # Electron Tracing Configuration (used for Charge Insensitive Volume)
   trace_params:
-    # Which propagation method to use
-    # Euler-Cauchy, RK23, RK45
-    method: "RK45"
-    # The step size = c_step * hk, where hk is the shortest vertex to vertex distance inside the current mesh element 
-    c_step: 0.25
-    # these * hk produce the smallest and maximal step sizes 
-    ds_min_factor: 0.05
-    ds_max_factor: 2 
-    # Step allowed if error_metric / hK  < tol_rel
-    tol_rel: 0.1
-    # Adaptive step resizing, factor by which estimate drops/grows
-    adapt_shrink: 0.7
-    adapt_grow: 1.2
-    # Boundary check tolerance 
-    geom_tol: 1e-5
-    # Maximum integration steps not counting retries due to too high error
-    max_steps: 1000000
+    # Which tracing provider is to be used 
+    # VTK is from a plotting library (resistant to poor meshes)
+    # XEMFEM is custom tracing implementation, sensitive to poor meshes but much quicker
+    provider: VTK
+    # Which stepping method to use, VTK support RK4 and Euler-Cauchy 
+    # XEMFEM supports Euler-Cauchy, RK4, RK45 (Dormand-Prince 5), and RK54 (Cash-Karp), all pair methods do the standard error based step inc/dec logic
+    method: "RK4"
+    # step_size = c_step * smallest mesh triangle length
+    c_step: 1e-4
+    # Geometric tolerance 
+    geom_tol: 1e-6
+    # Particle may traverse drift region max_traversals times (max steps is computed from this and c_step)
+    max_traversals: 2
 
   civ_params:
-    # CIV method: RandomSample, ColumnSweep, InformedSweep
+    # CIV method: Debugging methods include RandomSample, Grid, AdaptiveGrid, RowSweep. 
     method: "RandomSample" 
     # Samples to use for method RandomSample
     num_seed_elements: 512
-    # Slices to take for ColumnSweep
-    n_slices: 24
-    # Wheter the defined boundary line is to be written to file or not
-    dump_civ_boundary: false    
-    # Informed Sweep: For initial column search define an extra point at the 
-    # bottom min_col_pos away from the bottom, if all tested elements are charge 
-    # sensitive the procedure terminates concluding there is no CIV (ie = 0)
-    min_col_pos: 0.001
+    # grid divisions for grid based methods
+    nr: 42
+    nz: 126
+    # Levels to reduce resolution in adaptive grid search
+    max_levels: 2
 
 
-  # TODO Implement - whats the status on this
+  # In case other quantiles are desired for field spread
   fieldSpread_params:
-    TopBottomDist: 0.14 
-    BottomPercentile: 0.5
+    BottomPercentile: 0.05
     UpperPercentile: 0.95 
 
   # Variables to optimize against
-  # represented as a list,
-  # TODO Is discrete supported?
+  # represented as a list, only continuous implemented
   variables:
     - name: "BottomScreenVoltage"
       path: "boundaries.BC_BottomScreen.value"
@@ -188,25 +210,20 @@ optimize:
 
 # Electrostatics Solver Configuration 
 solver:
-  # Run axisymmetric Simulation
+  # Run axisymmetric Simulation (No checks of the mesh are performed)
   axisymmetric: true
   # Solution order
   order: 3
-  # TODO  https://mfem.org/howto/assembly_levels/
-  assembly_mode: partial              # full | partial | matrix_free
+  # full | partial | matrix_free :   https://mfem.org/howto/assembly_levels/
+  assembly_mode: partial
   # Solution absolute tolerance
-  atol: 1e-50 #1e-25
+  atol: 1e-50
   # Solution relative tolerance
   rtol: 0.0
   # Maximum number of iterations 
   maxiter: 100000
   # Should the solver print the status on each step (a lot of text)
   printlevel: 0
-  # Names to save mesh and solutions under
-  # TODO Is this still respected?
-  mesh_save_path: "simulation_mesh.msh"
-  V_solution_path:  "solution_V.gf"
-  Emag_solution_path: "solution_Emag.gf"
 
 # Plotting Options
 # TODO Whats the status on this
@@ -233,14 +250,14 @@ boundaries:
   BC_AllPMTs:
     # Internal boundary ID (inside the GMSH file)
     bdr_id: 4
-    # Type of boundary condition (we only need dirichlet - TODO Is anything else currently supported?)
+    # dirichlet boundary condition enforces constant potential on surface
     type: dirichlet
     # At Voltage
     value: -1300
   # Some name for a surface charge
   BC_SurfaceCharge:
     bdr_id: 3
-    # Neumann boundaries impose flux insertion over surface
+    # Neumann boundaries impose flux discontinuity over surface
     type: neumann 
     # If false applied constant over surface, otherwise linearly z dependent 
     depth_dependent: true
@@ -290,108 +307,24 @@ fieldcage_network:
 ```
 ## Results Inspection
 
-Plots can be made with the plot subcommand, point to the config file and everything will be plotted. 
+Plots can be made with the plot subcommand.
 
-Alternatively, the pvdu file found under Simulation in the results path can be opened in paraview (has a huge amount of viewing and postprocessing options) for inspection, open it from the terminal. Or in glvis using `glvis -m simulation_mesh.msh -g V.gf -k "AmaagcmRj"` which views the internally used file directly. 
+Alternatively, the pvdu file found under Simulation in the results path can be opened in paraview for inspection (has a huge amount of viewing and postprocessing options), open it from the terminal. Or in glvis using `glvis -m simulation_mesh.msh -g V.gf -k "AmaagcmRj"` which views the internally used file directly (MFEM native). 
 
 ## Software Stack
-
-#### Electrostatics 
-MFEM: 
-- Version 4.8.0 
-- Highest currently available
-
-Hypre:
-- version 2.33.0 
-- version geq 3.0.0 does not work with MFEM 
-- Previous versions 
-  - tried with 2.32.0 : HypreBoomer AMG reports 1 OpenMP thread regardless of set number. Either checks in a funny way, or bugged  
-
-TODO: GPU 
-
 
 #### Meshing 
 
 SALOME:
 - Version 9.9.0
-- Anything above this version should work, one version down does not due to a function used in tagging
+- Anything above this version should work, below does not due to the post partition tagging logic.
 
-TODO: Script should be available headless, and the two containers merged to make it possible to mesh and simulate in one shot 
+#### Electrostatics 
+MFEM: 
+- Version 4.8.0 
 
-
-# TODO
-
-## Geometry 
-
-Implement SR2 Geometry
-
-Allow Headless running, and run postprocess directly
-
-Merge docker containers
-
-Netgen settngs inside config.yaml
-
-## MFEM
-
-use pragma stop with ifndef 
-
-Also implement misc boundary conditions
-
-GPU implementation & MPI testing (fairly certain wont work at the moment)
-
-Need to fix indentation 
-
-Cut down on the structs 
-
-Generalized Path Handler 
-
-Merge Plotting and Simulation (or did i do this already)
-
-Add interpolated export
-
-### Config File
-Stubs to clean up:
-- optimize.metrics_only : No longer used (once sweep executable gone)
-
-### Optimization
-
-Clean up dispatch logic 
-
-CIV - Find good hyperparameters 
-
-CIV Compare to electric field direction as proxy 
-
-Implement difference of parameters as fixed
-
-
-
-
-Field Optimization Strategy:
-
-Two sets of metrics:
-- One for Drift 
-- One for Extraction 
-
-Optimize Both seperately for some fixed parameters relative to themselves, and then check the superposition, then vary a little and see if this is indeed the best config for the combined
-
-
-First steps figure out CIV - add injection point where simulation results exist and we simply compute 
-
-
-#### Tracing
-
-There are a number of functions that may be able to be merged/seperated or may be the same thing
-
-FindElementForPointLocal
-FindElementForPointGlobal
-FindElementForPointRobust
-TraceSingleCIProbe
-
-Also all old methods should be updated and the code between them should be more shared
-
-
-The informed sweep method should work but the initial column sweep fails due to some 
-charge insensitive elements close to the wall -> For now addding wall surface charge
-to eliminate this behavior to determine operating conditions
-
-Once this is done I should investigate this and find a more suitable method.
+Hypre:
+- version 2.33.0 
+- version geq 3.0.0 does not work with MFEM 4.8
+- Previous versions 
+  - tried with 2.32.0 : HypreBoomer AMG reports 1 OpenMP thread regardless of set number. Either checks in a funny way, or bugged  

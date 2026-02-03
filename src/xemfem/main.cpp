@@ -80,7 +80,7 @@ static int run_interpolate(Config init_cfg) {
 }
 
 int main(int argc, char** argv)
-{
+{    
     // -------------------- Check Subcommand ----------------------
     cli::InputParser pre_args(argc, argv);
 
@@ -120,23 +120,31 @@ int main(int argc, char** argv)
     Config init_cfg;
     init_cfg = Config::Load(config_path.string());
 
-    // MPI / OMP?
+    // MPI Set Up
     parallel::init_environment(init_cfg, argc, argv);
 
     // ------------------------- Dispatch ------------------------------
     if (cmd == "sim") {
-        return run_sim(init_cfg);
+        run_sim(init_cfg);
+        std::cout << "Done" <<std::endl;
+        return 1;
     }
     if (cmd == "metrics") {
         return run_metrics(init_cfg);
+        std::cout << "Done" <<std::endl;
+        return 1;
     }
     if (cmd == "plot") {
         // TODO Needs extra args?
-        return run_plot(init_cfg);
+        run_plot(init_cfg);
+        std::cout << "Done" <<std::endl;
+        return 1;
     }
     if (cmd == "interpolate") {
         // TODO Needs extra args?
-        return run_interpolate(init_cfg);
+        run_interpolate(init_cfg);
+        std::cout << "Done" <<std::endl;
+        return 1;
     }
 
     std::cerr << "Error: unknown subcommand '" << cmd << "'\n";

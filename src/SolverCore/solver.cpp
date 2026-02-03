@@ -84,7 +84,6 @@ static PWConstCoefficient BuildEpsilonPWConst(const Mesh &mesh, const std::share
         // Fill in any remaining attributes that were not explicitly set
         for (int a = 1; a <= max_attr; ++a)
         {
-          // TODO Verify the logic + check if we want to actually do this 
           if (eps_by_attr(a - 1) == 0.0)  eps_by_attr(a - 1) = mat.epsilon_r;
         }
       }
@@ -111,12 +110,11 @@ std::unique_ptr<mfem::ParGridFunction> SolvePoisson(ParFiniteElementSpace &pfes,
   auto w = MakeAxisymWeightCoeff(cfg->solver.axisymmetric, 0);
   mfem::ProductCoefficient weps(*w, epsilon_pw);
   
-  // TODO Are teh comments still relevant?
-  std::unique_ptr<ParGridFunction> V;     // GridFunction or ParGridFunction
-  std::unique_ptr<ParBilinearForm> a;     // BilinearForm or ParBilinearForm
-  std::unique_ptr<ParLinearForm>   b;     // LinearForm   or ParLinearForm
-  OperatorHandle                   A;     // SparseMatrix or HypreParMatrix
-  Vector                        X, B;     // works for both
+  std::unique_ptr<ParGridFunction> V;
+  std::unique_ptr<ParBilinearForm> a;
+  std::unique_ptr<ParLinearForm>   b;
+  OperatorHandle                   A;
+  Vector                        X, B;
   std::function<std::unique_ptr<Solver>(OperatorHandle&)> make_prec;
 
   V = std::make_unique<ParGridFunction>(&pfes);

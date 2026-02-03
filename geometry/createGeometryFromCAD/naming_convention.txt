@@ -1,0 +1,148 @@
+XENT-TPC_20250428 : Outer Assembly
+- XENT-TPC-A_Warm : Field Cage + Pannels
+	- XENT-TPC-A1A_Warm*** : Field Cage Guard n half
+	- XENT-TPC-A1B_Warm*** : Field Cage Guard n half
+	- XENT-TPC-A2_FibrePanel*** : PTFE Wall + Field Cage clips - Wide panels every other
+	- XENT-TPC-A2_Warm*** : PTFE Wall + Field Cage clips - Wide panels every other
+	- XENT-TPC-A2_Resistor Chain Left : PTFE Wall with resistor chain (outer - maybe) 
+	- XENT-TPC-A2_Resistor Chain Right : Same as above
+	- XENT-TPC-A2_Wire Junction : PTFE WAll with special wire piece not sure what it is
+	- XENT-TPC-A3_Warm*** : Part of Copper ring 
+	- XENT-TPC-A7_Warm*** : Part of Copper ring 
+	- XENT-TPC-A8_Warm*** : Part of Copper ring 
+	- XENT-TPC-A16_Warm*** : Part of Copper ring 
+	- XENT-TPC-A11_Warm*** : Part of thing on Copper ring 
+	- XENT-TPC-A4_Warm*** : Part of thing on Copper ring 
+	- XENT-TPC-A12_Warm*** : Part of thing on Copper ring 
+	- XENT-TPC-A22_Warm*** : Part of thing on Copper ring 
+	- XENT-TPC-A14_Warm*** : Part of thing on Copper ring 
+	- XENT-TPC-A4_Warm*** : Part of thing on Copper ring 
+	- XENT-TPC-A5_Warm*** : Part of thing on Copper ring 
+	- XENT-TPC-A6_Warm*** : Part of thing on Copper ring 
+	- XENT-TPC-A26_Warm : Part of thing on Copper ring 
+	- XENT-TPC-A28_Warm : Part of thing on Copper ring 
+	- XENT-TPC-A29_Warm : Part of thing on Copper ring 
+	- XENT-TPC-A9_Warm*** : PTFE Part of Bell to Copper ring clamp  
+	- XENT-TPC-A5_Warm*** : Half of copper parts on bottom of TPC : TODO Investigate
+	- XENT-TPC-A6_Warm*** : Field Shaping 
+	- XENT-TPC-AI_Warm - Pillar Cover***: PTFE Pillar + Cover 
+	- XENT-TPC-AI_Warm*** : PTFE Pillar 
+	- XENT-TPC-AI_Warm - Cathode_HVFT*** : PTFE Pillar HVFT Feed
+	- XENT-TPC-AX1_Warm*** : Field Shaping Ring Clip on 
+	- XENT-TPC-AW1_Warm*** : Field Shaping Ring Clip on 
+	- XENT-TPC-AV1_Warm*** : Field Shaping Ring Clip on 
+	- XENT-TPC-A18_Warm*** : Pillar Cover attachment outside
+	- XENT-TPC-A19_Warm*** : Outer Pannel attachment PTFE to Cathode PTFE insulator 
+	- XENT-TPC-A21_Warm*** : Outer Pannels 
+	- XENT-TPC-A23_Warm*** : Outer Attachments on Pillar Cover 
+	- MC-640-NA_91292A*** : Screws 
+	- MC-535-NA_91292A*** : Screws 
+	- 93475A240_93475A*** : Washers
+	- XENT-TPC-A*** : Things bolts go through
+	- XENT-TPC-A** : Things bolts go through
+	- 91828A241_91828A264 : Mothers
+	- XENT-TPC-A*** : Things the field shaping rings went through PTFE?
+- XENT-TPC-B_Warm : Top PMT Array
+	- XENT-TPC-B1_Warm : PMT PTFE holders (the ones half way up)
+	- XENT-TPC-B2_Warm : PMT PTFE Below Screen
+	- XENT-TPC-B3_Warm*** : Connector Pin from mid to bottom PTFE
+	- XENT-TPC-B4_Warm*** : Connector Pin from top to mid PTFE
+	- XENT-TPC-B5_Warm*** : Connector Pin washer PTFE
+	- XENT-TPC-B7_Warm*** : Top PTFE 
+	- XENT-TPC-B8_Warm : Top PTFE 
+	- XENT-TPC-B9_Warm : Top PTFE 
+	- XENT-TPC-B15_Warm : Top PTFE 
+	- XENT-TPC-B14_Warm : Top PTFE 
+	- XENT-TPC-B13_Warm : Top PTFE 
+	- XENT-TPC-B10_Warm : Some Outer Threading  
+	- XENT-TPC-B01*_Warm : Some Outer Threading 
+	- XENT-TPC-B11_Warm_90928A319 : Central Screw
+	- R11410-** : PMT
+	- R11410-*** : PMT
+
+- XENT-TPC-C_Warm : Bottom PMT Array 
+	- Same as Top Array
+
+- XENT-TPC-D_New_Anode : 
+	- XENT-TPC-DL_Warm : Copper Ring 
+	- XENT-TPC-D1_Warm*** : thin PTFE Pannel bell insulator
+	- XENT-TPC-D2_Warm : thick PTFE Pannel bell insulator
+	- XENT-TPC-D3_Warm*** : thick PTFE Pannel bell insulator
+	- XENT-TPC-HP_Warm*** : Bell Connector PTFE
+	- XENT-TPC-DN : Gate
+	- XENT-TPC-D30_Warm*** : Gate Insulator thin
+	- XENT-TPC-D31_Warm*** : Gate Insulator thick
+	- XENT-TPC-D32_Warm*** : Gate Insulator thick
+	- XENT-TPC-D33_Warm*** : Gate Insulator thick
+	- XENT-TPC-D34_Warm*** : Gate Insulator thick
+	- XENT-TPC-D35_Warm*** : Gate Insulator thick
+	- XENT-TPC-D36_Warm*** : Gate Insulator thin
+	- XENT-TPC-D37_Warm*** : Gate Insulator thin
+	- XENT-TPC-D38_Warm*** : Gate Insulator thin
+	- XENT-TPC-D39_Warm*** : Gate Insulator thin
+	- XENT-TPC-D40_Warm*** : Gate Insulator thin
+	- XENT-TPC-D41_Warm*** : Gate Insulator thin
+	- XENT-TPC-D42_Warm*** : Gate Insulator thin
+	- XENT-TPC-D43_Warm*** : Gate Insulator thin
+	- XENT-TPC-D44_Warm*** : Gate Insulator thin
+	- XENT-TPC-D45_Warm*** : Gate Insulator thick
+	- XENT-TPC-DQ_New_Anode*** : Screws holding the thing together
+	- XENT-TPC-D46_Warm*** : thick PTFE Pannel bell insulator
+	- XENT-TPC-D47_Warm*** : thick PTFE Pannel bell insulator
+	- XENT-TPC-D48_Warm*** : thin PTFE Pannel bell insulator
+	- XENT-TPC-D49_Warm*** : thick PTFE Pannel bell insulator
+	- XENT-TPC-D50_Warm*** : thin PTFE Pannel bell insulator
+	- XENT-TPC-D51_Warm*** : thin PTFE Pannel bell insulator
+	- XENT-TPC-D52_Warm*** : thin PTFE Pannel bell insulator
+	- XENT-TPC-D53_Warm*** : Anode insulator thick 
+	- XENT-TPC-D54_Warm*** : Anode insulator thin 
+	- XENT-TPC-D55_Warm*** : Anode insulator thin 
+	- XENT-TPC-D56_Warm*** : Anode insulator thick 
+	- XENT-TPC-D57_Warm*** : Anode insulator thin 
+	- XENT-TPC-D58_Warm*** : Anode insulator thin 
+	- XENT-TPC-D59_Warm*** : Anode insulator thin 
+	- XENT-TPC-D60_Warm : Anode insulator thick 
+	- XENT-TPC-D61_Warm : Anode insulator thick 
+	- XENT-TPC-D62_Warm : Anode insulator thick 
+	- XENT-TPC-D63_Warm : Anode insulator thick 
+	- XENT-TPC-D28_Warm : Top of some (Copper?) pin 
+	- XENT-TPC-D25_Warm : PTFE around some (Copper?) pin 
+	- XENT-TPC-D18_Warm : PTFE around some (Copper?) pin 
+	- XENT-TPC-D26_Warm : Bottom of some (Copper?) pin 
+	- XENT-TPC-D24_Warm : some (Copper?) pin 
+	- XENT-TPC-D28_Warm : top of some (Copper?) pin 
+	- XENT-TPC-DM_warm : Anode
+	- XENT-TPC-DQ_New_Anode*** : Pins to hold assembly together
+
+- XENT-TPC-E_Plan-B Warm : Cathode stack
+	- XENT-TPC-EN_Warm : Bottom Screening electrode
+	- XENT-TPC-EA_Warm*** : Thin PTFE pannel screen to cathode
+	- XENT-TPC-EB_Warm*** : Thick PTFE pannel screen to cathode 
+	- XENT-TPC-E13_Warm*** : Thick PTFE pannel screen to cathode
+	- XENT-TPC-E14_Warm*** : Something connecting to previous Thick PTFE pannel 
+	- XENT-TPC-E5_Warm*** : Thin PTFE pannel screen to cathode
+	- XENT-TPC-E6_Warm*** : Copper? L shaped part below screening 
+	- XENT-TPC-EA_Warm*** : Thin PTFE pannel screen to cathode
+	- XENT-TPC-E7_Warm*** : PTFE? Ring around Lower stack outside 
+	- XENT-TPC-E8_Warm : PTFE? Ring around Lower stack outside 
+	- XENT-TPC-E20_Warm*** : Cathode Insulating Frame  Thick
+	- XENT-TPC-E21_Warm : Cathode Insulating Frame Thick 
+	- XENT-TPC-E22_Warm : Cathode Insulating Frame Thick 
+	- XENT-TPC-E23_Warm : Cathode Insulating Frame Thick 
+	- XENT-TPC-E24_Warm : Cathode Insulating Frame outer holder Thick 
+	- XENT-TPC-E25_Cold LXe*** : Cathode Insulating frame outer attachment piece
+	- XENT-TPC-EO_Plan-B Cathode : Cathode
+
+
+- XENT-TPC-F055 : Bell 
+	- XENT-TPC-F : Top Plate
+	- XENT-TPC-F001 : Outer Ring Upper
+	- XENT-TPC-F002 : Feedthrough
+	until 011 : Feedthrough
+	- XENT-TPC-F012 : Outer Ring Lower
+	- XENT-TPC-F013 : Feedthrough
+	until 054
+
+
+- XENT-TPC-G_Warm : Outer Cryostat Wont need this either, will slice once and select inner bounds to make the pts list 
+- XENT-TPC-H_Warm : piping not doing this one 

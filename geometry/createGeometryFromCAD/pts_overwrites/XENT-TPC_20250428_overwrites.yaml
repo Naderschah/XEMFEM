@@ -1,0 +1,446 @@
+version: 0
+cad_id: "XENT-TPC_20250428"
+out_base_name: "SR3"
+inputs:
+  pts_root: "./out/pts_out"   # where your slicer wrote JSONs
+  axis: "Y"
+  tol: 1.0e-5
+
+# Includes extra components not sliced from the CAD due to miscellaneous regions
+# name: Internal Name to Use in this script
+# json_path: If source is json file
+# offset_x: Offset if loaded from json and not in global geometry yet
+# offset_y: Offset if loaded from json and not in global geometry yet
+# other_slice: angle of the slice from which to use pts list
+# 
+extra_components:
+  - name: "PMT"
+    json_path: "./pts_overwrites/PMTs.json"
+    comment: "Predefined PMT geometry"
+    offset_x: 0
+    offset_y: 0
+  - name: "LXe0"
+    json_path: "./pts_overwrites/LXe.json"
+    comment: "Predefined LXe Volume"
+    offset_x: 0
+    offset_y: 0
+  - name: "GXe0"
+    json_path: "./pts_overwrites/GXe.json"
+    comment: "Predefined GXe Volume"
+    offset_x: 0
+    offset_y: 0
+
+# Groupings
+groups:
+  Electrode: 
+    - Anode
+    - Bell
+    - BottomScreening
+    - Cathode
+    - CopperRing
+    - FieldShapingGuard
+    - FieldShapingRing
+    - Gate
+    - TopScreen
+    - PMT
+  PTFE:
+    - NA
+  xenon:
+    - LXe0
+    - GXe0
+
+
+
+#angle_overwrites:
+#  compontent:
+#    30: 45
+
+# Instructions to merge pts groups into one closed contour
+## name: name to give the new group
+## components: Name of components (from CAD out) to use 
+## type: "union_contours" -> Perform union operation of surface
+##merge_groups:
+##  - name: "PTFE_ALL"
+##    components: ["PTFE_A", "PTFE_B", "PTFE_C"]
+##    type: "union_contours"
+#
+## list of:
+## name in pts_out from the CAD (or generated from above instructions)
+## final_name : Name the object will receive in Salome
+## comment: Comment on what this component is (maintainability not used in scripts)
+#type_assignment:
+#  # Electrodes
+#  - name: "PMT"
+#    final_name: "AllPMTs"
+#    group: electrode
+#    comment: "PMT's"
+#  - name: "XENT-TPC-DM_Warm"
+#    final_name: "TopScreeningElectrode"
+#    group: electrode
+#    comment: "Top Screening Electrode Component"
+#  - name: "XENT-TPC-DN"
+#    final_name: "AnodeElectrode"
+#    group: electrode
+#    comment: "Anode Electrode"
+#  - name: "XENT-TPC-DL_Warm"
+#    final_name: "GateElectrode"
+#    group: electrode
+#    comment: "Gate Electrode"
+#  - name: "XENT-TPC-A3_Warm"
+#    final_name: "CopperRing"
+#    group: electrode
+#    comment: "Copper Ring"
+#  - name: "XENT-TPC-A7_Warm"
+#    final_name: "CopperRing"
+#    group: electrode
+#    comment: "Copper Ring"
+#  - name: "XENT-TPC-A8_Warm"
+#    final_name: "CopperRing"
+#    group: electrode
+#    comment: "Copper Ring"
+#  - name: "XENT-TPC-A16_Warm"
+#    final_name: "CopperRing"
+#    group: electrode
+#    comment: "Copper Ring"
+#  - name: "XENT-TPC-A6_Warm"
+#    final_name: "FieldShapingRings"
+#    group: electrode
+#    comment: "Field Shaping Rings"
+#  - name: "XENT-TPC-A1A_Warm"
+#    final_name: "FieldShapingGuards half"
+#    group: electrode
+#  - name: "XENT-TPC-A1B_Warm"
+#    final_name: "FieldShapingGuards"
+#    group: electrode
+#    comment: "Field Shaping Guards half"
+#  - name: "XENT-TPC-EO_Plan-B Cathode"
+#    final_name: "CathodeElectrode"
+#    group: electrode
+#    comment: "Cathode Electrode"
+#  - name: "XENT-TPC-EN_Warm"
+#    final_name: "BottomScreeningElectrode"
+#    group: electrode
+#    comment: "Bottom Screening Electrode"
+#  - name: "XENT-TPC-F"
+#    final_name: "Bell"
+#    group: electrode
+#    comment: "Bell"
+#  - name: "XENT-TPC-F001"
+#    final_name: "Bell"
+#    group: electrode
+#    comment: "Bell"
+#  - name: "XENT-TPC-F012"
+#    final_name: "Bell"
+#    group: electrode
+#    comment: "Bell"
+#  # PTFE Components
+#  - name: "XENT-TPC-A2_FibrePanel"
+#    final_name: "PTFEWall_FieldCageClips"
+#    group: PTFE
+#    comment: "PTFE Wall, Field Cage Clips, Wide Panels, every other"
+#  - name: "XENT-TPC-A2_Warm"
+#    final_name: "PTFEWall_FieldCageClips"
+#    group: PTFE
+#    comment: "PTFE Wall, Field Cage Clips, Wide Panels, every other"
+#  - name: "XENT-TPC-A2_Resistor Chain Left"
+#    final_name: "PTFEWall_ResistorChain"
+#    group: PTFE
+#    comment: "PTFE Wall with resistor chain"
+#  - name: "XENT-TPC-A2_Resistor Chain Right"
+#    final_name: "PTFEWall_ResistorChain"
+#    group: PTFE
+#    comment: "PTFE Wall with resistor chain"
+#  - name: "XENT-TPC-A2_Wire Junction"
+#    final_name: "PTFEWallSpecialWirePiece"
+#    group: PTFE
+#    comment: "PTFEWall with Special Wire Piece"
+#  - name: "XENT-TPC-A11_Warm*"
+#    final_name: "CopperRingInsulation"
+#    group: PTFE
+#    comment: "CopperRingInsulation"
+#  - name: "XENT-TPC-A4_Warm*"
+#    final_name: "CopperRingInsulation"
+#    group: PTFE
+#    comment: "CopperRingInsulation"
+#  - name: "XENT-TPC-A12_Warm*"
+#    final_name: "CopperRingInsulation"
+#    group: PTFE
+#    comment: "CopperRingInsulation"
+#  - name: "XENT-TPC-A22_Warm*"
+#    final_name: "CopperRingInsulation"
+#    group: PTFE
+#    comment: "CopperRingInsulation"
+#  - name: "XENT-TPC-A14_Warm"
+#    final_name: "CopperRingPTFEThing"
+#    group: PTFE
+#    comment: "Part of thing on Copper ring"
+#  - name: "XENT-TPC-A4_Warm"
+#    final_name: "CopperRingPTFEThing"
+#    group: PTFE
+#    comment: "Part of thing on Copper ring"
+#  - name: "XENT-TPC-A5_Warm"
+#    final_name: "CopperRingPTFEThing"
+#    group: PTFE
+#    comment: "Part of thing on Copper ring"
+#  - name: "XENT-TPC-A26_Warm"
+#    final_name: "CopperRingPTFEThing"
+#    group: PTFE
+#    comment: "Part of thing on Copper ring"
+#  - name: "XENT-TPC-A28_Warm"
+#    final_name: "CopperRingPTFEThing"
+#    group: PTFE
+#    comment: "Part of thing on Copper ring"
+#  - name: "XENT-TPC-A29_Warm"
+#    final_name: "CopperRingPTFEThing"
+#    group: PTFE
+#    comment: "Part of thing on Copper ring"
+#  - name: "XENT-TPC-AI_Warm - Pillar Cover"
+#    final_name: "PTFEPillar_and_Cover"
+#    group: PTFE
+#    comment: "PTFE Pillar + Cover"
+#  - name: "XENT-TPC-AI_Warm"
+#    final_name: "PTFEPillar"
+#    group: PTFE
+#    comment: "PTFE Pillar"
+#  - name: "XENT-TPC-AI_Warm - Cathode_HVFT"
+#    final_name: "PTFEPillarHVFTFeed"
+#    group: PTFE
+#    comment: "PTFE Pillar HVFT Feed"
+#  - name: "XENT-TPC-A19_Warm"
+#    final_name: "OuterPanelAttachmentPTFEToCathodeInsulator"
+#    group: PTFE
+#    comment: "Outer Pannel attachment PTFE to Cathode PTFE insulator"
+#  - name: "XENT-TPC-A21_Warm"
+#    final_name: "OuterPanels"
+#    group: PTFE
+#    comment: "Outer Panels"
+#  - name: "XENT-TPC-A23_Warm"
+#    final_name: "OuterAttachmentPillarCover"
+#    group: PTFE
+#    comment: "Outer Attachments on Pillar Cover"
+#  - name: "XENT-TPC-B2_Warm"
+#    final_name: "TopPMTPTFEPanel"
+#    group: PTFE
+#    comment: "Top PMT PTFE Below Screen"
+#  - name: "XENT-TPC-C2_Warm"
+#    final_name: "BottomPMTPTFEPanel"
+#    group: PTFE
+#    comment: "Bottom PMT PTFE Above Screen"
+#  - name: "XENT-TPC-D1_Warm"
+#    final_name: "ThinPTFEBellInsulator"
+#    group: PTFE
+#    comment: "thin PTFE Pannel bell insulator"
+#  - name: "XENT-TPC-D2_Warm"
+#    final_name: "ThickPTFEBellInsulator"
+#    group: PTFE
+#    comment: "thick PTFE Pannel bell insulator"
+#  - name: "XENT-TPC-D3_Warm"
+#    final_name: "ThickPTFEBellInsulator"
+#    group: PTFE
+#    comment: "thick PTFE Pannel bell insulator"
+#  - name: "XENT-TPC-D30_Warm"
+#    final_name: "GateInsulatorThin"
+#    group: PTFE
+#    comment: "Gate Insulator thin"
+#  - name: "XENT-TPC-D31_Warm"
+#    final_name: "GateInsulatorThick"
+#    group: PTFE
+#    comment: "Gate Insulator Thick"
+#  - name: "XENT-TPC-D32_Warm"
+#    final_name: "GateInsulatorThick"
+#    group: PTFE
+#    comment: "Gate Insulator Thick"
+#  - name: "XENT-TPC-D33_Warm"
+#    final_name: "GateInsulatorThick"
+#    group: PTFE
+#    comment: "Gate Insulator Thick"
+#  - name: "XENT-TPC-D34_Warm"
+#    final_name: "GateInsulatorThick"
+#    group: PTFE
+#    comment: "Gate Insulator Thick"
+#  - name: "XENT-TPC-D35_Warm"
+#    final_name: "GateInsulatorThick"
+#    group: PTFE
+#    comment: "Gate Insulator Thick"
+#  - name: "XENT-TPC-D36_Warm"
+#    final_name: "GateInsulatorThin"
+#    group: PTFE
+#    comment: "Gate Insulator thin"
+#  - name: "XENT-TPC-D37_Warm"
+#    final_name: "GateInsulatorThin"
+#    group: PTFE
+#    comment: "Gate Insulator thin"
+#  - name: "XENT-TPC-D38_Warm"
+#    final_name: "GateInsulatorThin"
+#    group: PTFE
+#    comment: "Gate Insulator thin"
+#  - name: "XENT-TPC-D39_Warm"
+#    final_name: "GateInsulatorThin"
+#    group: PTFE
+#    comment: "Gate Insulator thin"
+#  - name: "XENT-TPC-D40_Warm"
+#    final_name: "GateInsulatorThin"
+#    group: PTFE
+#    comment: "Gate Insulator thin"
+#  - name: "XENT-TPC-D41_Warm"
+#    final_name: "GateInsulatorThin"
+#    group: PTFE
+#    comment: "Gate Insulator thin"
+#  - name: "XENT-TPC-D42_Warm"
+#    final_name: "GateInsulatorThin"
+#    group: PTFE
+#    comment: "Gate Insulator thin"
+#  - name: "XENT-TPC-D43_Warm"
+#    final_name: "GateInsulatorThin"
+#    group: PTFE
+#    comment: "Gate Insulator thin"
+#  - name: "XENT-TPC-D44_Warm"
+#    final_name: "GateInsulatorThin"
+#    group: PTFE
+#    comment: "Gate Insulator thin"
+#  - name: "XENT-TPC-D45_Warm"
+#    final_name: "GateInsulatorThick"
+#    group: PTFE
+#    comment: "Gate Insulator Thick"
+#  - name: "XENT-TPC-D46_Warm"
+#    final_name: ""
+#    group: PTFE
+#    comment: "thick PTFE Pannel bell insulator"
+#  - name: "XENT-TPC-D47_Warm"
+#    final_name: "ThickPTFEPannelBellInsulator"
+#    group: PTFE
+#    comment: "thick PTFE Pannel bell insulator"
+#  - name: "XENT-TPC-D48_Warm"
+#    final_name: "ThinPTFEPannelBellInsulator"
+#    group: PTFE
+#    comment: "thin PTFE Pannel bell insulator"
+#  - name: "XENT-TPC-D49_Warm"
+#    final_name: "ThickPTFEPannelBellInsulator"
+#    group: PTFE
+#    comment: "thick PTFE Pannel bell insulator"
+#  - name: "XENT-TPC-D50_Warm"
+#    final_name: "ThickPTFEPannelBellInsulator"
+#    group: PTFE
+#    comment: "thin PTFE Pannel bell insulator"
+#  - name: "XENT-TPC-D51_Warm"
+#    final_name: "ThinPTFEPannelBellInsulator"
+#    group: PTFE
+#    comment: "thin PTFE Pannel bell insulator"
+#  - name: "XENT-TPC-D52_Warm"
+#    final_name: "ThinPTFEPannelBellInsulator"
+#    group: PTFE
+#    comment: "thin PTFE Pannel bell insulator"
+#  - name: "XENT-TPC-D53_Warm"
+#    final_name: "AnodeInsulatorThick"
+#    group: PTFE
+#    comment: "Anode insulator thick"
+#  - name: "XENT-TPC-D54_Warm"
+#    final_name: "AnodeInsulatorThin"
+#    group: PTFE
+#    comment: ""
+#  - name: "XENT-TPC-D55_Warm"
+#    final_name: "AnodeInsulatorThin"
+#    group: PTFE
+#    comment: "XENT-TPC-D56_Warm"
+#  - name: "XENT-TPC-"
+#    final_name: "AnodeInsulatorThick"
+#    group: PTFE
+#    comment: "Anode insulator thick"
+#  - name: "XENT-TPC-D57_Warm"
+#    final_name: "AnodeInsulatorThin"
+#    group: PTFE
+#    comment: ""
+#  - name: "XENT-TPC-D58_Warm"
+#    final_name: "AnodeInsulatorThin"
+#    group: PTFE
+#    comment: ""
+#  - name: "XENT-TPC-D59_Warm"
+#    final_name: "AnodeInsulatorThin"
+#    group: PTFE
+#    comment: ""
+#  - name: "XENT-TPC-D60_Warm"
+#    final_name: "AnodeInsulatorThick"
+#    group: PTFE
+#    comment: "Anode insulator thick"
+#  - name: "XENT-TPC-D61_Warm"
+#    final_name: "AnodeInsulatorThick"
+#    group: PTFE
+#    comment: "Anode insulator thick"
+#  - name: "XENT-TPC-D62_Warm"
+#    final_name: "AnodeInsulatorThick"
+#    group: PTFE
+#    comment: "Anode insulator thick"
+#  - name: "XENT-TPC-D63_Warm"
+#    final_name: "AnodeInsulatorThick"
+#    group: PTFE
+#    comment: "Anode insulator thick"
+#  - name: "XENT-TPC-EA_Warm"
+#    final_name: "ThinPTFEScreenToCathode"
+#    group: PTFE
+#    comment: "Thin PTFE pannel screen to cathode"
+#  - name: "XENT-TPC-EB_Warm"
+#    final_name: "ThickPTFEScreenToCathode"
+#    group: PTFE
+#    comment: "Thick PTFE pannel screen to cathode"
+#  - name: "XENT-TPC-E13Warm"
+#    final_name: "ThickPTFEScreenToCathode"
+#    group: PTFE
+#    comment: "Thick PTFE pannel screen to cathode"
+#  - name: "XENT-TPC-E14_Warm"
+#    final_name: "ConnectedToThickPTFEToCathode"
+#    group: PTFE
+#    comment: "Something connecting to previous Thick PTFE pannel"
+#  - name: "XENT-TPC-E5_Warm"
+#    final_name: "ThinPTFEScreenToCathode"
+#    group: PTFE
+#    comment: "Thin PTFE pannel screen to cathode"
+#  - name: "XENT-TPC-EA_Warm"
+#    final_name: "ThinPTFEScreenToCathode"
+#    group: PTFE
+#    comment: "Thin PTFE pannel screen to cathode"
+#  - name: "XENT-TPC-E7_Warm"
+#    final_name: "PTFERingAroundLowerStack"
+#    group: PTFE
+#    comment: "PTFE? Ring around Lower stack outside"
+#  - name: "XENT-TPC-E8_Warm"
+#    final_name: "PTFERingAroundLowerStack"
+#    group: PTFE
+#    comment: "PTFE? Ring around Lower stack outside"
+#  - name: "XENT-TPC-E20_Warm"
+#    final_name: "PTFERingAroundLowerStack"
+#    group: PTFE
+#    comment: "Cathode Insulating Frame  Thick"
+#  - name: "XENT-TPC-E21_Warm"
+#    final_name: "PTFERingAroundLowerStack"
+#    group: PTFE
+#    comment: "Cathode Insulating Frame  Thick"
+#  - name: "XENT-TPC-E22_Warm"
+#    final_name: "PTFERingAroundLowerStack"
+#    group: PTFE
+#    comment: "Cathode Insulating Frame  Thick"
+#  - name: "XENT-TPC-E23_Warm"
+#    final_name: "PTFERingAroundLowerStack"
+#    group: PTFE
+#    comment: "Cathode Insulating Frame  Thick"
+#  - name: "XENT-TPC-E24_Warm"
+#    final_name: "CathodeInsulatingOuterFrameHolder"
+#    group: PTFE
+#    comment: "Cathode Insulating Frame outer holder Thick"
+#  - name: "XENT-TPC-E25_Cold LXe"
+#    final_name: "CathodeInsulatingOuterFrameOuterAttachment"
+#    group: PTFE
+#    comment: "Cathode Insulating frame outer attachment piece"
+#
+#
+#
+#  # GXe & LXe
+#  - name: "LXe"
+#    final_name: "LXe"
+#    group: xenon
+#    comment: "LXe Volume"
+#  - name: "GXe"
+#    final_name: "GXe"
+#    group: xenon
+#    comment: "GXe Volume"
+
+  

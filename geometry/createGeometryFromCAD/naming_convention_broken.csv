@@ -1,0 +1,193 @@
+Parent,Subcomponent,Material,Mesh,BC,,Comment
+XENT-TPC_20250428,XENT-TPC-A_Warm,NA,0,NA,,Field Cage + Pannels
+XENT-TPC-A_Warm,XENT-TPC-A1A_Warm***,Copper,0,FieldShapingGuard,,Field Cage Guard n half
+XENT-TPC-A_Warm,XENT-TPC-A1B_Warm***,Copper,0,FieldShapingGuard,,Field Cage Guard n half
+XENT-TPC-A_Warm,XENT-TPC-A2_FibrePanel***,PTFE,0,NA,,PTFE Wall + Field Cage clips - Wide panels every other
+XENT-TPC-A_Warm,XENT-TPC-A2_Warm***,PTFE,0,NA,,PTFE Wall + Field Cage clips - Wide panels every other
+XENT-TPC-A_Warm,XENT-TPC-A2_Resistor Chain Left,PTFE,0,NA,,PTFE Wall with resistor chain (outer - maybe)
+XENT-TPC-A_Warm,XENT-TPC-A2_Resistor Chain Right,PTFE,0,NA,,Same as above
+XENT-TPC-A_Warm,XENT-TPC-A2_Wire Junction,PTFE,0,NA,,PTFE WAll with special wire piece not sure what it is
+XENT-TPC-A_Warm,XENT-TPC-A3_Warm***,Copper,0,CopperRing,TODO,Part of Copper ring
+XENT-TPC-A_Warm,XENT-TPC-A7_Warm***,Copper,0,CopperRing,TODO ,Part of Copper ring
+XENT-TPC-A_Warm,XENT-TPC-A8_Warm***,Copper,0,CopperRing,TODO ,Part of Copper ring
+XENT-TPC-A_Warm,XENT-TPC-A16_Warm***,Copper,0,CopperRing,TODO ,Part of Copper ring
+XENT-TPC-A_Warm,XENT-TPC-A11_Warm***,PTFE,0,NA,Ok?,Copper Ring insulation
+XENT-TPC-A_Warm,XENT-TPC-A4_Warm***,PTFE,0,NA,,Copper Ring insulation
+XENT-TPC-A_Warm,XENT-TPC-A12_Warm***,PTFE,0,NA,,Copper Ring insulation
+XENT-TPC-A_Warm,XENT-TPC-A22_Warm***,PTFE,0,NA,,Copper Ring insulation
+XENT-TPC-A_Warm,XENT-TPC-A14_Warm***,PTFE,0,NA,,Part of thing on Copper ring
+XENT-TPC-A_Warm,XENT-TPC-A4_Warm***,PTFE,0,NA,,Part of thing on Copper ring
+XENT-TPC-A_Warm,XENT-TPC-A5_Warm***,PTFE,0,NA,,Part of thing on Copper ring
+XENT-TPC-A_Warm,XENT-TPC-A26_Warm,PTFE,0,NA,,Part of thing on Copper ring
+XENT-TPC-A_Warm,XENT-TPC-A28_Warm,PTFE,0,NA,,Part of thing on Copper ring
+XENT-TPC-A_Warm,XENT-TPC-A29_Warm,PTFE,0,NA,,Part of thing on Copper ring
+XENT-TPC-A_Warm,XENT-TPC-A9_Warm***,PTFE,0,NA,,PTFE Part of Bell to Copper ring clamp
+XENT-TPC-A_Warm,XENT-TPC-A5_Warm***,Copper,0,NA,,Half of copper parts on bottom of TPC : TODO Investigate
+XENT-TPC-A_Warm,XENT-TPC-A6_Warm***,Copper,0,FieldShapingRing,,Field Shaping
+XENT-TPC-A_Warm,XENT-TPC-AI_Warm - Pillar Cover***,PTFE,1,NA,,PTFE Pillar + Cover
+XENT-TPC-A_Warm,XENT-TPC-AI_Warm***,PTFE,1,NA,,PTFE Pillar
+XENT-TPC-A_Warm,XENT-TPC-AI_Warm - Cathode_HVFT***,PTFE,1,NA,,PTFE Pillar HVFT Feed
+XENT-TPC-A_Warm,XENT-TPC-AX1_Warm***,PTFE,0,NA,,Field Shaping Ring Clip on
+XENT-TPC-A_Warm,XENT-TPC-AW1_Warm***,PTFE,0,NA,,Field Shaping Ring Clip on
+XENT-TPC-A_Warm,XENT-TPC-AV1_Warm***,PTFE,0,NA,,Field Shaping Ring Clip on
+XENT-TPC-A_Warm,XENT-TPC-A18_Warm***,PTFE,0,NA,,Pillar Cover attachment outside
+XENT-TPC-A_Warm,XENT-TPC-A19_Warm***,PTFE,0,NA,Check if Mesh?,Outer Pannel attachment PTFE to Cathode PTFE insulator
+XENT-TPC-A_Warm,XENT-TPC-A21_Warm***,PTFE,0,NA,,Outer Pannels
+XENT-TPC-A_Warm,XENT-TPC-A23_Warm***,PTFE,1,NA,,Outer Attachments on Pillar Cover
+XENT-TPC-A_Warm,MC-640-NA_91292A***,,0,NA,,Screws
+XENT-TPC-A_Warm,MC-535-NA_91292A***,,0,NA,,Screws
+XENT-TPC-A_Warm,93475A240_93475A***,,0,NA,,Washers
+XENT-TPC-A_Warm,XENT-TPC-A***,,0,NA,,Things bolts go through
+XENT-TPC-A_Warm,XENT-TPC-A**,,0,NA,,Things bolts go through
+XENT-TPC-A_Warm,91828A241_91828A264,,0,NA,,Mothers
+XENT-TPC-A_Warm,XENT-TPC-A***,PTFE,0,NA,,Things the field shaping rings went through (only on one segment)
+XENT-TPC_20250428,XENT-TPC-B_Warm,NA,0,NA,,Top PMT Array
+XENT-TPC-B_Warm,XENT-TPC-B1_Warm,PTFE,0,NA,,PMT PTFE holders (the ones half way up)
+XENT-TPC-B_Warm,XENT-TPC-B2_Warm,PTFE,1,NA,TODO Looks horrid,PMT PTFE Below Screen
+XENT-TPC-B_Warm,XENT-TPC-B3_Warm***,PTFE,0,NA,,Connector Pin from mid to bottom PTFE
+XENT-TPC-B_Warm,XENT-TPC-B4_Warm***,PTFE,0,NA,,Connector Pin from top to mid PTFE
+XENT-TPC-B_Warm,XENT-TPC-B5_Warm***,PTFE,0,NA,,Connector Pin washer PTFE
+XENT-TPC-B_Warm,XENT-TPC-B7_Warm***,PTFE,0,NA,,Top PTFE
+XENT-TPC-B_Warm,XENT-TPC-B8_Warm,PTFE,0,NA,,Top PTFE
+XENT-TPC-B_Warm,XENT-TPC-B9_Warm,PTFE,0,NA,,Top PTFE
+XENT-TPC-B_Warm,XENT-TPC-B15_Warm,PTFE,0,NA,,Top PTFE
+XENT-TPC-B_Warm,XENT-TPC-B14_Warm,PTFE,0,NA,,Top PTFE
+XENT-TPC-B_Warm,XENT-TPC-B13_Warm,PTFE,0,NA,,Top PTFE
+XENT-TPC-B_Warm,XENT-TPC-B10_Warm,PTFE,0,NA,,Some Outer Threading
+XENT-TPC-B_Warm,XENT-TPC-B01*_Warm,PTFE,0,NA,,Some Outer Threading
+XENT-TPC-B_Warm,XENT-TPC-B11_Warm_90928A319,PTFE,0,NA,,Central Screw
+XENT-TPC-B_Warm,R11410-**,PMT,0,NA,,PMT
+XENT-TPC-B_Warm,R11410-***,PMT,0,NA,,PMT
+XENT-TPC_20250428,XENT-TPC-C_Warm,NA,0,NA,,Bottom PMT Array
+XENT-TPC-C_Warm,XENT-TPC-B1_Warm,PTFE,0,NA,,PMT PTFE holders (the ones half way up)
+XENT-TPC-C_Warm,XENT-TPC-B2_Warm,PTFE,1,NA,,PMT PTFE Below Screen
+XENT-TPC-C_Warm,XENT-TPC-B3_Warm***,PTFE,0,NA,,Connector Pin from mid to bottom PTFE
+XENT-TPC-C_Warm,XENT-TPC-B4_Warm***,PTFE,0,NA,,Connector Pin from top to mid PTFE
+XENT-TPC-C_Warm,XENT-TPC-B5_Warm***,PTFE,0,NA,,Connector Pin washer PTFE
+XENT-TPC-C_Warm,XENT-TPC-B7_Warm***,PTFE,0,NA,,Top PTFE
+XENT-TPC-C_Warm,XENT-TPC-B8_Warm,PTFE,0,NA,,Top PTFE
+XENT-TPC-C_Warm,XENT-TPC-B9_Warm,PTFE,0,NA,,Top PTFE
+XENT-TPC-C_Warm,XENT-TPC-B15_Warm,PTFE,0,NA,,Top PTFE
+XENT-TPC-C_Warm,XENT-TPC-B14_Warm,PTFE,0,NA,,Top PTFE
+XENT-TPC-C_Warm,XENT-TPC-B13_Warm,PTFE,0,NA,,Top PTFE
+XENT-TPC-C_Warm,XENT-TPC-B10_Warm,PTFE,0,NA,,Some Outer Threading
+XENT-TPC-C_Warm,XENT-TPC-B01*_Warm,PTFE,0,NA,,Some Outer Threading
+XENT-TPC-C_Warm,XENT-TPC-B11_Warm_90928A319,PTFE,0,NA,,Central Screw
+XENT-TPC-C_Warm,R11410-**,PMT,0,NA,,PMT
+XENT-TPC-C_Warm,R11410-***,PMT,0,NA,,PMT
+XENT-TPC_20250428,XENT-TPC-D_New_Anode,NA,0,NA,,
+XENT-TPC-D_New_Anode,XENT-TPC-DL_Warm,Copper,0,Gate,,Gate
+XENT-TPC-D_New_Anode,XENT-TPC-D1_Warm***,PTFE,1,NA,Weird Circle,thin PTFE Pannel bell insulator
+XENT-TPC-D_New_Anode,XENT-TPC-D2_Warm,PTFE,1,NA,Weird Line,thick PTFE Pannel bell insulator
+XENT-TPC-D_New_Anode,XENT-TPC-D3_Warm***,PTFE,1,NA,Weird Circle,thick PTFE Pannel bell insulator
+XENT-TPC-D_New_Anode,XENT-TPC-HP_Warm***,PTFE,0,NA,,Bell Connector PTFE
+XENT-TPC-D_New_Anode,XENT-TPC-DN,Copper,0,Anode,,Anode
+XENT-TPC-D_New_Anode,XENT-TPC-D30_Warm***,PTFE,0,NA,,Gate Insulator thin
+XENT-TPC-D_New_Anode,XENT-TPC-D31_Warm***,PTFE,1,NA,Looks wrong?,Gate Insulator thick
+XENT-TPC-D_New_Anode,XENT-TPC-D32_Warm***,PTFE,0,NA,,Gate Insulator thick
+XENT-TPC-D_New_Anode,XENT-TPC-D33_Warm***,PTFE,1,NA,Looks wrong?,Gate Insulator thick
+XENT-TPC-D_New_Anode,XENT-TPC-D34_Warm***,PTFE,1,NA,Looks wrong?,Gate Insulator thick
+XENT-TPC-D_New_Anode,XENT-TPC-D35_Warm***,PTFE,1,NA,Looks wrong?,Gate Insulator thick
+XENT-TPC-D_New_Anode,XENT-TPC-D36_Warm***,PTFE,0,NA,,Gate Insulator thin
+XENT-TPC-D_New_Anode,XENT-TPC-D37_Warm***,PTFE,1,NA,Looks wrong?,Gate Insulator thin
+XENT-TPC-D_New_Anode,XENT-TPC-D38_Warm***,PTFE,0,NA,,Gate Insulator thin
+XENT-TPC-D_New_Anode,XENT-TPC-D39_Warm***,PTFE,0,NA,,Gate Insulator thin
+XENT-TPC-D_New_Anode,XENT-TPC-D40_Warm***,PTFE,0,NA,,Gate Insulator thin
+XENT-TPC-D_New_Anode,XENT-TPC-D41_Warm***,PTFE,0,NA,,Gate Insulator thin
+XENT-TPC-D_New_Anode,XENT-TPC-D42_Warm***,PTFE,0,NA,,Gate Insulator thin
+XENT-TPC-D_New_Anode,XENT-TPC-D43_Warm***,PTFE,0,NA,,Gate Insulator thin
+XENT-TPC-D_New_Anode,XENT-TPC-D44_Warm***,PTFE,0,NA,,Gate Insulator thin
+XENT-TPC-D_New_Anode,XENT-TPC-D45_Warm***,PTFE,1,NA,Looks wrong?,Gate Insulator thick
+XENT-TPC-D_New_Anode,XENT-TPC-DQ_New_Anode***,,0,NA,,Screws holding the thing together
+XENT-TPC-D_New_Anode,XENT-TPC-D46_Warm***,PTFE,0,NA,,thick PTFE Pannel bell insulator
+XENT-TPC-D_New_Anode,XENT-TPC-D47_Warm***,PTFE,0,NA,,thick PTFE Pannel bell insulator
+XENT-TPC-D_New_Anode,XENT-TPC-D48_Warm***,PTFE,0,NA,,thin PTFE Pannel bell insulator
+XENT-TPC-D_New_Anode,XENT-TPC-D49_Warm***,PTFE,0,NA,,thick PTFE Pannel bell insulator
+XENT-TPC-D_New_Anode,XENT-TPC-D50_Warm***,PTFE,0,NA,,thin PTFE Pannel bell insulator
+XENT-TPC-D_New_Anode,XENT-TPC-D51_Warm***,PTFE,0,NA,,thin PTFE Pannel bell insulator
+XENT-TPC-D_New_Anode,XENT-TPC-D52_Warm***,PTFE,0,NA,,thin PTFE Pannel bell insulator
+XENT-TPC-D_New_Anode,XENT-TPC-D53_Warm***,PTFE,0,NA,,Anode insulator thick
+XENT-TPC-D_New_Anode,XENT-TPC-D54_Warm***,PTFE,0,NA,,Anode insulator thin
+XENT-TPC-D_New_Anode,XENT-TPC-D55_Warm***,PTFE,0,NA,,Anode insulator thin
+XENT-TPC-D_New_Anode,XENT-TPC-D56_Warm***,PTFE,0,NA,,Anode insulator thick
+XENT-TPC-D_New_Anode,XENT-TPC-D57_Warm***,PTFE,0,NA,,Anode insulator thin
+XENT-TPC-D_New_Anode,XENT-TPC-D58_Warm***,PTFE,0,NA,,Anode insulator thin
+XENT-TPC-D_New_Anode,XENT-TPC-D59_Warm***,PTFE,0,NA,,Anode insulator thin
+XENT-TPC-D_New_Anode,XENT-TPC-D60_Warm,PTFE,0,NA,,Anode insulator thick
+XENT-TPC-D_New_Anode,XENT-TPC-D61_Warm,PTFE,0,NA,,Anode insulator thick
+XENT-TPC-D_New_Anode,XENT-TPC-D62_Warm,PTFE,0,NA,,Anode insulator thick
+XENT-TPC-D_New_Anode,XENT-TPC-D63_Warm,PTFE,0,NA,,Anode insulator thick
+XENT-TPC-D_New_Anode,XENT-TPC-D28_Warm,,0,NA,,Top of some (Copper?) pin
+XENT-TPC-D_New_Anode,XENT-TPC-D25_Warm,,0,NA,,PTFE around some (Copper?) pin
+XENT-TPC-D_New_Anode,XENT-TPC-D18_Warm,,0,NA,,PTFE around some (Copper?) pin
+XENT-TPC-D_New_Anode,XENT-TPC-D26_Warm,,0,NA,,Bottom of some (Copper?) pin
+XENT-TPC-D_New_Anode,XENT-TPC-D24_Warm,,0,NA,,some (Copper?) pin
+XENT-TPC-D_New_Anode,XENT-TPC-D28_Warm,,0,NA,,top of some (Copper?) pin
+XENT-TPC-D_New_Anode,XENT-TPC-DM_Warm,Copper,0,TopScreen,,
+XENT-TPC-D_New_Anode,XENT-TPC-DQ_New_Anode***,PTFE,0,NA,,Pins to hold assembly together
+XENT-TPC_20250428,XENT-TPC-E_Plan-B Warm,NA,0,NA,,Cathode stack
+XENT-TPC-E_Plan-B Warm,XENT-TPC-EN_Warm,Copper,0,BottomScreening,,Bottom Screening electrode
+XENT-TPC-E_Plan-B Warm,XENT-TPC-EA_Warm***,PTFE,0,NA,,Thin PTFE pannel screen to cathode
+XENT-TPC-E_Plan-B Warm,XENT-TPC-EB_Warm***,PTFE,0,NA,,Thick PTFE pannel screen to cathode
+XENT-TPC-E_Plan-B Warm,XENT-TPC-E13_Warm***,PTFE,0,NA,,Thick PTFE pannel screen to cathode
+XENT-TPC-E_Plan-B Warm,XENT-TPC-E14_Warm***,PTFE,0,NA,,Something connecting to previous Thick PTFE pannel
+XENT-TPC-E_Plan-B Warm,XENT-TPC-E5_Warm***,PTFE,0,NA,,Thin PTFE pannel screen to cathode
+XENT-TPC-E_Plan-B Warm,XENT-TPC-E6_Warm***,Copper,0,NA,,Copper? L shaped part below screening
+XENT-TPC-E_Plan-B Warm,XENT-TPC-EA_Warm***,PTFE,0,NA,,Thin PTFE pannel screen to cathode
+XENT-TPC-E_Plan-B Warm,XENT-TPC-E7_Warm***,PTFE,0,NA,,PTFE? Ring around Lower stack outside
+XENT-TPC-E_Plan-B Warm,XENT-TPC-E8_Warm,PTFE,0,NA,,PTFE? Ring around Lower stack outside
+XENT-TPC-E_Plan-B Warm,XENT-TPC-E20_Warm***,PTFE,0,NA,,Cathode Insulating Frame  Thick
+XENT-TPC-E_Plan-B Warm,XENT-TPC-E21_Warm,PTFE,0,NA,,Cathode Insulating Frame Thick
+XENT-TPC-E_Plan-B Warm,XENT-TPC-E22_Warm,PTFE,0,NA,,Cathode Insulating Frame Thick
+XENT-TPC-E_Plan-B Warm,XENT-TPC-E23_Warm,PTFE,0,NA,,Cathode Insulating Frame Thick
+XENT-TPC-E_Plan-B Warm,XENT-TPC-E24_Warm,PTFE,0,NA,,Cathode Insulating Frame outer holder Thick
+XENT-TPC-E_Plan-B Warm,XENT-TPC-E25_Cold LXe***,PTFE,0,NA,,Cathode Insulating frame outer attachment piece
+XENT-TPC-E_Plan-B Warm,XENT-TPC-EO_Plan-B Cathode,Copper,0,Cathode,,Cathode
+XENT-TPC_20250428,XENT-TPC-F055,NA,0,NA,,Bell
+XENT-TPC-F055,XENT-TPC-F,Copper,0,Bell,,Top Plate
+XENT-TPC-F055,XENT-TPC-F001,Copper,0,Bell,,Outer Ring Upper
+XENT-TPC-F055,XENT-TPC-F002,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F003,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F004,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F005,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F006,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F007,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F008,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F009,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F010,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F011,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F012,Copper,0,Bell,,Outer Ring Lower
+XENT-TPC-F055,XENT-TPC-F013,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F014,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F015,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F016,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F017,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F018,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F019,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F020,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F021,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F022,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F023,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F024,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F025,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F026,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F027,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F028,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F029,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F030,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F031,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F032,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F033,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F034,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F035,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F036,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F037,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F038,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F039,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F040,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F051,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F052,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F053,Copper,0,NA,,Feedthrough
+XENT-TPC-F055,XENT-TPC-F054,Copper,0,NA,,Feedthrough
+XENT-TPC_20250428,XENT-TPC-G_Warm,NA,0,NA,,"Outer Cryostat Wont need this either, will slice once and select inner bounds to make the pts list"
+XENT-TPC_20250428,XENT-TPC-H_Warm,NA,0,NA,,piping not doing this one

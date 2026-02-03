@@ -40,14 +40,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     mesa-utils mesa-common-dev freeglut3-dev \
     libfontconfig1-dev libpng-dev libsdl2-dev libglm-dev \
     x11-apps \
+    # Debugging MPI with xterm
+    xterm \
     && ln -sf $(which python3) /usr/local/bin/python \
     && locale-gen en_US.UTF-8 \
     && rm -rf /var/lib/apt/lists/*
 
+
+# Python packages
+COPY requirements.txt /tmp/requirements.txt
+RUN python3 -m pip install --upgrade pip setuptools wheel && \
+    pip install -r /tmp/requirements.txt
+
 # Create user
 ARG USER_ID=1000
 ARG GROUP_ID=100
-
 
 RUN group_name=$(getent group $GROUP_ID | cut -d: -f1) \
     && if [ -z "$group_name" ]; then \
@@ -57,18 +64,9 @@ RUN group_name=$(getent group $GROUP_ID | cut -d: -f1) \
        fi \
     && useradd -m -s /bin/bash -u $USER_ID -g $GROUP_ID felix
 
-
 # Switch to felix
 USER felix
 WORKDIR /home/felix
-
-# Python packages
-COPY --chown=felix:users requirements.txt /home/felix/requirements.txt
-RUN python3 -m pip install --upgrade pip setuptools wheel && \
-    pip install --user -r requirements.txt
-ENV PATH=/home/felix/.local/bin:${PATH}
-
-
 
 # ====== VTK Toolchain for plotting and paraview -- very heavy to compile ==========
 ARG VTK_VERSION=v9.5.0
@@ -218,7 +216,7 @@ ENV LIBRARY_PATH=/home/felix/mfem-install/lib:${LIBRARY_PATH}
 RUN pip install --user mfem
 
 # GLvis
-RUN git clone --depth 1 https://github.com/glvis/glvis.git /home/felix/glvis && \
+RUN git clone --depth 1 --branch v4.4 https://github.com/glvis/glvis.git /home/felix/glvis && \
     cd /home/felix/glvis && \
     make MFEM_DIR=/home/felix/mfem/build && \
     mkdir -p /home/felix/.local/bin && \

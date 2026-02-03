@@ -1,31 +1,42 @@
 schema_version: 1
 geometry_id: SR3XENONnT
 mesh:
-  path: /home/felix/work/geometry/mesh/mesh22.msh
-  geometry: SR3
+  path: /work/geometry/mesh/mesh22.msh
+  geometry: createGeometryFromCAD/out/slices_py/slice_030 #SR3
+  voltages: SR3
+  liquid_level: 0.004
   autoappend: true
-save_path: /home/felix/work/sim_results
+  NetgenParams:
+    preset: VeryFine
+    maxSize: 0.15008
+    minSize: 0
+    growthRate: 0.2
+    UseSurfaceCurvature: 1
+    NBSegmentsPerEdge: 2
+    NBSegmentsPerRadius: 2
+    UseChordalError: 0
+    ChordalErrorValue: 1
+    AQ_ElemSizeWeight: 0.5
+    AQ_UseDelauney: 1
+    AQ_CheckOverlapping: 1
+    AQ_CheckChartBoundary: 1
+    AQ_FuseEdges: 1
+    Opt_QuadAllowed: false
+    Opt_SecondOrder: 0
+    Opt_Optimize: true
+save_path: /work/sim_results
 delete_files_present: true
 debug:
   debug: true
+  StopAfterSketh: true
   dry_run: false
   printBoundaryConditions: false
   printHypreWarnings: false
-  dumpdata: true
-  debug_single_seed: false
+  dumpdata: false
 compute:
-  mpi:
-    enabled: false
-    ranks: auto
-    repartition_after_refine: true
   threads:
-    enabled: true
     num: -1
     affinity: scatter
-  device:
-    type: none
-    id: auto
-    per_rank: 1
 optimize:
   enabled: false
   print_results: true
@@ -40,20 +51,26 @@ optimize:
   z_min: -1.5025
   z_max: 0.004
   trace_params:
-    method: RK23
-    c_step: 0.5
-    c_min_factor: 0.1
-    c_max_factor: 1.0
-    tol_rel: 1e-2
-    adapt_shrink: 0.5
-    adapt_grow: 1.1
+    provider: VTK
+    method: RK4
+    c_step: 10
     geom_tol: 1e-6
-    max_steps: 1000000
+    max_traversals: 4
   civ_params:
-    method: InformedSweep
-    num_seed_elements: 32
-    n_slices: 1
-    min_col_pos: 0.001
+    method: RandomSample
+    num_seed_elements: 20
+    nr: 42
+    nz: 126
+    max_levels: 2
+    block_size: 64
+    # Row nr = 42, nz = 126, block_size = 64
+    # CIV =  
+    # Adaptive nr = 25, nz = 75, max_levels = 2
+    # C
+    # Random
+    # CIV = 0.0411377, 346155 ms, 8192 seeds
+    # Random : 81920 seeds (truth)
+    # 
   fieldSpread_params:
     TopBottomDist: 0.14
     BottomPercentile: 0.5
@@ -81,18 +98,19 @@ solver:
   axisymmetric: true
   order: 3
   assembly_mode: partial
-  atol: 1e-50
-  rtol: 0.0
+  atol: 1e-14
+  rtol: 1e-30
   maxiter: 100000
   printlevel: 0
-  mesh_save_path: simulation_mesh.msh
-  V_solution_path: solution_V.gf
-  Emag_solution_path: solution_Emag.gf
 plotting:
   show_mesh: false
   mesh_edge_width: 0.1
   img_width: 2160
   img_height: 3840
+interpolate:
+  Nx: 768
+  Ny: 2560
+  H1_project: true
 materials:
   GXe:
     attr_id: 1
@@ -102,7 +120,7 @@ materials:
     epsilon_r: 1.95
   PTFE:
     attr_id: 3
-    epsilon_r: 2.1 
+    epsilon_r: 2.1
 boundaries:
   PTFE_Wall_Charge:
     bdr_id: 147
@@ -110,8 +128,12 @@ boundaries:
     depth_dependent: true
     z_bot: -1.5015999999999998
     z_top: -0.0008
-    value_bot: -1000
-    value_top: -5000
+    value_bot: 0 #-1.0e-07
+    value_top: 0 #-5.0e-07
+  BC_r0:
+    bdr_id: 149
+    type: neumann
+    value: 0
   BC_TopScreeningElectrode:
     bdr_id: 6
     type: dirichlet
@@ -155,27 +177,27 @@ boundaries:
   BC_FieldShapingRings1:
     bdr_id: 78
     type: dirichlet
-    value: -1158.845503242178
+    value: -1158.8455032421784
   BC_FieldShapingRings2:
     bdr_id: 77
     type: dirichlet
-    value: -1367.6910064843564
+    value: -1367.6910064843566
   BC_FieldShapingRings3:
     bdr_id: 76
     type: dirichlet
-    value: -1576.5365097265346
+    value: -1576.536509726535
   BC_FieldShapingRings4:
     bdr_id: 75
     type: dirichlet
-    value: -1785.3820129687128
+    value: -1785.3820129687135
   BC_FieldShapingRings5:
     bdr_id: 74
     type: dirichlet
-    value: -1995.0465181843908
+    value: -1995.0465181843915
   BC_FieldShapingRings6:
     bdr_id: 73
     type: dirichlet
-    value: -2414.3755286157475
+    value: -2414.375528615748
   BC_FieldShapingRings7:
     bdr_id: 72
     type: dirichlet
@@ -239,191 +261,191 @@ boundaries:
   BC_FieldShapingRings22:
     bdr_id: 57
     type: dirichlet
-    value: -9123.63969551744
+    value: -9123.639695517442
   BC_FieldShapingRings23:
     bdr_id: 56
     type: dirichlet
-    value: -9542.968705948791
+    value: -9542.968705948795
   BC_FieldShapingRings24:
     bdr_id: 55
     type: dirichlet
-    value: -9962.297716380144
+    value: -9962.297716380148
   BC_FieldShapingRings25:
     bdr_id: 54
     type: dirichlet
-    value: -10381.626726811495
+    value: -10381.626726811499
   BC_FieldShapingRings26:
     bdr_id: 53
     type: dirichlet
-    value: -10800.95573724285
+    value: -10800.955737242854
   BC_FieldShapingRings27:
     bdr_id: 52
     type: dirichlet
-    value: -11220.284747674204
+    value: -11220.284747674206
   BC_FieldShapingRings28:
     bdr_id: 51
     type: dirichlet
-    value: -11639.613758105555
+    value: -11639.613758105557
   BC_FieldShapingRings29:
     bdr_id: 50
     type: dirichlet
-    value: -12058.942768536906
+    value: -12058.94276853691
   BC_FieldShapingRings30:
     bdr_id: 49
     type: dirichlet
-    value: -12478.27177896826
+    value: -12478.271778968263
   BC_FieldShapingRings31:
     bdr_id: 48
     type: dirichlet
-    value: -12897.600789399614
+    value: -12897.60078939962
   BC_FieldShapingRings32:
     bdr_id: 47
     type: dirichlet
-    value: -13316.929799830968
+    value: -13316.929799830974
   BC_FieldShapingRings33:
     bdr_id: 46
     type: dirichlet
-    value: -13736.258810262325
+    value: -13736.25881026233
   BC_FieldShapingRings34:
     bdr_id: 45
     type: dirichlet
-    value: -14155.58782069368
+    value: -14155.587820693685
   BC_FieldShapingRings35:
     bdr_id: 44
     type: dirichlet
-    value: -14574.916831125034
+    value: -14574.916831125038
   BC_FieldShapingRings36:
     bdr_id: 43
     type: dirichlet
-    value: -14994.245841556389
+    value: -14994.245841556392
   BC_FieldShapingRings37:
     bdr_id: 42
     type: dirichlet
-    value: -15413.57485198774
+    value: -15413.574851987745
   BC_FieldShapingRings38:
     bdr_id: 41
     type: dirichlet
-    value: -15832.90386241909
+    value: -15832.903862419098
   BC_FieldShapingRings39:
     bdr_id: 40
     type: dirichlet
-    value: -16252.232872850442
+    value: -16252.23287285045
   BC_FieldShapingRings40:
     bdr_id: 39
     type: dirichlet
-    value: -16671.561883281793
+    value: -16671.561883281804
   BC_FieldShapingRings41:
     bdr_id: 38
     type: dirichlet
-    value: -17090.890893713142
+    value: -17090.890893713153
   BC_FieldShapingRings42:
     bdr_id: 37
     type: dirichlet
-    value: -17510.219904144487
+    value: -17510.2199041445
   BC_FieldShapingRings43:
     bdr_id: 36
     type: dirichlet
-    value: -17929.548914575833
+    value: -17929.548914575844
   BC_FieldShapingRings44:
     bdr_id: 35
     type: dirichlet
-    value: -18348.877925007182
+    value: -18348.877925007193
   BC_FieldShapingRings45:
     bdr_id: 34
     type: dirichlet
-    value: -18768.206935438528
+    value: -18768.20693543854
   BC_FieldShapingRings46:
     bdr_id: 33
     type: dirichlet
-    value: -19187.535945869873
+    value: -19187.53594586988
   BC_FieldShapingRings47:
     bdr_id: 32
     type: dirichlet
-    value: -19606.86495630122
+    value: -19606.864956301226
   BC_FieldShapingRings48:
     bdr_id: 31
     type: dirichlet
-    value: -20026.193966732568
+    value: -20026.19396673257
   BC_FieldShapingRings49:
     bdr_id: 30
     type: dirichlet
-    value: -20445.52297716391
+    value: -20445.522977163917
   BC_FieldShapingRings50:
     bdr_id: 29
     type: dirichlet
-    value: -20864.851987595255
+    value: -20864.85198759526
   BC_FieldShapingRings51:
     bdr_id: 28
     type: dirichlet
-    value: -21284.180998026604
+    value: -21284.180998026608
   BC_FieldShapingRings52:
     bdr_id: 27
     type: dirichlet
-    value: -21703.51000845795
+    value: -21703.510008457954
   BC_FieldShapingRings53:
     bdr_id: 26
     type: dirichlet
-    value: -22122.8390188893
+    value: -22122.839018889303
   BC_FieldShapingRings54:
     bdr_id: 25
     type: dirichlet
-    value: -22542.16802932065
+    value: -22542.168029320652
   BC_FieldShapingRings55:
     bdr_id: 24
     type: dirichlet
-    value: -22961.497039751997
+    value: -22961.497039752
   BC_FieldShapingRings56:
     bdr_id: 23
     type: dirichlet
-    value: -23380.826050183347
+    value: -23380.82605018335
   BC_FieldShapingRings57:
     bdr_id: 22
     type: dirichlet
-    value: -23800.1550606147
+    value: -23800.155060614703
   BC_FieldShapingRings58:
     bdr_id: 21
     type: dirichlet
-    value: -24219.484071046045
+    value: -24219.484071046052
   BC_FieldShapingRings59:
     bdr_id: 20
     type: dirichlet
-    value: -24638.813081477394
+    value: -24638.813081477405
   BC_FieldShapingRings60:
     bdr_id: 19
     type: dirichlet
-    value: -25058.142091908747
+    value: -25058.142091908758
   BC_FieldShapingRings61:
     bdr_id: 18
     type: dirichlet
-    value: -25477.4711023401
+    value: -25477.471102340107
   BC_FieldShapingRings62:
     bdr_id: 17
     type: dirichlet
-    value: -25896.80011277145
+    value: -25896.800112771452
   BC_FieldShapingRings63:
     bdr_id: 16
     type: dirichlet
-    value: -26316.129123202794
+    value: -26316.129123202798
   BC_FieldShapingRings64:
     bdr_id: 15
     type: dirichlet
-    value: -26735.45813363414
+    value: -26735.458133634143
   BC_FieldShapingRings65:
     bdr_id: 14
     type: dirichlet
-    value: -27154.787144065478
+    value: -27154.787144065485
   BC_FieldShapingRings66:
     bdr_id: 13
     type: dirichlet
-    value: -27574.11615449682
+    value: -27574.116154496827
   BC_FieldShapingRings67:
     bdr_id: 12
     type: dirichlet
-    value: -27993.445164928162
+    value: -27993.44516492817
   BC_FieldShapingRings68:
     bdr_id: 11
     type: dirichlet
-    value: -28412.774175359504
+    value: -28412.77417535951
   BC_FieldShapingRings69:
     bdr_id: 10
     type: dirichlet
@@ -435,259 +457,259 @@ boundaries:
   BC_FieldShapingGuard0:
     bdr_id: 144
     type: dirichlet
-    value: -1993.4085142373915
+    value: -1993.4085142373922
   BC_FieldShapingGuard1:
     bdr_id: 143
     type: dirichlet
-    value: -2409.4615167747475
+    value: -2409.4615167747484
   BC_FieldShapingGuard2:
     bdr_id: 142
     type: dirichlet
-    value: -2825.514519312103
+    value: -2825.5145193121043
   BC_FieldShapingGuard3:
     bdr_id: 141
     type: dirichlet
-    value: -3241.5675218494594
+    value: -3241.5675218494607
   BC_FieldShapingGuard4:
     bdr_id: 140
     type: dirichlet
-    value: -3657.6205243868158
+    value: -3657.620524386817
   BC_FieldShapingGuard5:
     bdr_id: 139
     type: dirichlet
-    value: -4073.6735269241717
+    value: -4073.6735269241735
   BC_FieldShapingGuard6:
     bdr_id: 138
     type: dirichlet
-    value: -4489.726529461528
+    value: -4489.72652946153
   BC_FieldShapingGuard7:
     bdr_id: 137
     type: dirichlet
-    value: -4905.779531998884
+    value: -4905.779531998886
   BC_FieldShapingGuard8:
     bdr_id: 136
     type: dirichlet
-    value: -5321.832534536241
+    value: -5321.832534536245
   BC_FieldShapingGuard9:
     bdr_id: 135
     type: dirichlet
-    value: -5737.885537073597
+    value: -5737.885537073602
   BC_FieldShapingGuard10:
     bdr_id: 134
     type: dirichlet
-    value: -6153.938539610954
+    value: -6153.938539610959
   BC_FieldShapingGuard11:
     bdr_id: 133
     type: dirichlet
-    value: -6569.99154214831
+    value: -6569.9915421483165
   BC_FieldShapingGuard12:
     bdr_id: 132
     type: dirichlet
-    value: -6986.0445446856675
+    value: -6986.044544685676
   BC_FieldShapingGuard13:
     bdr_id: 131
     type: dirichlet
-    value: -7402.097547223025
+    value: -7402.097547223033
   BC_FieldShapingGuard14:
     bdr_id: 130
     type: dirichlet
-    value: -7818.150549760381
+    value: -7818.150549760389
   BC_FieldShapingGuard15:
     bdr_id: 129
     type: dirichlet
-    value: -8234.203552297737
+    value: -8234.203552297746
   BC_FieldShapingGuard16:
     bdr_id: 128
     type: dirichlet
-    value: -8650.256554835092
+    value: -8650.256554835103
   BC_FieldShapingGuard17:
     bdr_id: 127
     type: dirichlet
-    value: -9066.30955737245
+    value: -9066.30955737246
   BC_FieldShapingGuard18:
     bdr_id: 126
     type: dirichlet
-    value: -9482.362559909807
+    value: -9482.362559909816
   BC_FieldShapingGuard19:
     bdr_id: 125
     type: dirichlet
-    value: -9898.415562447164
+    value: -9898.415562447173
   BC_FieldShapingGuard20:
     bdr_id: 124
     type: dirichlet
-    value: -10314.46856498452
+    value: -10314.468564984529
   BC_FieldShapingGuard21:
     bdr_id: 123
     type: dirichlet
-    value: -10730.521567521875
+    value: -10730.521567521886
   BC_FieldShapingGuard22:
     bdr_id: 122
     type: dirichlet
-    value: -11146.57457005923
+    value: -11146.574570059243
   BC_FieldShapingGuard23:
     bdr_id: 121
     type: dirichlet
-    value: -11562.627572596588
+    value: -11562.6275725966
   BC_FieldShapingGuard24:
     bdr_id: 120
     type: dirichlet
-    value: -11978.680575133945
+    value: -11978.680575133958
   BC_FieldShapingGuard25:
     bdr_id: 119
     type: dirichlet
-    value: -12394.733577671304
+    value: -12394.733577671317
   BC_FieldShapingGuard26:
     bdr_id: 118
     type: dirichlet
-    value: -12810.786580208662
+    value: -12810.786580208674
   BC_FieldShapingGuard27:
     bdr_id: 117
     type: dirichlet
-    value: -13226.839582746019
+    value: -13226.839582746032
   BC_FieldShapingGuard28:
     bdr_id: 116
     type: dirichlet
-    value: -13642.892585283376
+    value: -13642.892585283389
   BC_FieldShapingGuard29:
     bdr_id: 115
     type: dirichlet
-    value: -14058.945587820735
+    value: -14058.945587820748
   BC_FieldShapingGuard30:
     bdr_id: 114
     type: dirichlet
-    value: -14474.998590358095
+    value: -14474.998590358107
   BC_FieldShapingGuard31:
     bdr_id: 113
     type: dirichlet
-    value: -14891.051592895454
+    value: -14891.051592895465
   BC_FieldShapingGuard32:
     bdr_id: 112
     type: dirichlet
-    value: -15307.104595432811
+    value: -15307.104595432824
   BC_FieldShapingGuard33:
     bdr_id: 111
     type: dirichlet
-    value: -15723.15759797017
+    value: -15723.157597970181
   BC_FieldShapingGuard34:
     bdr_id: 110
     type: dirichlet
-    value: -16139.210600507527
+    value: -16139.210600507538
   BC_FieldShapingGuard35:
     bdr_id: 109
     type: dirichlet
-    value: -16555.26360304489
+    value: -16555.2636030449
   BC_FieldShapingGuard36:
     bdr_id: 108
     type: dirichlet
-    value: -16971.316605582248
+    value: -16971.31660558226
   BC_FieldShapingGuard37:
     bdr_id: 107
     type: dirichlet
-    value: -17387.36960811961
+    value: -17387.36960811962
   BC_FieldShapingGuard38:
     bdr_id: 106
     type: dirichlet
-    value: -17803.422610656973
+    value: -17803.422610656984
   BC_FieldShapingGuard39:
     bdr_id: 105
     type: dirichlet
-    value: -18219.475613194336
+    value: -18219.475613194343
   BC_FieldShapingGuard40:
     bdr_id: 104
     type: dirichlet
-    value: -18635.5286157317
+    value: -18635.52861573171
   BC_FieldShapingGuard41:
     bdr_id: 103
     type: dirichlet
-    value: -19051.581618269058
+    value: -19051.581618269072
   BC_FieldShapingGuard42:
     bdr_id: 102
     type: dirichlet
-    value: -19467.634620806417
+    value: -19467.63462080643
   BC_FieldShapingGuard43:
     bdr_id: 101
     type: dirichlet
-    value: -19883.68762334378
+    value: -19883.68762334379
   BC_FieldShapingGuard44:
     bdr_id: 100
     type: dirichlet
-    value: -20299.74062588114
+    value: -20299.74062588115
   BC_FieldShapingGuard45:
     bdr_id: 99
     type: dirichlet
-    value: -20715.7936284185
+    value: -20715.79362841851
   BC_FieldShapingGuard46:
     bdr_id: 98
     type: dirichlet
-    value: -21131.846630955857
+    value: -21131.846630955864
   BC_FieldShapingGuard47:
     bdr_id: 97
     type: dirichlet
-    value: -21547.899633493216
+    value: -21547.899633493224
   BC_FieldShapingGuard48:
     bdr_id: 96
     type: dirichlet
-    value: -21963.952636030575
+    value: -21963.95263603058
   BC_FieldShapingGuard49:
     bdr_id: 95
     type: dirichlet
-    value: -22380.005638567927
+    value: -22380.005638567935
   BC_FieldShapingGuard50:
     bdr_id: 94
     type: dirichlet
-    value: -22796.058641105283
+    value: -22796.058641105286
   BC_FieldShapingGuard51:
     bdr_id: 93
     type: dirichlet
-    value: -23212.111643642635
+    value: -23212.111643642642
   BC_FieldShapingGuard52:
     bdr_id: 92
     type: dirichlet
-    value: -23628.164646179986
+    value: -23628.164646179994
   BC_FieldShapingGuard53:
     bdr_id: 91
     type: dirichlet
-    value: -24044.217648717342
+    value: -24044.21764871735
   BC_FieldShapingGuard54:
     bdr_id: 90
     type: dirichlet
-    value: -24460.270651254697
+    value: -24460.270651254705
   BC_FieldShapingGuard55:
     bdr_id: 89
     type: dirichlet
-    value: -24876.323653792057
+    value: -24876.32365379206
   BC_FieldShapingGuard56:
     bdr_id: 88
     type: dirichlet
-    value: -25292.37665632941
+    value: -25292.376656329416
   BC_FieldShapingGuard57:
     bdr_id: 87
     type: dirichlet
-    value: -25708.429658866757
+    value: -25708.429658866764
   BC_FieldShapingGuard58:
     bdr_id: 86
     type: dirichlet
-    value: -26124.4826614041
+    value: -26124.48266140411
   BC_FieldShapingGuard59:
     bdr_id: 85
     type: dirichlet
-    value: -26540.535663941446
+    value: -26540.535663941457
   BC_FieldShapingGuard60:
     bdr_id: 84
     type: dirichlet
-    value: -26956.588666478794
+    value: -26956.588666478805
   BC_FieldShapingGuard61:
     bdr_id: 83
     type: dirichlet
-    value: -27372.641669016142
+    value: -27372.64166901615
   BC_FieldShapingGuard62:
     bdr_id: 82
     type: dirichlet
-    value: -27788.694671553487
+    value: -27788.694671553498
   BC_FieldShapingGuard63:
     bdr_id: 81
     type: dirichlet
-    value: -28204.74767409083
+    value: -28204.747674090842
 fieldcage_network:
   enabled: true
   nodes:

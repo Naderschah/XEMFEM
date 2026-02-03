@@ -62,22 +62,17 @@ std::filesystem::path to_absolute(const std::filesystem::path& p) {
 void print_usage(const char* prog) {
   std::cerr
     << "Usage:\n"
-    << "  " << prog << " [sim|plot|metrics] [options]\n\n"
+    << "  " << prog << " [sim|plot|metrics|interpolate] [options]\n\n"
     << "Notes:\n"
     << "  - If no subcommand is provided, 'sim' is assumed.\n\n"
     << "Subcommands:\n"
     << "  sim          Run simulation (single/sweep/opt determined by config)\n"
     << "  metrics      Compute optimization metrics only (uses config)\n"
-    << "  plot         Generate plots (forwards args to plotter)\n\n"
+    << "  plot         Generate plots (forwards args to plotter)\n"
     << "  interpolate  Generate Grid interpolation of mesh output\n\n"
     << "Common options (sim/metrics):\n"
     << "  -c, --config   Path to config file\n"
-    << "  -h, --help     Show this help\n\n"
-    << "Examples:\n"
-    << "  " << prog << " -c ./config.yaml\n"
-    << "  " << prog << " sim -c ./config.yaml\n"
-    << "  " << prog << " metrics -c ./config.yaml\n"
-    << "  " << prog << " plot --help\n";
+    << "  -h, --help     Show this help\n\n";
 }
 
 } // namespace cli
