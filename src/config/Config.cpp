@@ -555,7 +555,19 @@ static void parse_boundary_params(Config &cfg, const YAML::Node &root)
 }
 static void verify_cross_dependence(Config cfg)
 {
-    // TODO Err on MPI > 1 & save_paths or fix the CSV saving and merging of paths
+    // Verify compute block 
+    int world_size = 0;
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
+    bool mpi_enabled = (world_size > 1);
+    bool metrics_path = (cfg.run_mode == "metrics") || ((cfg.run_mode == "sim") && cfg.optimize.enabled);
+
+    if (cfg.compute.threads.enabled && mpi_enabled)
+        throw std::runtime_error("MPI and Threading via OpenMP simulataneously is not supported, use as many MPI nodes as you intend to use threads");
+
+    // Currently dont support pathline saving for multiple MPI nodes TODO Any reason to support it?
+    if (mpi_enabled && metrics_path && cfg.debug.dumpdata) 
+        throw std::runtime_error("Saving Pathlines is not supported for more than 1 MPI node");
 
 }
 
@@ -563,9 +575,7 @@ static void verify_cross_dependence(Config cfg)
 // Internal common parser
 // -----------------------------------------------------------------------------
 namespace {
-Config LoadFromNode(const YAML::Node &root) {
-  Config cfg;
-
+Config LoadFromNode(const YAML::Node &root, Config cfg) {
   cfg.schema_version = root["schema_version"].as<int>(1);
   cfg.geometry_id    = root["geometry_id"].as<std::string>("");
 
@@ -601,8 +611,18 @@ Config LoadFromNode(const YAML::Node &root) {
 
   return cfg;
 }
+Config LoadFromNode(const YAML::Node &root, std::string run_mode) {
+    Config cfg;
+    cfg.run_mode = run_mode;
+    cfg = LoadFromNode(root, cfg);
+    return cfg;
+}
+Config LoadFromNode(const YAML::Node &root) {
+    Config cfg;
+    cfg = LoadFromNode(root, cfg);
+    return cfg;
+}
 } // namespace
-
 
 // -----------------------------------------------------------------------------
 // Public loaders
@@ -610,6 +630,10 @@ Config LoadFromNode(const YAML::Node &root) {
 Config Config::Load(const std::string &path) {
     YAML::Node root = YAML::LoadFile(path);
     return LoadFromNode(root);
+}
+Config Config::Load(const std::string &path, std::string run_mode) {
+    YAML::Node root = YAML::LoadFile(path);
+    return LoadFromNode(root, run_mode);
 }
 
 Config Config::LoadFromString(const std::string &yaml_str) {

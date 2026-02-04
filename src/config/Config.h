@@ -2,6 +2,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <mpi.h>
 
 // FIXME REMOVE THE DEFAULTS
 // TODO Remove defaults - fix documentation  
@@ -252,8 +253,12 @@ struct Config {
     // Interpolation settings
     Interpolate interp;
 
+    // Internal for runtime config checking
+    std::string run_mode = "sim";
+
     // Load from path
     static Config Load(const std::string& path);
+    static Config Load(const std::string &path, std::string run_mode);
     // embed config in geometry binary
     static Config LoadFromString(const std::string& yaml_str);
 };

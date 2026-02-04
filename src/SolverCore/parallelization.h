@@ -6,6 +6,6 @@
 
 namespace parallel
 {
-    void init_environment(Config &cfg,
-                          int &argc, char **&argv);
+    void init_environment(Config &cfg);
+    void init_mpi(int &argc, char **&argv);
 } // namespace parallel

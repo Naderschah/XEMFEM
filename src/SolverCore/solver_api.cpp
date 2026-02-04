@@ -64,8 +64,8 @@ SimulationResult run_simulation(std::shared_ptr<Config> cfg,
   InitFieldPostprocessor(*pfes);
 
   // 3) Allocate output fields on the right spaces
-  std::unique_ptr<mfem::GridFunction> E    = CreateE();  
-  std::unique_ptr<mfem::GridFunction> Emag = CreateEmag();  
+  std::unique_ptr<mfem::ParGridFunction> E    = CreateE();  
+  std::unique_ptr<mfem::ParGridFunction> Emag = CreateEmag();  
 
   // 4) Compute E and |E|
   ComputeElectricField(*V, *E, /*scale=*/-1.0); // V/m
@@ -88,58 +88,54 @@ SimulationResult run_simulation(std::shared_ptr<Config> cfg,
 
 void save_results(const SimulationResult &result, const std::filesystem::path &root_path)
 {
+    int rank = 0;
+    MPI_Comm comm = result.mesh->GetComm();
+    MPI_Comm_rank(comm, &rank);
     // --- Create directory structure ---
     std::error_code ec;
+    if (rank == 0){
     std::filesystem::create_directories(root_path, ec);
     if (ec) {
         std::cerr << "Warning: could not create output directory "
                   << root_path << " : " << ec.message() << "\n";
-    }
+    }}
+    MPI_Barrier(comm);
 
     // --- Save E field TODO Add flag in config ---
     {
-        std::filesystem::path EComponentPath = root_path / "E";
-        SaveEComponents(*result.E, EComponentPath.string());  // E_ex.gf, E_ey.gf, ...
-
-        std::ofstream ofs(root_path / "Emag.gf");
-        if (!ofs) {
-            std::cerr << "Warning: could not open Emag.gf in " << root_path << "\n";
-        } else {
-            result.Emag->Save(ofs);
-        }
+        result.E->SaveAsSerial((root_path / "E.gf").c_str(), 16, 0);
+        result.Emag->SaveAsSerial((root_path / "Emag.gf").c_str(), 16, 0);
     }
 
-    // --- Save mesh + V as serial outputs ---
+    // Save mesh as serial (collective; rank 0 writes)
     std::filesystem::path mesh_path = root_path / "simulation_mesh.msh";
-    std::ofstream mesh_out(mesh_path);
-    if (!mesh_out) {
-        std::cerr << "Warning: could not open mesh file " << mesh_path << "\n";
-    } else {
-        result.mesh->PrintAsSerial(mesh_out);
-    }
-    std::filesystem::path V_path = root_path / "V.gf";
-    result.V->SaveAsSerial(V_path.c_str(), /*precision=*/16, /*save_rank=*/0);
+    std::ofstream mesh_out;
+    if (rank == 0) { mesh_out.open(mesh_path); }
+
+    int ok = 1;
+    if (rank == 0) { ok = mesh_out.is_open() ? 1 : 0; }
+    MPI_Bcast(&ok, 1, MPI_INT, 0, comm);
+    MFEM_VERIFY(ok == 1, "Could not open mesh file on rank 0.");
+
+    result.mesh->PrintAsSerial(mesh_out);
+    
+    result.V->SaveAsSerial((root_path / "V.gf").c_str(), 16, 0);
 
     // ---------- ParaView output ----------
     // Collection name appears in the .pvd file
-    std::string collection_name = "Simulation";
-    auto *pvdc = new ParaViewDataCollection(collection_name, result.mesh.get());
+    mfem::ParaViewDataCollection pvdc("Simulation", result.mesh.get());
+    pvdc.SetPrefixPath(root_path.string());
 
-    // Write under root_path (directory will be created if needed)
-    pvdc->SetPrefixPath(root_path.string());
+    pvdc.RegisterField("V",    result.V.get());
+    pvdc.RegisterField("E",    result.E.get());
+    pvdc.RegisterField("Emag", result.Emag.get());
 
-    // Register fields (they can be H1, L2, etc., as long as they live on result.mesh)
-    pvdc->RegisterField("V", result.V.get());       // H1 scalar
-    pvdc->RegisterField("E", result.E.get());       // L2 vector (components in the GF)
-    pvdc->RegisterField("Emag", result.Emag.get()); // scalar magnitude
-
-    // Optional: control output quality
     int order = result.V->FESpace()->GetOrder(0);
-    pvdc->SetLevelsOfDetail(order);
-    pvdc->SetDataFormat(VTKFormat::BINARY);
-    pvdc->SetHighOrderOutput(true);
+    pvdc.SetLevelsOfDetail(order);
+    pvdc.SetDataFormat(mfem::VTKFormat::BINARY);
+    pvdc.SetHighOrderOutput(true);
 
-    pvdc->Save();
+    pvdc.Save(); // call on all ranks
 }
 namespace
 {
@@ -268,11 +264,11 @@ SimulationResult load_results(const Config &cfg,
     try
     {
         ElectricFieldPostprocessor efpp(*result.pfes);
-        auto E = efpp.MakeE();
+        std::unique_ptr<ParGridFunction> E = efpp.MakeE();
         efpp.LoadE(*E, (root_path / "E").string());
         result.E = std::move(E);
 
-        auto Emag = efpp.MakeEmag();
+        std::unique_ptr<ParGridFunction> Emag = efpp.MakeEmag();
         efpp.ComputeFieldMagnitude(*result.E, *Emag);
         result.Emag = std::move(Emag);
     }
@@ -294,12 +290,16 @@ std::string run_one(const Config &cfg,
                            const std::vector<std::pair<std::string, std::string>> &active_params,
                            std::size_t run_index) // 0-based
 {
+    int rank = 0;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
     std::filesystem::path model_path = cfg.mesh.path;
     // Determine root save directory from Config
     std::filesystem::path save_root(cfg.save_path);
     std::error_code ec;
 
     // Check save path is empty 
+    if (rank == 0){
     if (std::filesystem::exists(save_root)) {
         bool empty = std::filesystem::is_empty(save_root, ec);
         if (ec) {
@@ -321,10 +321,10 @@ std::string run_one(const Config &cfg,
                 }
             }
         }
-    }
+    }}
 
     // Ensure directory exists
-    std::filesystem::create_directories(save_root, ec);
+    if (rank == 0){std::filesystem::create_directories(save_root, ec);}
     if (ec)
     {
         std::cerr << "Warning: could not create save_root directory "
@@ -337,7 +337,7 @@ std::string run_one(const Config &cfg,
     run_name << "run_" << std::setw(4) << std::setfill('0') << display_index;
 
     std::filesystem::path run_dir = save_root / run_name.str();
-    std::filesystem::create_directories(run_dir, ec);
+    if (rank == 0) {std::filesystem::create_directories(run_dir, ec);}
     if (ec)
     {
         std::cerr << "Warning: could not create run directory "

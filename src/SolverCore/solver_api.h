@@ -6,6 +6,7 @@
 #include <vector>
 #include <utility>
 #include <cstddef>
+#include <stdexcept>
 
 
 #include "Config.h"
@@ -21,8 +22,8 @@ struct SimulationResult
     std::unique_ptr<mfem::ParFiniteElementSpace>   pfes;
 
     std::unique_ptr<mfem::ParGridFunction> V;
-    std::unique_ptr<mfem::GridFunction> E;
-    std::unique_ptr<mfem::GridFunction> Emag;
+    std::unique_ptr<mfem::ParGridFunction> E;
+    std::unique_ptr<mfem::ParGridFunction> Emag;
 };
 
 // Struct to hold boundary attributes

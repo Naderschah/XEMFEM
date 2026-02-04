@@ -15,8 +15,7 @@ namespace parallel
     static mfem::MPI_Session *g_mpi_session = nullptr;
     static mfem::Device      *g_device      = nullptr;
 
-    void init_environment(Config &cfg,
-                          int &argc, char **&argv)
+    void init_environment(Config &cfg)
     {
         if (g_initialized)
         {
@@ -24,27 +23,24 @@ namespace parallel
         }
         if (cfg.debug.debug) std::cout << "[DEBUG] Configuring solver device" << std::endl;
 
-        // 1) Initialize MPI via MFEM wrapper
-        if (cfg.compute.mpi.enabled)
+        int rank = 0;
+        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        int world_size = 0;
+        MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
+        if (cfg.compute.mpi.enabled && (world_size > 1))
         {
-            g_mpi_session = new mfem::MPI_Session(argc, argv);
-            if (cfg.debug.debug) std::cout << "[DEBUG:MPI] MPI Session: " << g_mpi_session << std::endl;
-            // TODO MPI 
-            int rank = 0;
-            MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-            int world_size = 0;
-            MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-            // Lazy non host output suppression 
-            if (rank != 0)
-            {
-                std::cout.setstate(std::ios::failbit);
-            }
             if (rank == 0) { std::cout << "[MPI] number of processes = " << world_size << "\n"; }
+            omp_set_num_threads(1);
+
+            g_device = new mfem::Device("cpu");
+            g_initialized = true;
         }
         
         // Threading 
-        if (false)
+        if (cfg.compute.threads.enabled)
         {
+            // TODO THis might not set threads correctly for all dependencies due to the env variables for MPI, otherwise MPI runs with all threads
             int num_threads = 1;
             if (cfg.debug.debug) std::cout << "[DEBUG:OpenMP] Reports Max Thread count: " << omp_get_max_threads() << std::endl;
             if (cfg.compute.threads.num_auto || cfg.compute.threads.num <= 0)
@@ -70,18 +66,29 @@ namespace parallel
             }
             std::cout << "[OpenMP] Thread Count: " << num_threads 
                       << "; Affinity: " << getenv("OMP_PROC_BIND") << std::endl;
+
+            g_device = new mfem::Device("omp");
+            g_initialized = true;
             
         }
-
-        if (cfg.compute.threads.enabled)
-        {
-            cfg.compute.threads.enabled = false;
-            std::cout << "[WARNING] Disabled OMP Functionality is to be removed" << std::endl;
-        }
+        // Setting single threaded
+        if (not g_initialized) { throw std::runtime_error("Neither MPI Nor threads is used -> Behavior not supported, for single thread debugging use OpenMP with thread pool size 1 (no OpenMP & No MPI Is not supported)");}
         
-        g_device = new mfem::Device("cpu");
+    }
 
-        g_initialized = true;
+    void init_mpi(int &argc, char **&argv)
+    {
+        g_mpi_session = new mfem::MPI_Session(argc, argv);
+        // TODO MPI 
+        int rank = 0;
+        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        int world_size = 0;
+        MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+        // Lazy non host output suppression 
+        if (rank != 0)
+        {
+            std::cout.setstate(std::ios::failbit);
+        }
     }
     
 

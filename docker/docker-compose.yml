@@ -17,6 +17,13 @@ services:
       - XAUTHORITY=/tmp/.Xauthority
       - XDG_RUNTIME_DIR=/tmp            # silence SDL/Wayland runtime dir error
       - QT_X11_NO_MITSHM=1
+      # MPI Specific - These should eventually be removable (currently something sets OpenMP threads - likely due to compiling everything with OpenMP)
+      - OMP_NUM_THREADS=1
+      - OPENBLAS_NUM_THREADS=1
+      - MKL_NUM_THREADS=1
+      - BLIS_NUM_THREADS=1
+      - VECLIB_MAXIMUM_THREADS=1
+      - NUMEXPR_NUM_THREADS=1
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw       # X11 (for paraview and the like)
       - $XAUTHORITY:/tmp/.Xauthority:ro        # X auth (for paraview and the like)
@@ -39,6 +46,13 @@ services:
       - XAUTHORITY=/tmp/.Xauthority
       - XDG_RUNTIME_DIR=/tmp            # silence SDL/Wayland runtime dir error
       - QT_X11_NO_MITSHM=1
+      # MPI Specific - These should eventually be removable (currently something sets OpenMP threads - likely due to compiling everything with OpenMP)
+      - OMP_NUM_THREADS=1
+      - OPENBLAS_NUM_THREADS=1
+      - MKL_NUM_THREADS=1
+      - BLIS_NUM_THREADS=1
+      - VECLIB_MAXIMUM_THREADS=1
+      - NUMEXPR_NUM_THREADS=1
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw       # X11 (for paraview and the like)
       - $XAUTHORITY:/tmp/.Xauthority:ro        # X auth (for paraview and the like)

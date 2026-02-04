@@ -70,7 +70,9 @@ static int run_metrics(Config init_cfg) {
 }
 
 static int run_plot(Config init_cfg) {
-    make_plot_api(init_cfg);
+    int rank = 0;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    if (rank == 0){ make_plot_api(init_cfg); }
     return 0;
 }
 
@@ -81,6 +83,8 @@ static int run_interpolate(Config init_cfg) {
 
 int main(int argc, char** argv)
 {    
+    // --------------------- MPI needs to be innited early ----------------------------
+    parallel::init_mpi(argc, argv);
     // -------------------- Check Subcommand ----------------------
     cli::InputParser pre_args(argc, argv);
 
@@ -99,7 +103,6 @@ int main(int argc, char** argv)
 
     auto config_str_opt = args.get("-c");
     if (!config_str_opt) { config_str_opt = args.get("--config"); }
-
     // Plot may not require a config
     std::filesystem::path config_path;
     if (!config_str_opt) {
@@ -118,33 +121,32 @@ int main(int argc, char** argv)
 
     // ---------------------- Load Config ------------------------------
     Config init_cfg;
-    init_cfg = Config::Load(config_path.string());
-
+    init_cfg = Config::Load(config_path.string(), cmd);
     // MPI Set Up
-    parallel::init_environment(init_cfg, argc, argv);
+    parallel::init_environment(init_cfg);
 
     // ------------------------- Dispatch ------------------------------
     if (cmd == "sim") {
         run_sim(init_cfg);
         std::cout << "Done" <<std::endl;
-        return 1;
+        return 0;
     }
     if (cmd == "metrics") {
         return run_metrics(init_cfg);
         std::cout << "Done" <<std::endl;
-        return 1;
+        return 0;
     }
     if (cmd == "plot") {
         // TODO Needs extra args?
         run_plot(init_cfg);
         std::cout << "Done" <<std::endl;
-        return 1;
+        return 0;
     }
     if (cmd == "interpolate") {
         // TODO Needs extra args?
         run_interpolate(init_cfg);
         std::cout << "Done" <<std::endl;
-        return 1;
+        return 0;
     }
 
     std::cerr << "Error: unknown subcommand '" << cmd << "'\n";
