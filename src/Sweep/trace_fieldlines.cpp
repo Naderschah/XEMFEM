@@ -318,9 +318,9 @@ struct TraceObserver
         if (!geom.Inside(x[0], x[1]))
         {
             out.exit_code = ClassifyExit(geom, x, p.geom_tol);
-            throw TraceExitEvent{};
             // Need the final position 
             if (not save) {MaybePush(out, x, true);}
+            throw TraceExitEvent{};
         }
     }
 };
@@ -1364,8 +1364,13 @@ void ElectronFieldLineTracer::Setup(const SimulationResult &result,
 
     if (params.provider == "BOOST")
     {
-        BuildBOOST_(cfg.debug.debug);
-        SelectProvider_(params.provider, axisymmetric);
+        int rank = 0;
+        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        if (rank == 0) // TODO All MPI SPecifics in this method gotta go 
+        {
+            BuildBOOST_(cfg.debug.debug);
+            SelectProvider_(params.provider, axisymmetric);
+        }
     }
     else if (params.provider == "VTK")
     {

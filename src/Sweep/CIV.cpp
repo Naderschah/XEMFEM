@@ -706,7 +706,12 @@ double ComputeCIV_RandomSample(const Config            &cfg,
 double ComputeCIV_FixedGrid(const Config            &cfg,
                             const SimulationResult &result)
 {
-    if (cfg.debug.debug)
+    MPI_Comm comm = result.mesh->GetComm();
+    int rank = 0, size = 1;
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &size);
+
+    if (cfg.debug.debug && rank == 0)
     {
         std::cout << "[DEBUG:OPTIMIZATION] Computing CIV (FixedGrid) "
                   << "nr=" << cfg.civ_params.nr << " nz=" << cfg.civ_params.nz << "\n";
@@ -718,7 +723,8 @@ double ComputeCIV_FixedGrid(const Config            &cfg,
     ElectronFieldLineTracer tracer;
     tracer.Setup(result, cfg.tracing_params, cfg, cfg.solver.axisymmetric);
 
-
+    // These validations should be consistent across ranks; keep them on all ranks
+    // so you fail fast everywhere if seed generation diverges.
     if (seeds.positions.empty())
     {
         throw std::runtime_error("ComputeCIV_FixedGrid: no seeds generated");
@@ -728,33 +734,45 @@ double ComputeCIV_FixedGrid(const Config            &cfg,
         throw std::runtime_error("ComputeCIV_FixedGrid: volumes/positions size mismatch");
     }
 
+    std::cout << "Starting Trace"  << std::endl;
     std::vector<ElectronTraceResult> trace_results;
     tracer.Trace(seeds, trace_results,
-                 cfg.solver.axisymmetric, 
+                 cfg.solver.axisymmetric,
                  cfg.debug.dumpdata,
                  nullptr);
 
-    if (trace_results.size() != seeds.positions.size())
+    std::cout << "Finished Trace"  << std::endl;
+    // Root-only merged results (current tracer contract)
+    double civ = 0.0;
+
+    if (rank == 0)
     {
-        throw std::runtime_error("ComputeCIV_FixedGrid: trace_results size mismatch");
-    }
-
-    double V_total = 0.0;
-    double V_civ   = 0.0;
-
-    for (std::size_t i = 0; i < seeds.positions.size(); ++i)
-    {
-        const double dV = seeds.volumes[i];
-        V_total += dV;
-
-        if (IsChargeInsensitive(trace_results[i]))
+        if (trace_results.size() != seeds.positions.size())
         {
-            V_civ += dV;
+            throw std::runtime_error("ComputeCIV_FixedGrid: trace_results size mismatch results");
         }
-    }
 
-    if (cfg.debug.debug) { std::cout << "Traced " << seeds.positions.size() << " seed points" << std::endl;}
-    return (V_total > 0.0) ? (V_civ / V_total) : 0.0;
+        double V_total = 0.0;
+        double V_civ   = 0.0;
+
+        for (std::size_t i = 0; i < seeds.positions.size(); ++i)
+        {
+            const double dV = seeds.volumes[i];
+            V_total += dV;
+
+            if (IsChargeInsensitive(trace_results[i]))
+            {
+                V_civ += dV;
+            }
+        }
+
+        civ = (V_total > 0.0) ? (V_civ / V_total) : 0.0;
+    }
+    std::cout << "Reached end of CIV compute"  << std::endl;
+    // Make return value valid on all ranks
+    if (size > 1){ MPI_Bcast(&civ, 1, MPI_DOUBLE, 0, comm); }
+
+    return civ;
 }
 
 // ----------------------- Compute CIV Adaptive Grid -------------------

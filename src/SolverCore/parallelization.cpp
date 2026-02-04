@@ -33,8 +33,6 @@ namespace parallel
             if (rank == 0) { std::cout << "[MPI] number of processes = " << world_size << "\n"; }
             omp_set_num_threads(1);
 
-            g_device = new mfem::Device("cpu");
-            g_initialized = true;
         }
         
         // Threading 
@@ -72,7 +70,10 @@ namespace parallel
             
         }
         // Setting single threaded
-        if (not g_initialized) { throw std::runtime_error("Neither MPI Nor threads is used -> Behavior not supported, for single thread debugging use OpenMP with thread pool size 1 (no OpenMP & No MPI Is not supported)");}
+        if (not g_initialized) { 
+            g_device = new mfem::Device("cpu");
+            g_initialized = true;
+        }
         
     }
 

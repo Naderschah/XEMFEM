@@ -56,12 +56,12 @@ optimize:
     method: RK4
     c_step: 10
     geom_tol: 1e-6
-    max_traversals: 4
+    max_traversals: 1.5
   civ_params:
     method: RandomSample
-    num_seed_elements: 2000
-    nr: 42
-    nz: 126
+    num_seed_elements: 1
+    nr: 3
+    nz: 10
     max_levels: 2
     block_size: 64
   fieldSpread_params:
