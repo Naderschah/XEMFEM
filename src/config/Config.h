@@ -189,6 +189,8 @@ struct ElectronTraceParams
     double c_step         = 2;
     // Tolerance for r,z boundary checks (axis clamp, z-range, etc.)
     double geom_tol       = 1e-12;
+    // For MPI 
+    int redistribution_every = 1;
 
     // tracing region
     double r_min = 0.0;

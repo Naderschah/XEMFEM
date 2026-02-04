@@ -91,6 +91,7 @@ add_library(sweep_objects OBJECT
   field_spread.cpp
   sweeps.cpp
   trace_fieldlines.cpp
+  trace_fieldlines_MPI.cpp
   CIV.cpp
   common_tracing/tracing_objects.cpp
 )
@@ -142,5 +143,6 @@ target_link_libraries(sweep_objects PRIVATE
   neldermead_headers
   interpolator
   indicators_headers
+  mfem
 )
 

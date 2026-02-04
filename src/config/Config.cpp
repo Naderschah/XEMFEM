@@ -404,6 +404,7 @@ static void parse_trace_params(Config &cfg, const YAML::Node &root)
     if (params.z_min >= params.z_max) { Error("trace_params.z_min must be smaller than trace_params.z_max"); }
     if (params.max_traversals < 0) { Error("trace_params.max_traversals parameter must at least 0 (0 being no limit)"); }
     if (params.provider != "VTK" &&
+        params.provider != "MPITracer" &&
         params.provider != "BOOST") 
     { Error("trace_params.provider must be one of {VTK, BOOST}"); }
     cfg.tracing_params = params;

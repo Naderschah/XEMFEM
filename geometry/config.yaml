@@ -52,18 +52,22 @@ optimize:
   z_min: -1.5025
   z_max: 0.004
   trace_params:
-    provider: BOOST
+    provider: MPITracer
     method: RK4
     c_step: 10
     geom_tol: 1e-6
     max_traversals: 1.5
   civ_params:
     method: RandomSample
-    num_seed_elements: 1
-    nr: 3
-    nz: 10
+    num_seed_elements: 8192
+    nr: 25
+    nz: 75
     max_levels: 2
     block_size: 64
+    # Timing MPI 
+    # Random: 8192, 32755ms
+    # Grid: 8112, 114717ms
+    # 
   fieldSpread_params:
     TopBottomDist: 0.14
     BottomPercentile: 0.5

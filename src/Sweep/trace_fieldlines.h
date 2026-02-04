@@ -11,6 +11,7 @@ FIXME  Lots of dead code here
 #include "solver_api.h"
 #include "Config.h"
 #include "./common_tracing/tracing_objects.h"
+#include "trace_fieldlines_MPI.h"
 
 #include <memory>
 #include <optional>
@@ -45,13 +46,6 @@ FIXME  Lots of dead code here
 #include <vtkBox.h>
 
 #include "mfem/mesh/vtk.hpp"
-
-// Seed container used by both CIV and tracing.
-struct Seeds
-{
-    std::vector<mfem::Vector>          positions; // (r,z) seeds (physical coords)
-    std::vector<double>                volumes;   // volume weight per seed
-};
 
 // Trace  A single electron through the TPC
 ElectronTraceResult TraceSingleElectronLine(
@@ -145,6 +139,7 @@ struct ElectronFieldLineTracer
     // Cached contexts:
     std::optional<BoostTraceContext> boost;
     std::optional<VTKTraceContext>   vtk;
+    std::optional<MPITraceContext>   mpitracer;
 
     // Hot-path callable:
     TraceFn trace_fn;
@@ -168,5 +163,6 @@ struct ElectronFieldLineTracer
 private:
     void BuildBOOST_(bool debug);
     void BuildVTK_(bool axisymmetric, bool debug);
+    void BuildMPITracer_(bool debug);
     void SelectProvider_(const std::string &provider, bool axisymmetric);
 };

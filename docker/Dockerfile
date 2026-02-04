@@ -187,7 +187,7 @@ RUN curl -L https://github.com/gslib/gslib/archive/${GSLIB_TAG}.tar.gz \
 
 # ===== MFEM C++ build (now with MPI + OpenMP + ParMETIS + SuperLU_DIST) =====
 # FInd SuperLU libararies and turn on 
-ENV MFEM_TAG=v4.8
+ENV MFEM_TAG=v4.9
 ENV CC=mpicc CXX=mpicxx
 
 RUN git clone --depth 1 --branch ${MFEM_TAG} https://github.com/mfem/mfem.git /home/felix/mfem && \

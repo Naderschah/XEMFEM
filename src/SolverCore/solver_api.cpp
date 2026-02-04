@@ -230,7 +230,7 @@ SimulationResult load_results(const Config &cfg,
             result.error_message = "load_results: cannot open " + mesh_path.string();
             return result;
         }
-        serial_mesh.Load(mesh_in, /*generate_edges=*/1, /*refine=*/0);
+        serial_mesh.Load(mesh_in, /*generate_edges=*/0, /*refine=*/0);
     }
 
     // --- 2) Build SERIAL space + load SERIAL V ---

@@ -328,3 +328,14 @@ Hypre:
 - version geq 3.0.0 does not work with MFEM 4.8
 - Previous versions 
   - tried with 2.32.0 : HypreBoomer AMG reports 1 OpenMP thread regardless of set number. Either checks in a funny way, or bugged  
+
+
+
+# Debugging notes
+
+To debug MPI sections
+```bash
+mpirun -n 2 --allow-run-as-root xterm -hold -e gdb -ex run --args ./XEMFEM metrics
+```
+
+TO run in mpi: mpirun -np 4 --allow-run-as-root ./XEMFEM

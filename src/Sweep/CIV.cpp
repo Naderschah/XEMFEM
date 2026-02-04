@@ -661,6 +661,9 @@ double ComputeCIV_RandomSample(const Config            &cfg,
                                const SimulationResult &result)
 {
     using namespace mfem;
+    MPI_Comm comm = result.mesh->GetComm();
+    int rank = 0;
+    MPI_Comm_rank(comm, &rank);
 
     if (cfg.debug.debug)
     {
@@ -686,7 +689,7 @@ double ComputeCIV_RandomSample(const Config            &cfg,
 
     double V_total = 0.0;
     double V_civ   = 0.0;
-
+    if (rank == 0){
     for (std::size_t i = 0; i < seeds.positions.size(); ++i)
     {
         const double               dV  = seeds.volumes[i];
@@ -698,12 +701,14 @@ double ComputeCIV_RandomSample(const Config            &cfg,
         {
             V_civ += dV;
         }
-    }
+    }}
     if (cfg.debug.debug) { std::cout << "Traced " << seeds.positions.size() << " seed points" << std::endl;}
-    return (V_total > 0.0) ? (V_civ / V_total) : 0.0;
+    double civ = (V_total > 0.0) ? (V_civ / V_total) : 0.0;
+    MPI_Bcast(&civ, 1, MPI_DOUBLE, 0, comm);
+    return civ;
 }
 // --------------------------  Fixed Grid ---------------------------
-double ComputeCIV_FixedGrid(const Config            &cfg,
+double ComputeCIV_FixedGrid(const Config &cfg,
                             const SimulationResult &result)
 {
     MPI_Comm comm = result.mesh->GetComm();
@@ -717,39 +722,64 @@ double ComputeCIV_FixedGrid(const Config            &cfg,
                   << "nr=" << cfg.civ_params.nr << " nz=" << cfg.civ_params.nz << "\n";
     }
 
+    // Seeds must be identical on all ranks for the MPI tracer mapping (seed_id).
     Seeds seeds = ExtractCivFixedGridSeeds(cfg, result);
 
-    // Construct Tracing Object
+    // Validate sizes locally…
+    const std::size_t npos = seeds.positions.size();
+    const std::size_t nvol = seeds.volumes.size();
+
+    bool local_ok = true;
+    if (npos == 0) { local_ok = false; }
+    if (nvol != npos) { local_ok = false; }
+
+    // …and fail consistently across ranks.
+    int ok_i = local_ok ? 1 : 0;
+    int ok_all = 0;
+    MPI_Allreduce(&ok_i, &ok_all, 1, MPI_INT, MPI_MIN, comm);
+    if (!ok_all)
+    {
+        if (npos == 0) { throw std::runtime_error("ComputeCIV_FixedGrid: no seeds generated"); }
+        if (nvol != npos) { throw std::runtime_error("ComputeCIV_FixedGrid: volumes/positions size mismatch"); }
+        throw std::runtime_error("ComputeCIV_FixedGrid: seed generation mismatch across ranks");
+    }
+
+    // Optional: verify n_seeds identical across ranks (should be if seed gen is deterministic).
+    unsigned long long npos_ull = (unsigned long long)npos;
+    unsigned long long npos_min = 0, npos_max = 0;
+    MPI_Allreduce(&npos_ull, &npos_min, 1, MPI_UNSIGNED_LONG_LONG, MPI_MIN, comm);
+    MPI_Allreduce(&npos_ull, &npos_max, 1, MPI_UNSIGNED_LONG_LONG, MPI_MAX, comm);
+    if (npos_min != npos_max)
+    {
+        throw std::runtime_error("ComputeCIV_FixedGrid: seeds.positions.size() differs across ranks");
+    }
+
+    // Construct tracer on all ranks (MPITracer uses collectives).
     ElectronFieldLineTracer tracer;
     tracer.Setup(result, cfg.tracing_params, cfg, cfg.solver.axisymmetric);
 
-    // These validations should be consistent across ranks; keep them on all ranks
-    // so you fail fast everywhere if seed generation diverges.
-    if (seeds.positions.empty())
-    {
-        throw std::runtime_error("ComputeCIV_FixedGrid: no seeds generated");
-    }
-    if (seeds.volumes.size() != seeds.positions.size())
-    {
-        throw std::runtime_error("ComputeCIV_FixedGrid: volumes/positions size mismatch");
-    }
+    if (cfg.debug.debug && rank == 0) { std::cout << "Starting Trace\n"; }
 
-    std::cout << "Starting Trace"  << std::endl;
     std::vector<ElectronTraceResult> trace_results;
     tracer.Trace(seeds, trace_results,
                  cfg.solver.axisymmetric,
-                 cfg.debug.dumpdata,
+                 /*save_paths=*/cfg.debug.dumpdata,
                  nullptr);
 
-    std::cout << "Finished Trace"  << std::endl;
-    // Root-only merged results (current tracer contract)
+    if (cfg.debug.debug && rank == 0) { std::cout << "Finished Trace\n"; }
+
+    // Compute CIV on root only (only root has full trace_results).
     double civ = 0.0;
 
     if (rank == 0)
     {
         if (trace_results.size() != seeds.positions.size())
         {
-            throw std::runtime_error("ComputeCIV_FixedGrid: trace_results size mismatch results");
+            std::ostringstream oss;
+            oss << "ComputeCIV_FixedGrid: trace_results size mismatch: "
+                << "trace_results=" << trace_results.size()
+                << " seeds=" << seeds.positions.size();
+            throw std::runtime_error(oss.str());
         }
 
         double V_total = 0.0;
@@ -759,213 +789,235 @@ double ComputeCIV_FixedGrid(const Config            &cfg,
         {
             const double dV = seeds.volumes[i];
             V_total += dV;
-
-            if (IsChargeInsensitive(trace_results[i]))
-            {
-                V_civ += dV;
-            }
+            if (IsChargeInsensitive(trace_results[i])) { V_civ += dV; }
         }
 
         civ = (V_total > 0.0) ? (V_civ / V_total) : 0.0;
     }
-    std::cout << "Reached end of CIV compute"  << std::endl;
-    // Make return value valid on all ranks
-    if (size > 1){ MPI_Bcast(&civ, 1, MPI_DOUBLE, 0, comm); }
 
+    // Broadcast result so all ranks return same value.
+    MPI_Bcast(&civ, 1, MPI_DOUBLE, 0, comm);
     return civ;
 }
 
 // ----------------------- Compute CIV Adaptive Grid -------------------
+static inline void BcastIntVector(MPI_Comm comm,
+                           int root,
+                           int rank,
+                           std::vector<int> &v)
+{
+    int n = (rank == root) ? static_cast<int>(v.size()) : 0;
+    MPI_Bcast(&n, 1, MPI_INT, root, comm);
 
-double ComputeCIV_AdaptiveGrid(const Config            &cfg,
+    if (rank != root)
+    {
+        v.resize(static_cast<std::size_t>(n));
+    }
+
+    if (n > 0)
+    {
+        MPI_Bcast(v.data(), n, MPI_INT, root, comm);
+    }
+}
+double ComputeCIV_AdaptiveGrid(const Config &cfg,
                                const SimulationResult &result)
 {
+    MPI_Comm comm = result.mesh->GetComm();
+    int rank = 0, size = 1;
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &size);
+
     if (cfg.civ_params.nr <= 0 || cfg.civ_params.nz <= 0)
     {
         throw std::runtime_error("ComputeCIV_AdaptiveGrid: cfg.civ_params.nr/nz must be > 0");
     }
-    int seed_count = 0;
 
     const int nr0 = cfg.civ_params.nr;
     const int nz0 = cfg.civ_params.nz;
 
-    if (cfg.debug.debug)
+    if (cfg.debug.debug && rank == 0)
     {
         std::cout << "[DEBUG:OPTIMIZATION] Computing CIV (AdaptiveGrid)\n"
                   << "  coarse nr=" << nr0 << " nz=" << nz0 << "\n";
     }
 
-    // Construct Tracing Object
     ElectronFieldLineTracer tracer;
     tracer.Setup(result, cfg.tracing_params, cfg, cfg.solver.axisymmetric);
 
     // -------------------------------------------------------------------------
-    // Level 0: right-to-left coarse column sweep
+    // Level 0 sweep (all ranks must execute same iterations)
     // -------------------------------------------------------------------------
-    std::vector<int> leftmost_civ_lvl0(static_cast<std::size_t>(nz0), -1);
+    std::vector<int> leftmost_civ_lvl0((std::size_t)nz0, -1);
 
-    bool prev_col_had_any_civ = true; // allow at least one column to be processed
+    bool prev_col_had_any_civ = true;
     int  last_traced_col      = nr0 - 1;
 
     for (int ir = nr0 - 1; ir >= 0; --ir)
     {
-        // Termination rule: stop once the *previous* column had no CIV.
-        if (!prev_col_had_any_civ)
-        {
-            break;
-        }
+        // All ranks must use the same termination decision.
+        int cont = prev_col_had_any_civ ? 1 : 0;
+        MPI_Bcast(&cont, 1, MPI_INT, 0, comm);
+        if (!cont) { break; }
 
         Seeds col_seeds = ExtractCivSeeds_Column(cfg, result, ir);
-        seed_count += col_seeds.positions.size();
         if (col_seeds.positions.empty())
         {
+            // Must fail consistently
+            int bad = 1;
+            MPI_Allreduce(MPI_IN_PLACE, &bad, 1, MPI_INT, MPI_MAX, comm);
             throw std::runtime_error("ComputeCIV_AdaptiveGrid: ExtractCivSeeds_Column produced no seeds");
         }
 
         std::vector<ElectronTraceResult> col_results;
         tracer.Trace(col_seeds, col_results,
-                 cfg.solver.axisymmetric, 
-                 cfg.debug.dumpdata,
-                 nullptr);
+                     cfg.solver.axisymmetric,
+                     cfg.debug.dumpdata,
+                     nullptr);
 
-        if (col_results.size() != col_seeds.positions.size())
+        int col_has_any_civ_i = 0;
+
+        if (rank == 0)
         {
-            throw std::runtime_error("ComputeCIV_AdaptiveGrid: column trace size mismatch");
+            if (col_results.size() != col_seeds.positions.size())
+            {
+                throw std::runtime_error("ComputeCIV_AdaptiveGrid: column trace size mismatch");
+            }
+
+            bool col_has_any_civ = false;
+            UpdateLeftmostCivFromColumn(cfg, result, ir,
+                                        col_seeds, col_results,
+                                        leftmost_civ_lvl0,
+                                        col_has_any_civ);
+
+            col_has_any_civ_i = col_has_any_civ ? 1 : 0;
+            last_traced_col   = ir;
         }
 
-        bool col_has_any_civ = false;
-        UpdateLeftmostCivFromColumn(cfg, result, ir,
-                                    col_seeds, col_results,
-                                    leftmost_civ_lvl0,
-                                    col_has_any_civ);
-
-        prev_col_had_any_civ = col_has_any_civ;
-        last_traced_col      = ir;
+        // Broadcast the decision so all ranks loop/break identically
+        MPI_Bcast(&col_has_any_civ_i, 1, MPI_INT, 0, comm);
+        prev_col_had_any_civ = (col_has_any_civ_i != 0);
     }
 
-    if (cfg.debug.debug)
+    // Broadcast the final lvl0 boundary so all ranks can build identical band seeds later.
+    BcastIntVector(comm, 0, rank, leftmost_civ_lvl0);
+
+    if (cfg.debug.debug && rank == 0)
     {
         std::cout << "[DEBUG:OPTIMIZATION] AdaptiveGrid: level0 sweep complete. "
                   << "last_traced_col=" << last_traced_col << "\n";
     }
 
     // -------------------------------------------------------------------------
-    // Refinement levels: bisection around boundary band (one trace call per level)
+    // Refinement levels (all ranks must share leftmost_prev each level)
     // -------------------------------------------------------------------------
     const int max_levels = cfg.civ_params.max_levels;
-    const double tol     = cfg.tracing_params.geom_tol;       
-
-    // If you prefer: max_levels can be derived from tol and coarse dr/dz.
-    // For now we treat it as config-driven.
+    const double tol     = cfg.tracing_params.geom_tol;
+    (void)tol;
 
     std::vector<int> leftmost_prev = leftmost_civ_lvl0;
     int final_level = 0;
 
     for (int level = 1; level <= max_levels; ++level)
     {
-        // Stop condition by tolerance (conceptual here; exact check will be implemented
-        // once we have consistent dr/dz computation for each level).
-        // We keep the skeleton: "if reached tolerance -> break".
-        // The actual criterion will live in a helper later.
-        (void)tol;
-
         Seeds band_seeds = ExtractCivSeeds_BoundaryBand(cfg, result, level, leftmost_prev);
 
-        seed_count += band_seeds.positions.size();
-        if (band_seeds.positions.empty())
+        // Ensure emptiness decision is identical across ranks
+        int empty_i = band_seeds.positions.empty() ? 1 : 0;
+        int empty_all_min = 0, empty_all_max = 0;
+        MPI_Allreduce(&empty_i, &empty_all_min, 1, MPI_INT, MPI_MIN, comm);
+        MPI_Allreduce(&empty_i, &empty_all_max, 1, MPI_INT, MPI_MAX, comm);
+        if (empty_all_min != empty_all_max)
         {
-            // No interface to refine; accept previous boundary as final.
+            throw std::runtime_error("ComputeCIV_AdaptiveGrid: band seed generation differs across ranks");
+        }
+
+        if (empty_i)
+        {
             final_level = level - 1;
             break;
         }
 
         std::vector<ElectronTraceResult> band_results;
         tracer.Trace(band_seeds, band_results,
-                 cfg.solver.axisymmetric, 
-                 cfg.debug.dumpdata,
-                 nullptr);
+                     cfg.solver.axisymmetric,
+                     cfg.debug.dumpdata,
+                     nullptr);
 
-        if (band_results.size() != band_seeds.positions.size())
+        std::vector<int> leftmost_this;
+
+        if (rank == 0)
         {
-            throw std::runtime_error("ComputeCIV_AdaptiveGrid: band trace size mismatch");
+            if (band_results.size() != band_seeds.positions.size())
+            {
+                throw std::runtime_error("ComputeCIV_AdaptiveGrid: band trace size mismatch");
+            }
+
+            UpdateLeftmostCivFromBand(cfg, result, level,
+                                      band_seeds, band_results,
+                                      leftmost_this);
+
+            final_level = level;
+
+            if (cfg.debug.debug)
+            {
+                std::cout << "[DEBUG:OPTIMIZATION] AdaptiveGrid: completed refinement level "
+                          << level << "\n";
+            }
         }
 
-        // Build next-level boundary representation. Size should correspond to nz(level).
-        std::vector<int> leftmost_this; // will be sized by updater
-        UpdateLeftmostCivFromBand(cfg, result, level,
-                                  band_seeds, band_results,
-                                  leftmost_this);
-
-        // If updater decides boundary didn't change or nothing to refine further,
-        // it can return identical boundary and/or mark a condition. For now, we just proceed.
+        // Broadcast updated boundary to all ranks for the next level's seed generation
+        BcastIntVector(comm, 0, rank, leftmost_this);
         leftmost_prev = std::move(leftmost_this);
-        final_level = level;
-
-        if (cfg.debug.debug)
-        {
-            std::cout << "[DEBUG:OPTIMIZATION] AdaptiveGrid: completed refinement level "
-                      << level << "\n";
-        }
     }
 
-    // If refinement loop never ran, boundary is level0.
-    const std::vector<int> &leftmost_final = (final_level == 0) ? leftmost_civ_lvl0 : leftmost_prev;
+    const std::vector<int> &leftmost_final =
+        (final_level == 0) ? leftmost_civ_lvl0 : leftmost_prev;
 
-    // -------------------------------------------------------------------------
-    // Final integration using boundary representation (Option A)
-    // -------------------------------------------------------------------------
-    const double civ_fraction = IntegrateCIVFromBoundary(cfg, result, final_level, leftmost_final);
-
-    if (cfg.debug.debug) { std::cout << "Traced " << seed_count << " seed points" << std::endl;}
+    // Root computes, broadcast scalar
+    double civ_fraction = 0.0;
+    if (rank == 0)
+    {
+        civ_fraction = IntegrateCIVFromBoundary(cfg, result, final_level, leftmost_final);
+    }
+    MPI_Bcast(&civ_fraction, 1, MPI_DOUBLE, 0, comm);
     return civ_fraction;
 }
 
 
-// Row by Row Sweep fixed grid 
-double ComputeCIV_RowSweep(const Config            &cfg,
+
+double ComputeCIV_RowSweep(const Config &cfg,
                            const SimulationResult &result)
 {
+    MPI_Comm comm = result.mesh->GetComm();
+    int rank = 0, size = 1;
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &size);
+
     const int nr = cfg.civ_params.nr;
     const int nz = cfg.civ_params.nz;
-
-    int seed_count = 0;
-
-    // Construct Tracing Object
-    ElectronFieldLineTracer tracer;
-    tracer.Setup(result, cfg.tracing_params, cfg, cfg.solver.axisymmetric);
-
 
     if (nr <= 0 || nz <= 0)
     {
         throw std::runtime_error("ComputeCIV_RowSweep: cfg.civ_params.nr/nz must be > 0");
     }
 
-    if (cfg.debug.debug)
+    if (cfg.debug.debug && rank == 0)
     {
         std::cout << "[DEBUG:OPTIMIZATION] Computing CIV (RowSweep) "
                   << "nr=" << nr << " nz=" << nz << "\n";
     }
 
-    std::vector<int> leftmost_civ_per_row(static_cast<std::size_t>(nz), -1);
+    ElectronFieldLineTracer tracer;
+    tracer.Setup(result, cfg.tracing_params, cfg, cfg.solver.axisymmetric);
 
-    // Optional monotonic carry from previous (lower) row:
-    // boundary cannot move right when going up? (not specified)
-    // We do not enforce cross-row monotonicity beyond the stated "below is CIV".
-    // However, we can use the lower-row boundary as a starting point to reduce work:
-    // if below-row boundary is at ir_below, then in the current row CIV (if exists)
-    // cannot start to the right of ir_below (i.e., boundary index <= ir_below) is NOT guaranteed.
-    // So we do NOT apply this unless you confirm. For now, always start at right edge.
-    (void)leftmost_civ_per_row;
+    std::vector<int> leftmost_civ_per_row((std::size_t)nz, -1);
+
+    const int block = std::max(1, cfg.civ_params.block_size);
 
     // Bottom -> top
     for (int iz = 0; iz < nz; ++iz)
     {
         int boundary = -1;
-
-        // Scan right -> left in blocks to keep tracing batches sizable.
-        // Block size can be tuned; keep it simple and deterministic.
-        const int block = std::max(1, cfg.civ_params.block_size); // assumed to exist; otherwise set e.g. 64
-
         int ir_right = nr - 1;
         bool seen_any_civ = false;
         bool done = false;
@@ -974,48 +1026,96 @@ double ComputeCIV_RowSweep(const Config            &cfg,
         {
             const int ir_left = std::max(0, ir_right - (block - 1));
 
+            // Seeds must be identical on all ranks for MPITracer.
             Seeds row_seeds = ExtractCivSeeds_Row(cfg, result, iz, ir_right, ir_left);
-            seed_count += row_seeds.positions.size();
+            std::cout << "Extracted Seeds " << ir_right << std::endl;
+
+            // (Optional robustness) ensure all ranks generated same batch size
+            unsigned long long nloc = (unsigned long long)row_seeds.positions.size();
+            unsigned long long nmin = 0, nmax = 0;
+            MPI_Allreduce(&nloc, &nmin, 1, MPI_UNSIGNED_LONG_LONG, MPI_MIN, comm);
+            MPI_Allreduce(&nloc, &nmax, 1, MPI_UNSIGNED_LONG_LONG, MPI_MAX, comm);
+            if (nmin != nmax)
+            {
+                throw std::runtime_error("ComputeCIV_RowSweep: ExtractCivSeeds_Row differs across ranks");
+            }
+
             std::vector<ElectronTraceResult> row_results;
             tracer.Trace(row_seeds, row_results,
-                 cfg.solver.axisymmetric, 
-                 cfg.debug.dumpdata,
-                 nullptr);
+                         cfg.solver.axisymmetric,
+                         cfg.debug.dumpdata,
+                         nullptr);
+            std::cout << "Completed row " << ir_right << std::endl;
+            // Rank 0 updates boundary and done; then broadcast decisions.
+            int done_i = 0;
+            int seen_i = 0;
+            int boundary_i = boundary;
+            int next_ir_right = ir_left - 1;
 
-            if (row_results.size() != row_seeds.positions.size())
+            if (rank == 0)
             {
-                throw std::runtime_error("ComputeCIV_RowSweep: row trace size mismatch");
-            }
-
-            // row_seeds are ordered right->left by construction in this call.
-            for (std::size_t k = 0; k < row_results.size(); ++k)
-            {
-                const int ir = ir_right - static_cast<int>(k);
-
-                if (IsChargeInsensitive(row_results[k]))
+                if (row_results.size() != row_seeds.positions.size())
                 {
-                    seen_any_civ = true;
-                    boundary = ir; // keep updating; we want leftmost CIV
+                    throw std::runtime_error("ComputeCIV_RowSweep: row trace size mismatch");
                 }
-                else
+
+                // row_seeds ordered right->left by construction
+                for (std::size_t k = 0; k < row_results.size(); ++k)
                 {
-                    // If we've already seen CIV in this row and now we see non-CIV while moving left,
-                    // then the boundary is between this cell and the previous one. We can stop.
-                    if (seen_any_civ)
+                    const int ir = ir_right - static_cast<int>(k);
+
+                    if (IsChargeInsensitive(row_results[k]))
                     {
-                        done = true;
-                        break;
+                        seen_any_civ = true;
+                        boundary = ir; // leftmost CIV so far
+                    }
+                    else
+                    {
+                        if (seen_any_civ)
+                        {
+                            done = true;
+                            break;
+                        }
                     }
                 }
+
+                done_i = done ? 1 : 0;
+                seen_i = seen_any_civ ? 1 : 0;
+                boundary_i = boundary;
             }
 
-            ir_right = ir_left - 1;
+            // Broadcast updated state so all ranks take same path
+            MPI_Bcast(&done_i, 1, MPI_INT, 0, comm);
+            MPI_Bcast(&seen_i, 1, MPI_INT, 0, comm);
+            MPI_Bcast(&boundary_i, 1, MPI_INT, 0, comm);
+
+            done = (done_i != 0);
+            seen_any_civ = (seen_i != 0);
+            boundary = boundary_i;
+
+            ir_right = next_ir_right;
         }
 
-        leftmost_civ_per_row[static_cast<std::size_t>(iz)] = boundary;
+        // Only rank 0 has the real boundary; broadcast per-row boundary
+        int boundary_row = (rank == 0) ? boundary : -1;
+        MPI_Bcast(&boundary_row, 1, MPI_INT, 0, comm);
+        leftmost_civ_per_row[(std::size_t)iz] = boundary_row;
     }
 
-    // Integrate using the boundary representation at level 0.
-    if (cfg.debug.debug) { std::cout << "Traced " << seed_count << " seed points" << std::endl;}
-    return IntegrateCIVFromBoundary(cfg, result, /*level=*/0, leftmost_civ_per_row);
+    // Make sure leftmost_civ_per_row is identical on all ranks
+    BcastIntVector(comm, 0, rank, leftmost_civ_per_row);
+
+    // Root computes CIV, broadcast scalar
+    double civ = 0.0;
+    if (rank == 0)
+    {
+        civ = IntegrateCIVFromBoundary(cfg, result, /*level=*/0, leftmost_civ_per_row);
+        if (cfg.debug.debug)
+        {
+            std::cout << "RowSweep complete.\n";
+        }
+    }
+
+    MPI_Bcast(&civ, 1, MPI_DOUBLE, 0, comm);
+    return civ;
 }

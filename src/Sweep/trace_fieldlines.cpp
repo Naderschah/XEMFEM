@@ -97,20 +97,6 @@ static inline ElectronExitCode ClassifyExit(const TpcGeometry &geom,
     return c;
 }
 
-static inline long long ComputeMaxStepsFromLimit(const ElectronTraceParams &p,
-                                                 double ds,
-                                                 int max_traversals)
-{
-    if (max_traversals <= 0) return 0; // 0 means unlimited
-    const double height = std::fabs(p.z_max - p.z_min);
-    if (!(height > 0.0) || !(ds > 0.0)) return 0;
-
-    const double target = static_cast<double>(max_traversals) * height;
-    const double n = target / ds;
-    const long long max_steps = static_cast<long long>(std::ceil(n));
-    return (max_steps > 0) ? max_steps : 1;
-}
-
 // Evaluate -E(x) using FindPointsGSLIB in "batched" form (npts=1).
 struct FieldRHS
 {
@@ -429,40 +415,6 @@ static inline ElectronTraceResult RunAdaptive(
     return out;
 }
 
-static inline double ComputeGlobalMinEdgeLength(mfem::ParMesh &mesh, bool debug)
-{
-    using namespace mfem;
-    double local_min = std::numeric_limits<double>::infinity();
-
-    for (int e = 0; e < mesh.GetNE(); ++e)
-    {
-        const Element *el = mesh.GetElement(e);
-        const int nv = el->GetNVertices();
-        const int *v = el->GetVertices();
-
-        for (int i = 0; i < nv; ++i)
-        {
-            const double *pi = mesh.GetVertex(v[i]);
-            for (int j = i + 1; j < nv; ++j)
-            {
-                const double *pj = mesh.GetVertex(v[j]);
-                const double dx = pi[0] - pj[0];
-                const double dy = pi[1] - pj[1];
-                const double dz = (mesh.SpaceDimension() > 2) ? (pi[2] - pj[2]) : 0.0;
-                const double d  = std::sqrt(dx*dx + dy*dy + dz*dz);
-                if (d > 0.0 && d < local_min) local_min = d;
-            }
-        }
-    }
-
-    double global_min = local_min;
-#ifdef MFEM_USE_MPI
-    MPI_Allreduce(&local_min, &global_min, 1, MPI_DOUBLE, MPI_MIN, mesh.GetComm());
-#endif
-    if (!std::isfinite(global_min) || global_min <= 0.0) global_min = 1.0;
-    return global_min;
-}
-
 
 ElectronTraceResult TraceSingleElectronLine(
     mfem::ParMesh                    &mesh,
@@ -513,77 +465,141 @@ ElectronTraceResult TraceSingleElectronLine(
 // Debug Helpers
 // -----------------------
 
-static void PrintExitConditionSummary(const Config                     &cfg,
-                                      const Seeds                   &seeds,
+static void PrintExitConditionSummary(const Config                          &cfg,
+                                      const Seeds                           &seeds,
                                       const std::vector<ElectronTraceResult> &out_results)
 {
     if (!cfg.debug.debug) { return; }
 
-    std::size_t count_hit_lgi      = 0;
-    std::size_t count_hit_cathode  = 0;
-    std::size_t count_hit_wall     = 0;
-    std::size_t count_left_volume  = 0;
-    std::size_t count_max_steps    = 0;
-    std::size_t count_deg_dt       = 0;
-    std::size_t count_none         = 0;
-    std::size_t count_hit_axis     = 0;
+    // Only rank 0 prints. Other ranks return safely even if out_results is empty.
+    MPI_Comm comm = MPI_COMM_WORLD;
+    int rank = 0, size = 1;
+#ifdef MFEM_USE_MPI
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &size);
+#endif
 
-    for (const auto &res : out_results)
+    // Local counts/volumes (ranks with empty out_results contribute 0)
+    unsigned long long lc_hit_lgi     = 0;
+    unsigned long long lc_hit_cathode = 0;
+    unsigned long long lc_hit_wall    = 0;
+    unsigned long long lc_left_volume = 0;
+    unsigned long long lc_max_steps   = 0;
+    unsigned long long lc_deg_dt      = 0;
+    unsigned long long lc_none        = 0;
+    unsigned long long lc_hit_axis    = 0;
+
+    double lV_total       = 0.0;
+    double lV_hit_lgi     = 0.0;
+    double lV_hit_cathode = 0.0;
+    double lV_hit_wall    = 0.0;
+    double lV_left_volume = 0.0;
+    double lV_max_steps   = 0.0;
+    double lV_deg_dt      = 0.0;
+    double lV_none        = 0.0;
+    double lV_hit_axis    = 0.0;
+
+    // Use the safe overlap length (handles ranks where out_results is empty or partial)
+    const std::size_t n_res   = out_results.size();
+    const std::size_t n_seedV = seeds.volumes.size();
+    const std::size_t n_loc   = std::min(n_res, n_seedV);
+
+    for (std::size_t i = 0; i < n_loc; ++i)
     {
+        const auto &res = out_results[i];
+
+        // Counts
         switch (res.exit_code)
         {
-            case ElectronExitCode::HitLiquidGas:       count_hit_lgi++;     break;
-            case ElectronExitCode::HitCathode:         count_hit_cathode++; break;
-            case ElectronExitCode::HitWall:            count_hit_wall++;    break;
-            case ElectronExitCode::LeftVolume:         count_left_volume++; break;
-            case ElectronExitCode::MaxSteps:           count_max_steps++;   break;
-            case ElectronExitCode::DegenerateTimeStep: count_deg_dt++;      break;
-            case ElectronExitCode::HitAxis:            count_hit_axis++;    break;
-            case ElectronExitCode::None:               count_none++;        break;
+            case ElectronExitCode::HitLiquidGas:       lc_hit_lgi++;     break;
+            case ElectronExitCode::HitCathode:         lc_hit_cathode++; break;
+            case ElectronExitCode::HitWall:            lc_hit_wall++;    break;
+            case ElectronExitCode::LeftVolume:         lc_left_volume++; break;
+            case ElectronExitCode::MaxSteps:           lc_max_steps++;   break;
+            case ElectronExitCode::DegenerateTimeStep: lc_deg_dt++;      break;
+            case ElectronExitCode::HitAxis:            lc_hit_axis++;    break;
+            case ElectronExitCode::None:               lc_none++;        break;
+        }
+
+        // Volume fractions (only if we have volumes for this index)
+        const double dV = seeds.volumes[i];
+        lV_total += dV;
+
+        switch (res.exit_code)
+        {
+            case ElectronExitCode::HitLiquidGas:       lV_hit_lgi     += dV; break;
+            case ElectronExitCode::HitCathode:         lV_hit_cathode += dV; break;
+            case ElectronExitCode::HitWall:            lV_hit_wall    += dV; break;
+            case ElectronExitCode::LeftVolume:         lV_left_volume += dV; break;
+            case ElectronExitCode::MaxSteps:           lV_max_steps   += dV; break;
+            case ElectronExitCode::DegenerateTimeStep: lV_deg_dt      += dV; break;
+            case ElectronExitCode::HitAxis:            lV_hit_axis    += dV; break;
+            case ElectronExitCode::None:               lV_none        += dV; break;
         }
     }
 
-    const double N = static_cast<double>(out_results.size());
-    auto frac = [&](std::size_t c) -> double {
+    // Reduce to rank 0
+    unsigned long long gc_hit_lgi     = lc_hit_lgi;
+    unsigned long long gc_hit_cathode = lc_hit_cathode;
+    unsigned long long gc_hit_wall    = lc_hit_wall;
+    unsigned long long gc_left_volume = lc_left_volume;
+    unsigned long long gc_max_steps   = lc_max_steps;
+    unsigned long long gc_deg_dt      = lc_deg_dt;
+    unsigned long long gc_none        = lc_none;
+    unsigned long long gc_hit_axis    = lc_hit_axis;
+
+    double gV_total       = lV_total;
+    double gV_hit_lgi     = lV_hit_lgi;
+    double gV_hit_cathode = lV_hit_cathode;
+    double gV_hit_wall    = lV_hit_wall;
+    double gV_left_volume = lV_left_volume;
+    double gV_max_steps   = lV_max_steps;
+    double gV_deg_dt      = lV_deg_dt;
+    double gV_none        = lV_none;
+    double gV_hit_axis    = lV_hit_axis;
+
+#ifdef MFEM_USE_MPI
+    if (size > 1)
+    {
+        MPI_Reduce(&lc_hit_lgi,     &gc_hit_lgi,     1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, comm);
+        MPI_Reduce(&lc_hit_cathode, &gc_hit_cathode, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, comm);
+        MPI_Reduce(&lc_hit_wall,    &gc_hit_wall,    1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, comm);
+        MPI_Reduce(&lc_left_volume, &gc_left_volume, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, comm);
+        MPI_Reduce(&lc_max_steps,   &gc_max_steps,   1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, comm);
+        MPI_Reduce(&lc_deg_dt,      &gc_deg_dt,      1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, comm);
+        MPI_Reduce(&lc_none,        &gc_none,        1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, comm);
+        MPI_Reduce(&lc_hit_axis,    &gc_hit_axis,    1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, comm);
+
+        MPI_Reduce(&lV_total,       &gV_total,       1, MPI_DOUBLE, MPI_SUM, 0, comm);
+        MPI_Reduce(&lV_hit_lgi,     &gV_hit_lgi,     1, MPI_DOUBLE, MPI_SUM, 0, comm);
+        MPI_Reduce(&lV_hit_cathode, &gV_hit_cathode, 1, MPI_DOUBLE, MPI_SUM, 0, comm);
+        MPI_Reduce(&lV_hit_wall,    &gV_hit_wall,    1, MPI_DOUBLE, MPI_SUM, 0, comm);
+        MPI_Reduce(&lV_left_volume, &gV_left_volume, 1, MPI_DOUBLE, MPI_SUM, 0, comm);
+        MPI_Reduce(&lV_max_steps,   &gV_max_steps,   1, MPI_DOUBLE, MPI_SUM, 0, comm);
+        MPI_Reduce(&lV_deg_dt,      &gV_deg_dt,      1, MPI_DOUBLE, MPI_SUM, 0, comm);
+        MPI_Reduce(&lV_none,        &gV_none,        1, MPI_DOUBLE, MPI_SUM, 0, comm);
+        MPI_Reduce(&lV_hit_axis,    &gV_hit_axis,    1, MPI_DOUBLE, MPI_SUM, 0, comm);
+    }
+#endif
+
+    if (rank != 0) { return; }
+
+    const double N = static_cast<double>(gc_hit_lgi + gc_hit_cathode + gc_hit_wall +
+                                         gc_hit_axis + gc_left_volume + gc_max_steps +
+                                         gc_deg_dt + gc_none);
+
+    auto frac = [&](unsigned long long c) -> double
+    {
         return (N > 0.0 ? static_cast<double>(c) / N : 0.0);
     };
 
-    double V_total        = 0.0;
-    double V_hit_lgi      = 0.0;
-    double V_hit_cathode  = 0.0;
-    double V_hit_wall     = 0.0;
-    double V_left_volume  = 0.0;
-    double V_max_steps    = 0.0;
-    double V_deg_dt       = 0.0;
-    double V_none         = 0.0;
-    double V_hit_axis     = 0.0;
-
-    for (std::size_t i = 0; i < seeds.positions.size(); ++i)
+    auto vfrac = [&](double V) -> double
     {
-        const double dV = seeds.volumes[i];
-        const auto  &res = out_results[i];
-
-        V_total += dV;
-
-        switch (res.exit_code)
-        {
-            case ElectronExitCode::HitLiquidGas:       V_hit_lgi     += dV; break;
-            case ElectronExitCode::HitCathode:         V_hit_cathode += dV; break;
-            case ElectronExitCode::HitWall:            V_hit_wall    += dV; break;
-            case ElectronExitCode::LeftVolume:         V_left_volume += dV; break;
-            case ElectronExitCode::MaxSteps:           V_max_steps   += dV; break;
-            case ElectronExitCode::DegenerateTimeStep: V_deg_dt      += dV; break;
-            case ElectronExitCode::HitAxis:            V_hit_axis    += dV; break;
-            case ElectronExitCode::None:               V_none        += dV; break;
-        }
-    }
-
-    auto vfrac = [&](double V) -> double {
-        return (V_total > 0.0 ? V / V_total : 0.0);
+        return (gV_total > 0.0 ? V / gV_total : 0.0);
     };
 
     std::cout << "\n---------------- Electron Tracing Summary ----------------\n";
-    std::cout << "Total seeds traced: " << out_results.size() << "\n\n";
+    std::cout << "Total seeds traced: " << static_cast<unsigned long long>(N) << "\n\n";
 
     std::cout << std::left
               << std::setw(22) << "Exit Type"
@@ -592,7 +608,8 @@ static void PrintExitConditionSummary(const Config                     &cfg,
 
     std::cout << "-----------------------------------------------------------------\n";
 
-    auto row = [&](const char *label, double f_seed, double f_vol) {
+    auto row = [&](const char *label, double f_seed, double f_vol)
+    {
         std::cout << std::left
                   << std::setw(22) << label
                   << std::setw(18) << f_seed
@@ -600,14 +617,14 @@ static void PrintExitConditionSummary(const Config                     &cfg,
                   << "\n";
     };
 
-    row("Hit Liquid-Gas",   frac(count_hit_lgi),     vfrac(V_hit_lgi));
-    row("Hit Cathode",      frac(count_hit_cathode), vfrac(V_hit_cathode));
-    row("Hit Wall",         frac(count_hit_wall),    vfrac(V_hit_wall));
-    row("Hit Axis",         frac(count_hit_axis),    vfrac(V_hit_axis));
-    row("Left Volume",      frac(count_left_volume), vfrac(V_left_volume));
-    row("Max Steps",        frac(count_max_steps),   vfrac(V_max_steps));
-    row("Degenerate dt",    frac(count_deg_dt),      vfrac(V_deg_dt));
-    row("None (unexpected)",frac(count_none),        vfrac(V_none));
+    row("Hit Liquid-Gas",    frac(gc_hit_lgi),     vfrac(gV_hit_lgi));
+    row("Hit Cathode",       frac(gc_hit_cathode), vfrac(gV_hit_cathode));
+    row("Hit Wall",          frac(gc_hit_wall),    vfrac(gV_hit_wall));
+    row("Hit Axis",          frac(gc_hit_axis),    vfrac(gV_hit_axis));
+    row("Left Volume",       frac(gc_left_volume), vfrac(gV_left_volume));
+    row("Max Steps",         frac(gc_max_steps),   vfrac(gV_max_steps));
+    row("Degenerate dt",     frac(gc_deg_dt),      vfrac(gV_deg_dt));
+    row("None (unexpected)", frac(gc_none),        vfrac(gV_none));
 
     std::cout << "-----------------------------------------------------------------\n";
 }
@@ -1272,7 +1289,26 @@ static void TraceElectronFieldLinesVTK(
     TraceElectronFieldLinesVTKPrepared(ug, locator, seeds, out_results, tcfg, axisymmetric, cfg);
 }
 
-// Tracing Object holder methods
+// --------------------------- Tracing Object holders
+// 2) Context build: identical mesh prep + FindPointsGSLIB setup as BOOST
+void MPITraceContext::Build(mfem::ParMesh &mesh, bool debug)
+{
+    h_ref = ComputeGlobalMinEdgeLength(mesh, debug);
+
+    // Ensure nodes exist (same as BOOST)
+    if (mesh.GetNodes() == nullptr)
+    {
+        const int order = 1;
+        const bool discont = false;
+        const int space_dim = mesh.SpaceDimension();
+        const int ordering = mfem::Ordering::byNODES;
+        mesh.SetCurvature(order, discont, space_dim, ordering);
+    }
+
+    finder = std::make_unique<mfem::FindPointsGSLIB>(mesh.GetComm());
+    finder->Setup(mesh);
+    finder->SetDefaultInterpolationValue(std::numeric_limits<double>::quiet_NaN());
+}
 void BoostTraceContext::Build(mfem::ParMesh &mesh, bool debug)
 {
     const int sdim = mesh.SpaceDimension();
@@ -1324,6 +1360,8 @@ void ElectronFieldLineTracer::Reset()
     boost.reset();
     vtk.reset();
     trace_fn = nullptr;
+
+    mpitracer.reset();
 }
 void ElectronFieldLineTracer::Setup(const SimulationResult &result,
                                     const ElectronTraceParams &tp,
@@ -1361,8 +1399,13 @@ void ElectronFieldLineTracer::Setup(const SimulationResult &result,
 
     params = tp;
     cfg    = cfg_;
-
-    if (params.provider == "BOOST")
+    if (params.provider == "MPITracer")
+    {
+        // MPITracer is intended for multi-rank; allow size==1 too (for debugging).
+        BuildMPITracer_(cfg.debug.debug);
+        SelectProvider_(params.provider, axisymmetric);
+    }
+    else if (params.provider == "BOOST")
     {
         int rank = 0;
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -1415,9 +1458,57 @@ void ElectronFieldLineTracer::BuildVTK_(bool axisymmetric, bool debug)
     vtk.emplace();
     vtk->Build(*pmesh, *E_gf, axisymmetric, debug);
 }
-void ElectronFieldLineTracer::SelectProvider_(const std::string &provider, bool axisymmetric)
+void ElectronFieldLineTracer::BuildMPITracer_(bool debug)
 {
-    if (provider == "BOOST")
+    if (!pmesh || !E_gf)
+    {
+        throw std::logic_error("BuildMPITracer_: mesh/E_gf not attached.");
+    }
+    mpitracer.emplace();
+    mpitracer->Build(*pmesh, debug);
+}
+void ElectronFieldLineTracer::SelectProvider_(const std::string &provider, bool axisymmetric)
+{   
+    if (provider == "MPITracer")
+    {
+        if (!mpitracer || !mpitracer->Ready())
+        {
+            throw std::logic_error("SelectProvider_: MPITracer context not ready.");
+        }
+
+        trace_fn = [this](const Seeds &seeds,
+                          std::vector<ElectronTraceResult> &out_results,
+                          bool axisymmetric,
+                          bool save_paths,
+                          const double * /*z_max_overrides*/)
+        {
+            // per your current constraint: no save_paths in multi-rank (enforced earlier),
+            // but keep a local guard for safety.
+            int comm_size = 1;
+            MPI_Comm_size(pmesh->GetComm(), &comm_size);
+            if (comm_size > 1 && save_paths)
+            {
+                throw std::logic_error("MPITracer provider does not support save_paths with multiple MPI ranks.");
+            }
+
+            // z_max_overrides not supported in this provider yet (miniapp-style particles)
+            // If you need it later, incorporate per-particle z_max into tags/fields.
+
+            mpitracing::TraceDistributedEuler(
+                *pmesh,
+                *mpitracer->finder,
+                *E_gf,
+                params,
+                seeds,
+                out_results,
+                mpitracer->h_ref,
+                axisymmetric,
+                /*redistribution_every=*/cfg.tracing_params.redistribution_every, // add to Config
+                /*debug=*/cfg.debug.debug,
+                /*debug_every=*/0);
+        };
+    }
+    else if (provider == "BOOST")
     {
         if (!boost || !boost->finder)
             throw std::logic_error("SelectProvider_: BOOST context not ready.");
