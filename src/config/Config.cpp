@@ -562,6 +562,7 @@ static void verify_cross_dependence(Config cfg)
 
     bool mpi_enabled = (world_size > 1);
     bool metrics_path = (cfg.run_mode == "metrics") || ((cfg.run_mode == "sim") && cfg.optimize.enabled);
+    bool mpi_safe_method = (cfg.tracing_params.provider == "MPITracer") && ((cfg.civ_params.method != "RandomSample") || (cfg.civ_params.method != "Grid"))
 
     if (cfg.compute.threads.enabled && mpi_enabled)
         throw std::runtime_error("MPI and Threading via OpenMP simulataneously is not supported, use as many MPI nodes as you intend to use threads");
@@ -570,6 +571,8 @@ static void verify_cross_dependence(Config cfg)
     if (mpi_enabled && metrics_path && cfg.debug.dumpdata) 
         throw std::runtime_error("Saving Pathlines is not supported for more than 1 MPI node");
 
+    if (mpi_enabled && mpi_safe_method)
+        throw std::runtime_error("Fancy CIV methods not supported for MPI due to performance limitations of tracing (one to two machines will end up tracing at a time)");
 }
 
 // -----------------------------------------------------------------------------
