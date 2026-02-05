@@ -567,10 +567,6 @@ static void verify_cross_dependence(Config cfg)
     if (cfg.compute.threads.enabled && mpi_enabled)
         throw std::runtime_error("MPI and Threading via OpenMP simulataneously is not supported, use as many MPI nodes as you intend to use threads");
 
-    // Currently dont support pathline saving for multiple MPI nodes TODO Any reason to support it?
-    if (mpi_enabled && metrics_path && cfg.debug.dumpdata) 
-        throw std::runtime_error("Saving Pathlines is not supported for more than 1 MPI node");
-
     if (mpi_enabled && mpi_safe_method)
         throw std::runtime_error("Fancy CIV methods not supported for MPI due to performance limitations of tracing (one to two machines will end up tracing at a time)");
 }
