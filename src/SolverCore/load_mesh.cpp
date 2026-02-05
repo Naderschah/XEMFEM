@@ -16,8 +16,15 @@ std::unique_ptr<mfem::ParMesh> CreateSimulationDomain(const std::string &path, M
   auto pmesh = std::make_unique<mfem::ParMesh>(comm, *serial);
   return pmesh;
 }
-
-void CheckAxisymmetricMesh(const mfem::Mesh &mesh,
+void CheckAxisymmetricMesh(const mfem::ParMesh &mesh,
+                           int radial_coord_index)
+{
+    MPI_Comm comm = mesh.GetComm();
+    CheckAxisymmetricMesh(mesh,
+                          radial_coord_index,
+                          comm);
+}
+void CheckAxisymmetricMesh(const mfem::ParMesh &mesh,
                            int radial_coord_index,
                            MPI_Comm comm)
 {
