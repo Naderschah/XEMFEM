@@ -84,6 +84,9 @@
 #include <vtkStaticCellLocator.h>
 #include <vtkGenericCell.h>
 
+#include <vtkLogger.h>
+#include <vtkOpenGLRenderWindow.h>
+
 namespace FEMPlot
 {
 
@@ -810,7 +813,7 @@ void AddStreamlines(vtkDataSet* dataset,
 // -----------------------------------------------------------------------------
 
 // Render an already-configured render window.
-static void RenderOffscreenPNG(vtkRenderWindow* renderWindow,
+static void RenderOffscreenPNG(vtkOpenGLRenderWindow* renderWindow,
                                const std::string& filename)
 {
     if (!renderWindow)
@@ -820,8 +823,8 @@ static void RenderOffscreenPNG(vtkRenderWindow* renderWindow,
     }
 
     renderWindow->SetOffScreenRendering(1);
+    std::cerr << "[VTK] RenderWindow class: " << renderWindow->GetClassName() << "\n";
     renderWindow->Render();
-
     vtkNew<vtkWindowToImageFilter> windowToImageFilter;
     windowToImageFilter->SetInput(renderWindow);
     windowToImageFilter->ReadFrontBufferOff();
@@ -860,7 +863,7 @@ void RenderOffscreenPNG(vtkRenderer* renderer,
         renderer->GetRenderWindow()->RemoveRenderer(renderer);
     }
 
-    vtkNew<vtkRenderWindow> renderWindow;
+    vtkNew<vtkOpenGLRenderWindow> renderWindow;
     renderWindow->SetOffScreenRendering(1);
     renderWindow->SetSize(width, height);
     renderWindow->AddRenderer(renderer);
@@ -1717,7 +1720,6 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
     auto lut = BuildLookupTable(request.color_map_name,
                                 stats.min_used,
                                 stats.max_used);
-
     // 2) Mapper and mesh actor (with optional clipping planes)
     auto mapper = vtkSmartPointer<vtkDataSetMapper>::New();
     mapper->SetInputData(dataset_to_plot);
@@ -1770,7 +1772,7 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
     int img_w = (request.image_width  > 0) ? request.image_width  : plotting.image_width;
     int img_h = (request.image_height > 0) ? request.image_height : plotting.image_height;
 
-    vtkNew<vtkRenderWindow> renderWindow;
+    vtkNew<vtkOpenGLRenderWindow> renderWindow;
     renderWindow->SetOffScreenRendering(1);
     renderWindow->SetAlphaBitPlanes(0);
     renderWindow->SetMultiSamples(0);
@@ -1839,8 +1841,6 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
             request.x_label, request.y_label, request.z_label,
             request.axis_title_font_size,
             request.axis_label_font_size);
-
-
 
 
     // 5) Plot title
@@ -2091,8 +2091,10 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
         cam->SetParallelScale(ps * zf);
     }
 
+    std::cout << "Render Offset 1 " << std::endl;
     // 11) Render and write PNG
     RenderOffscreenPNG(renderWindow, request.output_path);
+    std::cout << "Render Offset 2 " << std::endl;
 }
 
 // -----------------------------------------------------------------------------
@@ -2169,7 +2171,9 @@ void PlotStandardViewsForPotentialAndEnorm(vtkUnstructuredGrid* grid,
     // ---------------------------------------------------------------------
     // Compute E and Enorm from the chosen potential (if not already present)
     // ---------------------------------------------------------------------
+    const bool haveE     = (pd->GetArray("E")     != nullptr);
     bool haveEnorm = (pd->GetArray("Enorm") != nullptr);
+    
     if (!haveEnorm)
     {
         if (!AttachGradientEAndMagnitude(grid, potentialName, "E", "Enorm"))
@@ -2485,7 +2489,6 @@ void PlotStandardViewsForPotentialAndEnorm(vtkUnstructuredGrid* grid,
         r_barE.n_contours        = ce.n_contours;
         r_barE.output_path       = input.out_dir + "/Enorm_bar.png";
         apply_text_cfg(r_barE, cfg.frame_bar);
-
         PlotScalarFieldView(grid, r_fullE,   base_options, &stream_cfg);
         PlotScalarFieldView(grid, r_topE,    base_options, &stream_cfg);
         PlotScalarFieldView(grid, r_bottomE, base_options, &stream_cfg);
@@ -2590,7 +2593,6 @@ int make_plots(int argc, char** argv)
                   << " <path-to.vtu|.pvd>\n";
         return 1;
     }
-
     auto input = FEMPlot::PreparePlotInput(argv[1]);
 
     FEMPlot::PlottingOptions opts;
@@ -2599,9 +2601,15 @@ int make_plots(int argc, char** argv)
     return 0;
 }
 
-int _make_plots(std::filesystem::path pvd){
+int _make_plots(std::filesystem::path pvd, bool debug){
   std::string path = pvd.string();
   auto input = FEMPlot::PreparePlotInput(path.c_str());
+
+    if (debug){
+        vtkLogger::Init();
+        vtkLogger::SetStderrVerbosity(vtkLogger::VERBOSITY_TRACE);
+    }
+
   FEMPlot::PlottingOptions opts;
   FEMPlot::PlotStandardViewsForPotentialAndEnorm(
       input.grid, input, opts

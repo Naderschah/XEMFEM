@@ -15,8 +15,9 @@ int make_plot_api(Config cfg)
       }
   }
   if (single_run) {
+    std::cout << "Print Single Line" << std::endl;
     std::filesystem::path pvd = root / "Simulation" / "Simulation.pvd";
-    return _make_plots(pvd);
+    return _make_plots(pvd, cfg.debug.debug);
   }
 
   // --- multiple runs ---
@@ -28,7 +29,7 @@ int make_plot_api(Config cfg)
 
     std::filesystem::path pvd = e.path() / "Simulation" / "Simulation.pvd";
 
-    _make_plots(pvd);
+    _make_plots(pvd, cfg.debug.debug);
   }
   return 0;
 }

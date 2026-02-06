@@ -126,9 +126,21 @@ void save_results(const SimulationResult &result, const std::filesystem::path &r
     mfem::ParaViewDataCollection pvdc("Simulation", result.mesh.get());
     pvdc.SetPrefixPath(root_path.string());
 
-    pvdc.RegisterField("V",    result.V.get());
-    pvdc.RegisterField("E",    result.E.get());
-    pvdc.RegisterField("Emag", result.Emag.get());
+    auto RegisterIfReady = [&](const char* name,
+                           const std::unique_ptr<mfem::ParGridFunction>& gf)
+    {
+        if (!gf) return;
+
+        // Basic sanity: MFEM grid functions should have a space and a vector size.
+        if (!gf->ParFESpace()) return;
+        if (gf->Size() <= 0) return;
+
+        pvdc.RegisterField(name, gf.get());
+    };
+
+    RegisterIfReady("V",    result.V);
+    RegisterIfReady("E",    result.E);
+    RegisterIfReady("Emag", result.Emag);
 
     int order = result.V->FESpace()->GetOrder(0);
     pvdc.SetLevelsOfDetail(order);

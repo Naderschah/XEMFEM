@@ -138,8 +138,11 @@ int main(int argc, char** argv)
     }
     if (cmd == "plot") {
         // TODO Needs extra args?
-        run_plot(init_cfg);
-        std::cout << "Done" <<std::endl;
+        int world_rank = 0;
+        MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+        if (world_rank == 0)
+            run_plot(init_cfg);
+            std::cout << "Done" <<std::endl;
         return 0;
     }
     if (cmd == "interpolate") {

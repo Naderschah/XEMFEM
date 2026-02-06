@@ -40,6 +40,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     mesa-utils mesa-common-dev freeglut3-dev \
     libfontconfig1-dev libpng-dev libsdl2-dev libglm-dev \
     x11-apps \
+    # --- Mesa rendering for no GPU
+    libosmesa6 libosmesa6-dev \
+    libgl1-mesa-dri \
     # Debugging MPI with xterm
     xterm \
     && ln -sf $(which python3) /usr/local/bin/python \
@@ -108,6 +111,7 @@ RUN mkdir -p $HOME/vtk \
     -DVTK_MODULE_ENABLE_VTK_InteractionStyle=YES \
     \
     # Headless / offscreen setup
+    -DVTK_MODULE_ENABLE_VTK_RenderingOSMesa=YES \
     -DVTK_RENDERING_BACKEND=OpenGL2 \
     -DVTK_OPENGL_HAS_OSMESA=ON \
     -DVTK_USE_X=OFF \
