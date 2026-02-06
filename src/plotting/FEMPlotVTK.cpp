@@ -2091,10 +2091,8 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
         cam->SetParallelScale(ps * zf);
     }
 
-    std::cout << "Render Offset 1 " << std::endl;
     // 11) Render and write PNG
     RenderOffscreenPNG(renderWindow, request.output_path);
-    std::cout << "Render Offset 2 " << std::endl;
 }
 
 // -----------------------------------------------------------------------------
