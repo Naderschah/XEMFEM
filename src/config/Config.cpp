@@ -393,6 +393,8 @@ static void parse_trace_params(Config &cfg, const YAML::Node &root)
 
     params.max_traversals = O["max_traversals"].as<double>(cfg.tracing_params.max_traversals);
 
+    params.redistribution_every = O["redistribution_every"].as<int>(cfg.tracing_params.redistribution_every);
+
     if (params.method != "Euler-Cauchy" &&
         params.method != "RK4" &&
         params.method != "RK54" &&
@@ -408,6 +410,14 @@ static void parse_trace_params(Config &cfg, const YAML::Node &root)
         params.provider != "BOOST") 
     { Error("trace_params.provider must be one of {VTK, BOOST}"); }
     cfg.tracing_params = params;
+
+    if ((params.provider == "MPITracer") && (params.method != "Euler-Cauchy"))
+        Error("MPITracer supports Euler-Cauchy only");
+    
+    int world_size = 0;
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+    if ((params.provider == "MPITracer") && (world_size == 1))
+        Warning("MPITracer Running Effectively single threaded, use mpirun -np n as command prefix with n the number of processes to use");
 }
 
 // ---------------------- CIV Params 
@@ -562,7 +572,7 @@ static void verify_cross_dependence(Config cfg)
 
     bool mpi_enabled = (world_size > 1);
     bool metrics_path = (cfg.run_mode == "metrics") || ((cfg.run_mode == "sim") && cfg.optimize.enabled);
-    bool mpi_safe_method = (cfg.tracing_params.provider == "MPITracer") && ((cfg.civ_params.method != "RandomSample") || (cfg.civ_params.method != "Grid"));
+    bool mpi_safe_method = (cfg.tracing_params.provider == "MPITracer") && ((cfg.civ_params.method != "RandomSample") && (cfg.civ_params.method != "Grid"));
 
     if (cfg.compute.threads.enabled && mpi_enabled)
         throw std::runtime_error("MPI and Threading via OpenMP simulataneously is not supported, use as many MPI nodes as you intend to use threads");

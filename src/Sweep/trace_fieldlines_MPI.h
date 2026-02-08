@@ -24,6 +24,15 @@ struct TraceSummaryPOD
 static_assert(std::is_trivially_copyable<TraceSummaryPOD>::value,
               "TraceSummaryPOD must be POD for MPI gather.");
 
+struct TrackPointPOD
+{
+    int32_t seed_id;
+    int32_t step;
+    double  x[3]; // use first sdim entries, pad with 0
+};
+static_assert(std::is_trivially_copyable<TrackPointPOD>::value, "POD required");
+
+
 inline void SeedRangeForRank(std::size_t n, int rank, int size,
                             std::size_t &begin, std::size_t &end)
 {
@@ -50,7 +59,8 @@ void TraceDistributedEuler(
     bool axisymmetric,
     int redistribution_every,
     bool debug,
-    int debug_every = 5);
+    int debug_every = 5,
+    bool save_path = false);
 } // namespace mpitracing
 
 struct MPITraceContext

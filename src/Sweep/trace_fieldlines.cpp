@@ -127,7 +127,7 @@ struct FieldRHS
         const auto &codes    = finder.GetCode();
         
         // FIXME Handle boundary (exit code 1)
-        if (elem_ids.Size() != 1 || codes.Size() != 1 || elem_ids[0] < 0 || codes[0] != 0)
+        if (elem_ids.Size() != 1 || codes.Size() != 1 || elem_ids[0] < 0 || codes[0] == 2)
         {
             std::fill(dxds.begin(), dxds.end(), 0.0);
             // Get Debug information
@@ -1486,10 +1486,6 @@ void ElectronFieldLineTracer::SelectProvider_(const std::string &provider, bool 
             // but keep a local guard for safety.
             int comm_size = 1;
             MPI_Comm_size(pmesh->GetComm(), &comm_size);
-            if (comm_size > 1 && save_paths)
-            {
-                throw std::logic_error("MPITracer provider does not support save_paths with multiple MPI ranks.");
-            }
 
             // z_max_overrides not supported in this provider yet (miniapp-style particles)
             // If you need it later, incorporate per-particle z_max into tags/fields.
@@ -1505,7 +1501,8 @@ void ElectronFieldLineTracer::SelectProvider_(const std::string &provider, bool 
                 axisymmetric,
                 /*redistribution_every=*/cfg.tracing_params.redistribution_every, // add to Config
                 /*debug=*/cfg.debug.debug,
-                /*debug_every=*/0);
+                /*debug_every=*/0,
+                cfg.debug.dumpdata);
         };
     }
     else if (provider == "BOOST")

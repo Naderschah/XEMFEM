@@ -86,6 +86,8 @@
 
 #include <vtkLogger.h>
 #include <vtkOpenGLRenderWindow.h>
+#include <vtkRendererCollection.h>
+#include <vtkOpenGLRenderWindow.h>
 
 namespace FEMPlot
 {
@@ -821,16 +823,30 @@ static void RenderOffscreenPNG(vtkOpenGLRenderWindow* renderWindow,
         std::cerr << "RenderOffscreenPNG(window) ERROR: renderWindow is null\n";
         return;
     }
+    if (auto* ogl = vtkOpenGLRenderWindow::SafeDownCast(renderWindow))
+    {
+        ogl->SetUseOffScreenBuffers(true);
+    }
 
-    renderWindow->SetOffScreenRendering(1);
-    std::cerr << "[VTK] RenderWindow class: " << renderWindow->GetClassName() << "\n";
+
+    renderWindow->DoubleBufferOff();
+    renderWindow->SwapBuffersOff();
     renderWindow->Render();
+
     vtkNew<vtkWindowToImageFilter> windowToImageFilter;
     windowToImageFilter->SetInput(renderWindow);
-    windowToImageFilter->ReadFrontBufferOff();
+    windowToImageFilter->SetInputBufferTypeToRGB();
+    windowToImageFilter->ReadFrontBufferOn();
+    windowToImageFilter->ShouldRerenderOff();
     windowToImageFilter->Update();
 
     vtkImageData* image = windowToImageFilter->GetOutput();
+    int* dims = image->GetDimensions();
+    auto* p = static_cast<unsigned char*>(image->GetScalarPointer(0,0,0));
+    std::cerr << "dims=" << dims[0] << "x" << dims[1]
+            << " comps=" << image->GetNumberOfScalarComponents()
+            << " first_pixel=" << int(p[0]) << "," << int(p[1]) << "," << int(p[2]) << "\n";
+
     if (!image || !image->GetScalarPointer())
     {
         std::cerr << "RenderOffscreenPNG(window) ERROR: "
@@ -1819,6 +1835,7 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
 
     auto makeRenderer = [&](const ViewportRect& r) {
         auto ren = vtkSmartPointer<vtkRenderer>::New();
+        //ren->SetLayer(1);
         ren->SetBackground(1.0, 1.0, 1.0);
         ren->SetBackground2(1.0, 1.0, 1.0);
         ren->GradientBackgroundOff();
@@ -2091,10 +2108,11 @@ void PlotScalarFieldView(vtkUnstructuredGrid* grid,
         cam->SetParallelScale(ps * zf);
     }
 
-    std::cout << "Render Offset 1 " << std::endl;
     // 11) Render and write PNG
+    std::cerr << "Renderers in window: "
+          << renderWindow->GetRenderers()->GetNumberOfItems()
+          << std::endl;
     RenderOffscreenPNG(renderWindow, request.output_path);
-    std::cout << "Render Offset 2 " << std::endl;
 }
 
 // -----------------------------------------------------------------------------
@@ -2605,10 +2623,10 @@ int _make_plots(std::filesystem::path pvd, bool debug){
   std::string path = pvd.string();
   auto input = FEMPlot::PreparePlotInput(path.c_str());
 
-    if (debug){
-        vtkLogger::Init();
-        vtkLogger::SetStderrVerbosity(vtkLogger::VERBOSITY_TRACE);
-    }
+    //if (debug){
+    //    vtkLogger::Init();
+    //    vtkLogger::SetStderrVerbosity(vtkLogger::VERBOSITY_TRACE);
+    //}
 
   FEMPlot::PlottingOptions opts;
   FEMPlot::PlotStandardViewsForPotentialAndEnorm(
