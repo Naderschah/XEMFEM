@@ -41,7 +41,6 @@ struct ElectricFieldCoeff : public mfem::VectorCoefficient
     {
         T.SetIntPoint(&ip);
         phi.GetGradient(T, V);
-        V *= sign; // gives physical E = -grad(phi)
     }
 };
 
@@ -1301,13 +1300,15 @@ void MPITraceContext::Build(mfem::ParMesh &mesh, bool debug)
         const int order = 1;
         const bool discont = false;
         const int space_dim = mesh.SpaceDimension();
-        const int ordering = mfem::Ordering::byNODES;
+        const int ordering = mfem::Ordering::byVDIM;
         mesh.SetCurvature(order, discont, space_dim, ordering);
     }
 
     finder = std::make_unique<mfem::FindPointsGSLIB>(mesh.GetComm());
     finder->Setup(mesh);
     finder->SetDefaultInterpolationValue(std::numeric_limits<double>::quiet_NaN());
+    // THis is averaging across MPI partitions (each side has a different value due to the polynomial representation)
+    finder->SetL2AvgType(mfem::FindPointsGSLIB::AvgType::ARITHMETIC);
 }
 void BoostTraceContext::Build(mfem::ParMesh &mesh, bool debug)
 {
@@ -1375,7 +1376,7 @@ void ElectronFieldLineTracer::Setup(const SimulationResult &result,
     MFEM_VERIFY(pmesh, "SimulationResult.mesh is null");
 
     // Attach potential
-    auto *phi = result.V.get();
+    phi = result.V.get();
     MFEM_VERIFY(phi, "SimulationResult.V is null");
 
     const int dim = pmesh->SpaceDimension();
@@ -1385,7 +1386,14 @@ void ElectronFieldLineTracer::Setup(const SimulationResult &result,
     const int order = fes_phi->GetMaxElementOrder();
 
     // Build vector FE space for E
-    fec_vec = std::make_unique<mfem::H1_FECollection>(order, dim);
+    if (!tp.use_l2_electric_field)
+    {
+        fec_vec = std::make_unique<mfem::H1_FECollection>(order, dim);
+    }
+    else
+    {
+        fec_vec = std::make_unique<mfem::L2_FECollection>(order, dim);
+    }
     fes_vec = std::make_unique<mfem::ParFiniteElementSpace>(
         pmesh, fec_vec.get(), dim, mfem::Ordering::byVDIM);
 
@@ -1394,6 +1402,9 @@ void ElectronFieldLineTracer::Setup(const SimulationResult &result,
 
     ElectricFieldCoeff E_coeff(*phi, -1.0);
     E_gf_owned->ProjectCoefficient(E_coeff);
+    
+    phi->ExchangeFaceNbrData();
+    E_gf_owned->ExchangeFaceNbrData();
 
     E_gf = E_gf_owned.get();
 
@@ -1493,7 +1504,7 @@ void ElectronFieldLineTracer::SelectProvider_(const std::string &provider, bool 
             mpitracing::TraceDistributedEuler(
                 *pmesh,
                 *mpitracer->finder,
-                *E_gf,
+                *phi,
                 params,
                 seeds,
                 out_results,

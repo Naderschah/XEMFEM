@@ -192,6 +192,8 @@ struct ElectronTraceParams
     // For MPI 
     int redistribution_every = 1;
 
+    bool use_l2_electric_field = true;
+
     // tracing region
     double r_min = 0.0;
     double r_max = 0.664;

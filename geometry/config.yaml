@@ -53,14 +53,14 @@ optimize:
   z_max: 0.004
   trace_params:
     provider: MPITracer
-    method: RK4
-    c_step: 0.1
+    method: Euler-Cauchy
+    c_step: 2
     geom_tol: 1e-6
-    max_traversals: 2
+    max_traversals: 100
     redistribution_every: 1
   civ_params:
-    method: RandomSample
-    num_seed_elements: 8100
+    method: Grid
+    num_seed_elements: 200
     nr: 25
     nz: 75
     max_levels: 2
@@ -106,8 +106,8 @@ plotting:
   img_width: 2160
   img_height: 3840
 interpolate:
-  Nx: 768
-  Ny: 2560
+  Nx: 3024
+  Ny: 10240
   H1_project: true
 materials:
   GXe:

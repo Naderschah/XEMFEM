@@ -138,9 +138,8 @@ static mfem::Vector BuildPointPositionsByNodes(const int space_dim,
 
 static void SampleGradV(mfem::ParMesh &pmesh,
                         const mfem::ParGridFunction &V,
-                        const mfem::Array<unsigned int> &code,
-                        const mfem::Array<unsigned int> &elid,
-                        const mfem::Vector &ref_by_nodes, // component-major: ref[d*N + p]
+                        mfem::FindPointsGSLIB &finder,
+                        const mfem::Array<unsigned int> &code, // size N, on all ranks
                         const int N,
                         const bool accept_surface_projection,
                         GridSample &out)
@@ -148,85 +147,212 @@ static void SampleGradV(mfem::ParMesh &pmesh,
     using namespace mfem;
 
     const int field_dim = pmesh.Dimension();
+    const int vdim = field_dim;
 
+    // 1) Redistribute point info to owning ranks (local elem ids + local ref coords + local codes)
+    Array<unsigned int> recv_elem;
+    Array<unsigned int> recv_code;
+    Vector recv_ref_by_vdim; // component-major: recv_ref[d*nrecv + i]
+    finder.DistributePointInfoToOwningMPIRanks(recv_elem, recv_ref_by_vdim, recv_code);
+
+    const int nrecv = recv_elem.Size();
+    MFEM_VERIFY(recv_code.Size() == nrecv, "recv_code size mismatch");
+    MFEM_VERIFY(recv_ref_by_vdim.Size() == nrecv * field_dim, "recv_ref size mismatch");
+
+    // 2) Evaluate locally on owning ranks
     GradientGridFunctionCoefficient gradV(&V);
     Vector g(field_dim);
     IntegrationPoint ip;
 
+    // Local interpolation buffer for the received points.
+    // Use byNODES (point-major): [p0: x y z][p1: x y z]...
+    Vector vals_local;
+    vals_local.SetSize(nrecv * vdim);
+    vals_local = 0.0;
+
+    for (int i = 0; i < nrecv; ++i)
+    {
+        const unsigned int c = recv_code[i];
+        const bool inside  = (c == 0);
+        const bool on_surf = (c == 1);
+        if (!inside && !(accept_surface_projection && on_surf)) { continue; }
+
+        const double r0 = recv_ref_by_vdim[0 * nrecv + i];
+        const double r1 = recv_ref_by_vdim[1 * nrecv + i];
+        const double r2 = (field_dim == 3) ? recv_ref_by_vdim[2 * nrecv + i] : 0.0;
+
+        if (field_dim == 2) { ip.Set2(r0, r1); }
+        else                { ip.Set3(r0, r1, r2); }
+
+        const int e = static_cast<int>(recv_elem[i]);
+        ElementTransformation *T = pmesh.GetElementTransformation(e);
+        MFEM_VERIFY(T != nullptr, "Null ElementTransformation");
+
+        T->SetIntPoint(&ip);
+        gradV.Eval(g, *T, ip);
+        g *= -1.0;
+
+        // byNODES layout
+        vals_local[i * vdim + 0] = g[0];
+        vals_local[i * vdim + 1] = g[1];
+        if (field_dim == 3) { vals_local[i * vdim + 2] = g[2]; }
+    }
+
+    // 3) Gather interpolated values back to the ranks that originated the query
+    Vector vals_global;
+    vals_global.SetSize(N * vdim);
+    vals_global = 0.0;
+
+    finder.DistributeInterpolatedValues(vals_local, vdim, Ordering::byNODES, vals_global);
+
+    // 4) Fill outputs on each rank (use original 'code' to set validity consistently)
+    //    Assumes out.* arrays are sized to N and initialized (or we set them here).
     for (int p = 0; p < N; ++p)
     {
         const unsigned int c = code[p];
         const bool inside  = (c == 0);
         const bool on_surf = (c == 1);
-        if (!inside && !(accept_surface_projection && on_surf)) { continue; }
+        if (!inside && !(accept_surface_projection && on_surf))
+        {
+            out.valid[p] = 0;
+            continue;
+        }
 
-        const double r0 = ref_by_nodes[0 * N + p];
-        const double r1 = ref_by_nodes[1 * N + p];
-        const double r2 = (field_dim == 3) ? ref_by_nodes[2 * N + p] : 0.0;
-
-        if (field_dim == 2) { ip.Set2(r0, r1); }
-        else                { ip.Set3(r0, r1, r2); }
-
-        const int e = static_cast<int>(elid[p]);
-        ElementTransformation *T = pmesh.GetElementTransformation(e);
-        T->SetIntPoint(&ip);
-
-        gradV.Eval(g, *T, ip);
-        g *= -1.0;
+        const double ex = vals_global[p * vdim + 0];
+        const double ey = vals_global[p * vdim + 1];
+        const double ez = (field_dim == 3) ? vals_global[p * vdim + 2] : 0.0;
 
         out.valid[p] = 1;
-        out.Ex[p] = g[0];
-        out.Ey[p] = g[1];
-        if (field_dim == 3) { out.Ez[p] = g[2]; }
-        out.Emag[p] = std::sqrt(g * g);
+        out.Ex[p] = ex;
+        out.Ey[p] = ey;
+        if (field_dim == 3) { out.Ez[p] = ez; }
+        out.Emag[p] = std::sqrt(ex*ex + ey*ey + ez*ez);
     }
 }
 
+
 static void SampleH1Projection(mfem::ParMesh &pmesh,
-                              const mfem::ParGridFunction &E_h, // vdim == field_dim
-                              const mfem::Array<unsigned int> &code,
-                              const mfem::Array<unsigned int> &elid,
-                              const mfem::Vector &ref_by_nodes, // component-major: ref[d*N + p]
-                              const int N,
-                              const bool accept_surface_projection,
-                              GridSample &out)
+                               const mfem::ParGridFunction &E_h, // vdim == field_dim
+                               mfem::FindPointsGSLIB &finder,
+                               const mfem::Array<unsigned int> &code, // size N (original query ordering)
+                               const int N,
+                               const bool accept_surface_projection,
+                               GridSample &out)
 {
     using namespace mfem;
 
     const int field_dim = pmesh.Dimension();
+    const int vdim = field_dim;
+
+    // 1) Redistribute point info to owning ranks
+    Array<unsigned int> recv_elem;
+    Array<unsigned int> recv_code;
+    Vector recv_ref_by_vdim; // component-major: ref[d*nrecv + i]
+    finder.DistributePointInfoToOwningMPIRanks(recv_elem, recv_ref_by_vdim, recv_code);
+
+    const int nrecv = recv_elem.Size();
+    MFEM_VERIFY(recv_code.Size() == nrecv, "recv_code size mismatch");
+    MFEM_VERIFY(recv_ref_by_vdim.Size() == nrecv * field_dim, "recv_ref size mismatch");
+
+    // 2) Evaluate locally on owning ranks
     Vector g(field_dim);
     IntegrationPoint ip;
 
-    for (int p = 0; p < N; ++p)
+    // Local interpolation buffer for received points, byNODES (point-major)
+    Vector vals_local(nrecv * vdim);
+    vals_local = 0.0;
+
+    for (int i = 0; i < nrecv; ++i)
     {
-        const unsigned int c = code[p];
+        const unsigned int c = recv_code[i];
         const bool inside  = (c == 0);
         const bool on_surf = (c == 1);
         if (!inside && !(accept_surface_projection && on_surf)) { continue; }
 
-        const double r0 = ref_by_nodes[0 * N + p];
-        const double r1 = ref_by_nodes[1 * N + p];
-        const double r2 = (field_dim == 3) ? ref_by_nodes[2 * N + p] : 0.0;
+        const double r0 = recv_ref_by_vdim[0 * nrecv + i];
+        const double r1 = recv_ref_by_vdim[1 * nrecv + i];
+        const double r2 = (field_dim == 3) ? recv_ref_by_vdim[2 * nrecv + i] : 0.0;
 
         if (field_dim == 2) { ip.Set2(r0, r1); }
         else                { ip.Set3(r0, r1, r2); }
 
-        const int e = static_cast<int>(elid[p]);
+        const int e = static_cast<int>(recv_elem[i]);
         ElementTransformation *T = pmesh.GetElementTransformation(e);
+        MFEM_VERIFY(T != nullptr, "Null ElementTransformation");
+
         T->SetIntPoint(&ip);
 
         // Evaluate the projected continuous vector field at this point
         E_h.GetVectorValue(*T, ip, g);
 
+        // byNODES layout
+        vals_local[i * vdim + 0] = g[0];
+        vals_local[i * vdim + 1] = g[1];
+        if (field_dim == 3) { vals_local[i * vdim + 2] = g[2]; }
+    }
+
+    // 3) Gather interpolated values back to original querying ranks/order
+    Vector vals_global(N * vdim);
+    vals_global = 0.0;
+
+    finder.DistributeInterpolatedValues(vals_local, vdim, Ordering::byNODES, vals_global);
+
+    // 4) Fill outputs on each rank using original 'code' for validity
+    for (int p = 0; p < N; ++p)
+    {
+        const unsigned int c = code[p];
+        const bool inside  = (c == 0);
+        const bool on_surf = (c == 1);
+        if (!inside && !(accept_surface_projection && on_surf))
+        {
+            out.valid[p] = 0;
+            continue;
+        }
+
+        const double ex = vals_global[p * vdim + 0];
+        const double ey = vals_global[p * vdim + 1];
+        const double ez = (field_dim == 3) ? vals_global[p * vdim + 2] : 0.0;
+
         out.valid[p] = 1;
-        out.Ex[p] = g[0];
-        out.Ey[p] = g[1];
-        if (field_dim == 3) { out.Ez[p] = g[2]; }
-        out.Emag[p] = std::sqrt(g * g);
+        out.Ex[p] = ex;
+        out.Ey[p] = ey;
+        if (field_dim == 3) { out.Ez[p] = ez; }
+        out.Emag[p] = std::sqrt(ex*ex + ey*ey + ez*ez);
     }
 }
 
+static mfem::Vector BuildPointPositionsByNodesRange(const int space_dim,
+                                                    const int Nx,
+                                                    const int Ny,
+                                                    const int Nz,
+                                                    const mfem::Vector &bbmin3,
+                                                    const mfem::Vector &spacing,
+                                                    const int p0,
+                                                    const int nloc)
+{
+    using namespace mfem;
 
+    Vector point_pos(space_dim * nloc);
+
+    for (int lp = 0; lp < nloc; ++lp)
+    {
+        const int p = p0 + lp;
+
+        const int i = p % Nx;
+        const int t = p / Nx;
+        const int j = t % Ny;
+        const int k = t / Ny;
+
+        point_pos[0 * nloc + lp] = bbmin3[0] + i * spacing[0];
+        point_pos[1 * nloc + lp] = bbmin3[1] + j * spacing[1];
+        if (space_dim == 3)
+        {
+            point_pos[2 * nloc + lp] = bbmin3[2] + k * spacing[2];
+        }
+    }
+
+    return point_pos;
+}
 void SampleEFieldOnCartesianGrid(mfem::ParMesh &pmesh,
                                  const mfem::ParGridFunction &V,
                                  const int Nx, const int Ny, const int Nz,
@@ -237,75 +363,209 @@ void SampleEFieldOnCartesianGrid(mfem::ParMesh &pmesh,
 {
     using namespace mfem;
 
-    const int field_dim = pmesh.Dimension();      // 2 or 3: size of grad(V)
-    const int space_dim = pmesh.SpaceDimension(); // 2 or 3: physical coordinate dimension for FindPoints
+    MPI_Comm comm = pmesh.GetComm();
+    int myid = 0, np = 1;
+    MPI_Comm_rank(comm, &myid);
+    MPI_Comm_size(comm, &np);
+
+    const int field_dim = pmesh.Dimension();      // 2 or 3: field dimension of grad(V) / E
+    const int space_dim = pmesh.SpaceDimension(); // 2 or 3: coordinate dimension for FindPoints
     MFEM_VERIFY(field_dim == 2 || field_dim == 3, "Only 2D/3D elements supported");
     MFEM_VERIFY(space_dim == 2 || space_dim == 3, "Only 2D/3D physical space supported");
 
-    // Bounding box in physical space, then pad to 3D for export
+    // ------------------------------------------------------------------
+    // Global bounding box (ParMesh::GetBoundingBox is global over comm)
+    // ------------------------------------------------------------------
     Vector bbmin_s(space_dim), bbmax_s(space_dim);
     pmesh.GetBoundingBox(bbmin_s, bbmax_s);
 
-    mfem::Vector bbmin3(3), bbmax3(3);
+    Vector bbmin3(3), bbmax3(3);
     bbmin3 = 0.0; bbmax3 = 0.0;
-    for (int d = 0; d < space_dim; ++d) { bbmin3[d] = bbmin_s[d]; bbmax3[d] = bbmax_s[d]; }
+    for (int d = 0; d < space_dim; ++d)
+    {
+        bbmin3[d] = bbmin_s[d];
+        bbmax3[d] = bbmax_s[d];
+    }
 
-    // Output grid metadata: ALWAYS 3D coordinates (x,y,z)
-    out.Nx = Nx; out.Ny = Ny; out.Nz = Nz;
-
-    out.origin.SetSize(3);
-    out.spacing.SetSize(3);
-    out.origin = bbmin3;
-    out.spacing = 0.0;
+    Vector origin(3), spacing(3);
+    origin = bbmin3;
+    spacing = 0.0;
 
     MFEM_VERIFY(Nx > 1 && Ny > 1, "Nx and Ny must be > 1");
-    out.spacing[0] = (bbmax3[0] - bbmin3[0]) / (Nx - 1);
-    out.spacing[1] = (bbmax3[1] - bbmin3[1]) / (Ny - 1);
-
-    // For space_dim==3, z spacing comes from bbox; for space_dim==2 it's a dummy axis.
+    spacing[0] = (bbmax3[0] - bbmin3[0]) / (Nx - 1);
+    spacing[1] = (bbmax3[1] - bbmin3[1]) / (Ny - 1);
     if (Nz > 1 && space_dim == 3)
     {
-        out.spacing[2] = (bbmax3[2] - bbmin3[2]) / (Nz - 1);
+        spacing[2] = (bbmax3[2] - bbmin3[2]) / (Nz - 1);
     }
     else
     {
-        out.spacing[2] = 0.0; // single slice OR 2D physical space => repeated slices
+        spacing[2] = 0.0;
     }
 
     const int N = Nx * Ny * Nz;
 
-    out.Ex.assign(N, std::numeric_limits<double>::quiet_NaN());
-    out.Ey.assign(N, std::numeric_limits<double>::quiet_NaN());
-    out.Ez.assign(N, 0.0); // kept even for 2D field_dim; writer can ignore/omit based on availability
-    out.Emag.assign(N, std::numeric_limits<double>::quiet_NaN());
-    out.valid.assign(N, 0);
+    // ------------------------------------------------------------------
+    // Partition global point indices p in [0, N) into contiguous blocks
+    // ------------------------------------------------------------------
+    const int base = (np > 0) ? (N / np) : 0;
+    const int rem  = (np > 0) ? (N % np) : 0;
+    const int nloc = base + (myid < rem ? 1 : 0);
+    const int p0   = myid * base + (myid < rem ? myid : rem);
 
-    // Ensure Nodes exist for FindPointsGSLIB
+    // ------------------------------------------------------------------
+    // Local query points (byNODES: component-major, size space_dim*nq)
+    // Workaround for MFEM/GSLIB paths that dislike nq==0:
+    // if nloc==0, query 1 dummy point and ignore results.
+    // ------------------------------------------------------------------
+    const bool need_dummy = (nloc == 0);
+    const int nq = need_dummy ? 1 : nloc;
+
+    Vector point_pos(space_dim * nq);
+    if (!need_dummy)
+    {
+        // Build local subset deterministically from global linear index p = p0 + lp
+        for (int lp = 0; lp < nq; ++lp)
+        {
+            const int p = p0 + lp;
+
+            const int i = p % Nx;
+            const int t = p / Nx;
+            const int j = t % Ny;
+            const int k = t / Ny;
+
+            point_pos[0 * nq + lp] = bbmin3[0] + i * spacing[0];
+            point_pos[1 * nq + lp] = bbmin3[1] + j * spacing[1];
+            if (space_dim == 3)
+            {
+                point_pos[2 * nq + lp] = bbmin3[2] + k * spacing[2];
+            }
+        }
+    }
+    else
+    {
+        // Dummy point inside bbox
+        point_pos = 0.0;
+        point_pos[0] = bbmin3[0];
+        if (space_dim >= 2) { point_pos[1] = bbmin3[1]; }
+        if (space_dim == 3) { point_pos[2] = bbmin3[2]; }
+    }
+
+    // ------------------------------------------------------------------
+    // Local outputs for nq points
+    // NOTE: GridSample::valid appears to be std::vector<unsigned char>.
+    // We'll gather that as MPI_UNSIGNED_CHAR.
+    // ------------------------------------------------------------------
+    GridSample local;
+    local.dim = field_dim;
+    local.Nx = Nx; local.Ny = Ny; local.Nz = Nz;
+    local.origin.SetSize(3); local.spacing.SetSize(3);
+    local.origin = origin; local.spacing = spacing;
+
+    local.Ex.assign(nq, std::numeric_limits<double>::quiet_NaN());
+    local.Ey.assign(nq, std::numeric_limits<double>::quiet_NaN());
+    local.Ez.assign(nq, 0.0);
+    local.Emag.assign(nq, std::numeric_limits<double>::quiet_NaN());
+    local.valid.assign(nq, static_cast<unsigned char>(0));
+
+    // ------------------------------------------------------------------
+    // Point location + interpolation (collective over comm)
+    // ------------------------------------------------------------------
     pmesh.EnsureNodes();
     MFEM_VERIFY(pmesh.GetNodes() != nullptr, "Mesh nodes are required for FindPointsGSLIB");
-    // Build point samples  
-    mfem::Vector point_pos = BuildPointPositionsByNodes(space_dim, Nx, Ny, Nz, bbmin3, out.spacing);
 
-    // Locate points in the mesh
-    mfem::FindPointsGSLIB finder(pmesh.GetComm());
+    FindPointsGSLIB finder(comm);
     finder.Setup(pmesh);
-    finder.FindPoints(point_pos, mfem::Ordering::byNODES);
+    finder.FindPoints(point_pos, Ordering::byNODES);
 
-    const auto &code = finder.GetCode();
-    const auto &elid = finder.GetElem();
-    const mfem::Vector &ref = finder.GetReferencePosition(); // component-major: ref[d*N + p]
+    const auto &code_local = finder.GetCode(); // size nq
 
-    // Sample either raw -grad(V) or projected H1 E_h
     if (!H1_project)
     {
-        SampleGradV(pmesh, V, code, elid, ref, N, accept_surface_projection, out);
+        SampleGradV(pmesh, V, finder, code_local, nq, accept_surface_projection, local);
     }
     else
     {
         const ProjectedH1VectorField proj = BuildEFieldH1Projection(pmesh, V, cfg);
-        SampleH1Projection(pmesh, *(proj.E), code, elid, ref, N, accept_surface_projection, out);
+        SampleH1Projection(pmesh, *(proj.E), finder, code_local, nq, accept_surface_projection, local);
     }
+
+    // ------------------------------------------------------------------
+    // Gather to rank 0 in global p-order (contiguous blocks)
+    // Only gather the real portion [0, nloc) (exclude dummy if present).
+    // Avoid passing nullptr recvcounts/displs/recvbuf on non-root:
+    // some MPI impls dereference them anyway.
+    // ------------------------------------------------------------------
+    const int send_n = nloc;
+
+    std::vector<int> recvcounts(np, 0), displs(np, 0);
+    for (int r = 0; r < np; ++r)
+    {
+        const int rn  = base + (r < rem ? 1 : 0);
+        const int rp0 = r * base + (r < rem ? r : rem);
+        recvcounts[r] = rn;
+        displs[r]     = rp0;
+    }
+
+    // Root allocates full out; non-root can leave out untouched.
+    if (myid == 0)
+    {
+        out.dim = field_dim;
+        out.Nx = Nx; out.Ny = Ny; out.Nz = Nz;
+        out.origin.SetSize(3); out.spacing.SetSize(3);
+        out.origin = origin; out.spacing = spacing;
+
+        out.Ex.assign(N, std::numeric_limits<double>::quiet_NaN());
+        out.Ey.assign(N, std::numeric_limits<double>::quiet_NaN());
+        out.Ez.assign(N, 0.0);
+        out.Emag.assign(N, std::numeric_limits<double>::quiet_NaN());
+        out.valid.assign(N, static_cast<unsigned char>(0));
+    }
+
+    double dummy_d = 0.0;
+    unsigned char dummy_uc = 0;
+
+    // send buffers: only valid for send_n>0
+    const double *sendEx   = (send_n > 0) ? local.Ex.data()   : nullptr;
+    const double *sendEy   = (send_n > 0) ? local.Ey.data()   : nullptr;
+    const double *sendEz   = (send_n > 0) ? local.Ez.data()   : nullptr;
+    const double *sendEmag = (send_n > 0) ? local.Emag.data() : nullptr;
+    const unsigned char *sendVal = (send_n > 0) ? local.valid.data() : nullptr;
+
+    // recv buffers: always valid pointers on all ranks
+    double *recvEx   = (myid == 0) ? out.Ex.data()   : &dummy_d;
+    double *recvEy   = (myid == 0) ? out.Ey.data()   : &dummy_d;
+    double *recvEz   = (myid == 0) ? out.Ez.data()   : &dummy_d;
+    double *recvEmag = (myid == 0) ? out.Emag.data() : &dummy_d;
+    unsigned char *recvVal = (myid == 0) ? out.valid.data() : &dummy_uc;
+
+    MPI_Gatherv(sendEx, send_n, MPI_DOUBLE,
+                recvEx, recvcounts.data(), displs.data(), MPI_DOUBLE,
+                0, comm);
+
+    MPI_Gatherv(sendEy, send_n, MPI_DOUBLE,
+                recvEy, recvcounts.data(), displs.data(), MPI_DOUBLE,
+                0, comm);
+
+    if (field_dim == 3)
+    {
+        MPI_Gatherv(sendEz, send_n, MPI_DOUBLE,
+                    recvEz, recvcounts.data(), displs.data(), MPI_DOUBLE,
+                    0, comm);
+    }
+
+    MPI_Gatherv(sendEmag, send_n, MPI_DOUBLE,
+                recvEmag, recvcounts.data(), displs.data(), MPI_DOUBLE,
+                0, comm);
+
+    MPI_Gatherv(sendVal, send_n, MPI_UNSIGNED_CHAR,
+                recvVal, recvcounts.data(), displs.data(), MPI_UNSIGNED_CHAR,
+                0, comm);
+
+    // After this, only rank 0 has a fully populated 'out' suitable for writing.
 }
+
+
 
 
 
@@ -537,63 +797,67 @@ static void WriteGridSampleBinary(const GridSample &g,
 
 int do_interpolate(Config cfg)
 {
-  // Mess with mpi so only Rank 0 machine does interpolation
-  if (cfg.compute.mpi.enabled)
-  {  
-    int mpi_inited = 0;
-    MPI_Initialized(&mpi_inited);
-    int world_rank = 0, world_size = 1;
-    if (mpi_inited)
-    {
-      MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
-      MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-    }
-    // Rank-0-only execution
-    if (world_rank != 0) { return 0; }
-    MPI_Comm comm_for_single_rank = MPI_COMM_SELF;
+  int mpi_inited = 0;
+  MPI_Initialized(&mpi_inited);
+
+  int world_rank = 0, world_size = 1;
+  if (mpi_inited)
+  {
+    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
   }
-  // Get filepath
+
+  // Get filepath (OK to do on all ranks; if you want, you can print only on rank 0)
   std::filesystem::path save_root(cfg.save_path);
   std::filesystem::path run_dir;
-  // TODOO Make multiple runs possible same TODO in optimization move this bit to utils module
+
   auto runs = read_root_level_runs_from_meta(save_root);
   if (runs.empty()) {
       run_dir = save_root;
-      std::cout << "[METRICS] meta.txt not found or empty; "
-                << "using save_root directly: " << run_dir << "\n";
+      if (world_rank == 0)
+        std::cout << "[METRICS] meta.txt not found or empty; using save_root directly: "
+                  << run_dir << "\n";
   } else if (runs.size() == 1) {
       run_dir = save_root / runs.front();
-      std::cout << "[METRICS] Found single run in meta.txt: "
-                << runs.front() << " → " << run_dir << "\n";
+      if (world_rank == 0)
+        std::cout << "[METRICS] Found single run in meta.txt: "
+                  << runs.front() << " → " << run_dir << "\n";
   } else {
-      std::cerr << "[METRICS] meta.txt contains multiple runs under "
-                << save_root << ":\n";
-      for (const auto &r : runs) {
-          std::cerr << "  - " << r << "\n";
+      if (world_rank == 0)
+      {
+        std::cerr << "[METRICS] meta.txt contains multiple runs under " << save_root << ":\n";
+        for (const auto &r : runs) { std::cerr << "  - " << r << "\n"; }
+        std::cerr << "Please specify which run to use (CLI/config).\n";
       }
-      std::cerr << "Please specify which run to use (CLI/config).\n";
+      // make sure all ranks stop together
+      if (mpi_inited) { MPI_Abort(MPI_COMM_WORLD, 1); }
       std::exit(1);
   }
-  // Load data 
+
+  // Load data (must be called on all ranks if it builds ParMesh/ParGridFunction on world comm)
   SimulationResult result = load_results(cfg, run_dir);
 
-  // Interpolation grid settings
   const int Nx = cfg.interp.Nx;
   const int Ny = cfg.interp.Ny;
-  const int Nz = cfg.interp.Nz; // ignored if dim==2
-  const bool accept_surface = false;//cfg.interp_accept_surface_projection;
+  const int Nz = cfg.interp.Nz;
+  const bool accept_surface = false;
 
   GridSample grid;
   grid.dim = result.mesh->Dimension();
 
-  // Interpolate 
-  SampleEFieldOnCartesianGrid(*result.mesh, *result.V, Nx, Ny, Nz, grid, cfg, cfg.interp.H1_project, accept_surface);
+  // Interpolate (collective across result.mesh->GetComm())
+  SampleEFieldOnCartesianGrid(*result.mesh, *result.V,
+                              Nx, Ny, Nz, grid,
+                              cfg, cfg.interp.H1_project, accept_surface);
 
-  // Write output
-  const auto out_dir = run_dir / "interpolated";
-  std::filesystem::create_directories(out_dir);
-  WriteGridSampleBinary(grid, out_dir); 
+  // Rank-0-only write
+  if (!mpi_inited || world_rank == 0)
+  {
+    const auto out_dir = run_dir / "interpolated";
+    std::filesystem::create_directories(out_dir);
+    WriteGridSampleBinary(grid, out_dir);
+    std::cout << "[INTERP] wrote interpolated grid to: " << out_dir << "\n";
+  }
 
-  std::cout << "[INTERP] wrote interpolated grid to: " << out_dir << "\n";
   return 0;
 }
