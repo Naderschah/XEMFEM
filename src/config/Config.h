@@ -3,9 +3,10 @@
 #include <unordered_map>
 #include <vector>
 #include <mpi.h>
+#include <yaml-cpp/yaml.h>
+#include <fstream>
+#include <cstring>
 
-// FIXME REMOVE THE DEFAULTS
-// TODO Remove defaults - fix documentation  
 // -------------------- Mesh Specific ----------------------------
 struct Boundary {
     int bdr_id = -1;        // bdr_id
@@ -31,8 +32,7 @@ struct MeshSettings {
 // -------------------- Compute / Runtime Settings ----------------------------
 struct MPISettings {
     bool enabled = true;
-    bool ranks_auto = true;     // true if "auto" was given
-    int  ranks = 1;             // ignored if ranks_auto=true
+    int  ranks = 1;        
     bool repartition_after_refine = true;
 };
 
@@ -260,13 +260,18 @@ struct Config {
     // Internal for runtime config checking
     std::string run_mode = "sim";
 
-    // Load from path
     static Config Load(const std::string& path);
-    static Config Load(const std::string &path, std::string run_mode);
-    // embed config in geometry binary
+    static Config Load(const std::string& path, std::string run_mode);
+
     static Config LoadFromString(const std::string& yaml_str);
+    static Config LoadFromString(const std::string& yaml_str, std::string run_mode);
+
+    static Config LoadFromNode(const YAML::Node& root);
+    static Config LoadFromNode(const YAML::Node& root, std::string run_mode);
 };
+std::string ReadConfigString(const std::string& path, MPI_Comm comm);
 
 
 
+void apply_fieldcage_network(YAML::Node &root);
 void apply_fieldcage_network(Config &cfg);

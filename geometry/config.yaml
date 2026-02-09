@@ -8,12 +8,12 @@ mesh:
   autoappend: true
   NetgenParams:
     preset: VeryFine
-    maxSize: 0.15008
+    maxSize: 0.015008
     minSize: 0
-    growthRate: 0.2
+    growthRate: 0.1
     UseSurfaceCurvature: 1
-    NBSegmentsPerEdge: 2
-    NBSegmentsPerRadius: 2
+    NBSegmentsPerEdge: 4
+    NBSegmentsPerRadius: 3
     UseChordalError: 0
     ChordalErrorValue: 1
     AQ_ElemSizeWeight: 0.5
@@ -39,7 +39,7 @@ compute:
     num: -1
     affinity: scatter
 optimize:
-  enabled: false
+  enabled: true
   print_results: true
   objective: CIV
   max_evals: 1

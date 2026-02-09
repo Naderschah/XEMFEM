@@ -13,6 +13,7 @@
 // Recursive function executing each sweep combination
 void sweep_recursive_cfg(
     const Config& base_cfg,
+    const std::string config_str,
     const std::vector<SweepEntry>& sweeps,
     std::size_t idx,
     std::vector<std::pair<std::string, std::string>>& active_params,

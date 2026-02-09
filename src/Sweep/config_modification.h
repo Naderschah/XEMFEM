@@ -72,4 +72,3 @@ inline std::string to_string_any<bool>(const bool &v)
 // -----------------------------------------------------------------------------
 // Config field access by path
 // -----------------------------------------------------------------------------
-void set_cfg_value_from_string(Config &cfg, const std::string &path, const std::string &value);

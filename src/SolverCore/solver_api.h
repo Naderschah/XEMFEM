@@ -8,7 +8,6 @@
 #include <cstddef>
 #include <stdexcept>
 
-
 #include "Config.h"
 #include "mfem.hpp"
 
@@ -56,8 +55,8 @@ SimulationResult run_simulation(
     const std::filesystem::path& model_path
 );
 
-void save_results(const SimulationResult &result, const std::filesystem::path &root_path);
+void save_results(const SimulationResult &result, const std::filesystem::path &root_path, YAML::Node yaml_config);
 
 SimulationResult load_results(const Config &cfg, const std::filesystem::path &root_path);
 
-std::string run_one(const Config& cfg, const std::vector<std::pair<std::string, std::string>>& active_params, std::size_t run_index);
+std::string run_one(const Config& cfg, YAML::Node yaml_root, const std::vector<std::pair<std::string, std::string>>& active_params, std::size_t run_index);

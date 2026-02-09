@@ -32,10 +32,9 @@ namespace parallel
         {
             if (rank == 0) { std::cout << "[MPI] number of processes = " << world_size << "\n"; }
             omp_set_num_threads(1);
-
         }
         
-        // Threading 
+        // Threading (MPI + threading errors in Config)
         if (cfg.compute.threads.enabled)
         {
             // TODO THis might not set threads correctly for all dependencies due to the env variables for MPI, otherwise MPI runs with all threads

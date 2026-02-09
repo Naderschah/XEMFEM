@@ -1,11 +1,15 @@
 // src/config/Config.cpp
 #include "Config.h"
-#include <yaml-cpp/yaml.h>
 #include <stdexcept>
 #include <iostream>
 #include <algorithm>
 #include <sstream>
 #include <cstdlib>
+#include <mpi.h>
+
+
+
+
 
 // ------ Print formating TODO Standardize across all modules
 inline bool use_color() {
@@ -66,14 +70,6 @@ static void parse_compute(Config &cfg, const YAML::Node& root)
 
             cfg.compute.mpi.enabled =
                 M["enabled"].as<bool>(cfg.compute.mpi.enabled);
-
-            // ranks: int or "auto"
-            auto [rk, rk_auto] =
-                read_int_or_auto(M["ranks"],
-                                 cfg.compute.mpi.ranks,
-                                 cfg.compute.mpi.ranks_auto);
-            cfg.compute.mpi.ranks      = rk;
-            cfg.compute.mpi.ranks_auto = rk_auto;
 
             cfg.compute.mpi.repartition_after_refine =
                 M["repartition_after_refine"].as<bool>(
@@ -584,8 +580,7 @@ static void verify_cross_dependence(Config cfg)
 // -----------------------------------------------------------------------------
 // Internal common parser
 // -----------------------------------------------------------------------------
-namespace {
-Config LoadFromNode(const YAML::Node &root, Config cfg) {
+static Config _LoadFromNode(const YAML::Node &root, Config cfg) {
   cfg.schema_version = root["schema_version"].as<int>(1);
   cfg.geometry_id    = root["geometry_id"].as<std::string>("");
 
@@ -621,41 +616,128 @@ Config LoadFromNode(const YAML::Node &root, Config cfg) {
 
   return cfg;
 }
-Config LoadFromNode(const YAML::Node &root, std::string run_mode) {
+static Config _LoadFromNode(const YAML::Node &root, std::string run_mode) {
     Config cfg;
     cfg.run_mode = run_mode;
-    cfg = LoadFromNode(root, cfg);
+    cfg = _LoadFromNode(root, cfg);
     return cfg;
 }
-Config LoadFromNode(const YAML::Node &root) {
+static Config _LoadFromNode(const YAML::Node &root) {
     Config cfg;
-    cfg = LoadFromNode(root, cfg);
+    cfg = _LoadFromNode(root, cfg);
     return cfg;
 }
-} // namespace
 
 // -----------------------------------------------------------------------------
 // Public loaders
 // -----------------------------------------------------------------------------
-Config Config::Load(const std::string &path) {
-    YAML::Node root = YAML::LoadFile(path);
-    return LoadFromNode(root);
+std::string ReadConfigString(const std::string& path, MPI_Comm comm = MPI_COMM_WORLD)
+{
+    int rank = 0;
+    MPI_Comm_rank(comm, &rank);
+
+    int ok = 1;
+    std::string payload;
+    std::string err;
+
+    if (rank == 0) {
+        std::ifstream in(path, std::ios::in | std::ios::binary);
+        if (!in) {
+            ok = 0;
+            err = "Config::Load: failed to open file: " + path;
+        } else {
+            std::ostringstream ss;
+            ss << in.rdbuf();
+            if (!in.good() && !in.eof()) {
+                ok = 0;
+                err = "Config::Load: failed while reading file: " + path;
+            } else {
+                payload = ss.str();
+            }
+        }
+    }
+
+    // Broadcast success/failure
+    MPI_Bcast(&ok, 1, MPI_INT, 0, comm);
+
+    // Broadcast error message if any
+    if (!ok) {
+        std::uint64_t elen = 0;
+        if (rank == 0) elen = static_cast<std::uint64_t>(err.size());
+        MPI_Bcast(&elen, 1, MPI_UINT64_T, 0, comm);
+
+        err.resize(static_cast<std::size_t>(elen));
+        if (elen > 0) {
+            MPI_Bcast(err.data(), static_cast<int>(elen), MPI_CHAR, 0, comm);
+        }
+
+        // Keep ranks aligned before throwing
+        MPI_Barrier(comm);
+        //Error(err);
+    }  
+
+    // Broadcast payload size then payload bytes
+    std::uint64_t n = 0;
+    if (rank == 0) n = static_cast<std::uint64_t>(payload.size());
+    MPI_Bcast(&n, 1, MPI_UINT64_T, 0, comm);
+
+    std::string out;
+    out.resize(static_cast<std::size_t>(n));
+    if (rank == 0 && n > 0) {
+        std::memcpy(out.data(), payload.data(), static_cast<std::size_t>(n));
+    }
+    if (n > 0) {
+        MPI_Bcast(out.data(), static_cast<int>(n), MPI_CHAR, 0, comm);
+    }
+
+    MPI_Barrier(comm);
+    return out;
 }
-Config Config::Load(const std::string &path, std::string run_mode) {
-    YAML::Node root = YAML::LoadFile(path);
-    return LoadFromNode(root, run_mode);
+Config Config::Load(const std::string& path)
+{
+    std::cout << "In load one args" << std::endl;
+    const std::string yaml_str = ReadConfigString(path, MPI_COMM_WORLD);
+    return LoadFromString(yaml_str);
 }
 
-Config Config::LoadFromString(const std::string &yaml_str) {
+Config Config::Load(const std::string& path, std::string run_mode)
+{
+    std::cout << "In load two args" << std::endl;
+    const std::string yaml_str = ReadConfigString(path, MPI_COMM_WORLD);
+    return LoadFromString(yaml_str, std::move(run_mode));
+}
+Config Config::LoadFromNode(const YAML::Node& root)
+{
+    Config cfg;
+    return _LoadFromNode(root, cfg);
+}
+Config Config::LoadFromNode(const YAML::Node& root, std::string run_mode)
+{
+    YAML::Node root_copy = root;
+    root_copy["run_mode"] = run_mode;
+    Config cfg;
+    // Not parsed by the loader as it's a command line option
+    cfg.run_mode = std::move(run_mode);
+    return _LoadFromNode(root_copy, cfg);
+}
+Config Config::LoadFromString(const std::string& yaml_str)
+{
     YAML::Node root = YAML::Load(yaml_str);
     return LoadFromNode(root);
 }
+
+Config Config::LoadFromString(const std::string& yaml_str, std::string run_mode)
+{
+    YAML::Node root = YAML::Load(yaml_str);
+    return LoadFromNode(root, std::move(run_mode));
+}
+
+
 
 
 // -----------------------------------------------------------------------------
 // Solve Circuit network
 // -----------------------------------------------------------------------------
-
 void apply_fieldcage_network(Config &cfg)
 {
     const auto &fc = cfg.fieldcage_network;
@@ -861,5 +943,267 @@ void apply_fieldcage_network(Config &cfg)
         if (nd.boundary.empty()) continue;
         auto itb = cfg.boundaries.find(nd.boundary);
         itb->second.value = V[i];
+    }
+}
+void apply_fieldcage_network(YAML::Node &root)
+{
+    YAML::Node fc = root["fieldcage_network"];
+    if (!fc || !fc.IsMap()) { return; }
+
+    const bool enabled = fc["enabled"] ? fc["enabled"].as<bool>() : false;
+    if (!enabled) { return; }
+
+    YAML::Node nodes_node = fc["nodes"];
+    YAML::Node edges_node = fc["edges"];
+    YAML::Node rvals_node = fc["R_values"];
+
+    if (!nodes_node || !nodes_node.IsSequence() || nodes_node.size() == 0) { return; }
+    if (!edges_node || !edges_node.IsSequence() || edges_node.size() == 0) { return; }
+    if (!rvals_node || !rvals_node.IsMap()) { return; }
+
+    YAML::Node boundaries = root["boundaries"];
+    if (!boundaries || !boundaries.IsMap()) {
+        std::cerr << "FieldCageNetwork: root['boundaries'] missing or not a map\n";
+        return;
+    }
+
+    struct NodeDesc {
+        std::string name;
+        bool fixed = false;
+        std::string boundary;
+    };
+    struct EdgeDesc {
+        std::string n1;
+        std::string n2;
+        std::string R_name;
+    };
+
+    // Parse nodes
+    const int N = static_cast<int>(nodes_node.size());
+    std::vector<NodeDesc> nodes;
+    nodes.reserve(N);
+
+    for (std::size_t i = 0; i < nodes_node.size(); ++i) {
+        YAML::Node nd = nodes_node[i];
+        NodeDesc d;
+        d.name     = nd["name"]     ? nd["name"].as<std::string>()     : std::string{};
+        d.fixed    = nd["fixed"]    ? nd["fixed"].as<bool>()           : false;
+        d.boundary = nd["boundary"] ? nd["boundary"].as<std::string>() : std::string{};
+        if (d.name.empty()) {
+            std::cerr << "FieldCageNetwork: node missing 'name'\n";
+            return;
+        }
+        nodes.push_back(std::move(d));
+    }
+
+    // Parse edges
+    std::vector<EdgeDesc> edges;
+    edges.reserve(edges_node.size());
+    for (std::size_t i = 0; i < edges_node.size(); ++i) {
+        YAML::Node e = edges_node[i];
+        EdgeDesc d;
+        d.n1     = e["n1"]     ? e["n1"].as<std::string>()     : std::string{};
+        d.n2     = e["n2"]     ? e["n2"].as<std::string>()     : std::string{};
+        d.R_name = e["R_name"] ? e["R_name"].as<std::string>() : std::string{};
+        if (d.n1.empty() || d.n2.empty() || d.R_name.empty()) {
+            std::cerr << "FieldCageNetwork: edge missing n1/n2/R_name\n";
+            return;
+        }
+        edges.push_back(std::move(d));
+    }
+
+    // Parse R_values
+    std::unordered_map<std::string, double> Rvals;
+    Rvals.reserve(rvals_node.size());
+    for (auto it = rvals_node.begin(); it != rvals_node.end(); ++it) {
+        const std::string key = it->first.as<std::string>();
+        const double val = it->second.as<double>();
+        Rvals.emplace(key, val);
+    }
+
+    // Map node name -> index
+    std::unordered_map<std::string, int> node_index;
+    node_index.reserve(N);
+    for (int i = 0; i < N; ++i) {
+        const std::string &name = nodes[i].name;
+        auto [it, inserted] = node_index.emplace(name, i);
+        if (!inserted) {
+            throw std::runtime_error("FieldCageNetwork: duplicate node name '" + name + "'");
+        }
+    }
+
+    // Classify fixed vs free nodes and read fixed potential from YAML boundaries
+    std::vector<bool>  is_fixed(N, false);
+    std::vector<double> V_fixed(N, 0.0);
+
+    auto get_boundary_value = [&](const std::string &bname, double &out_val) -> bool {
+        YAML::Node b = boundaries[bname];
+        if (!b || !b.IsMap() || !b["value"]) { return false; }
+        out_val = b["value"].as<double>();
+        return true;
+    };
+
+    for (int i = 0; i < N; ++i) {
+        const auto &nd = nodes[i];
+        if (!nd.fixed) { continue; }
+
+        if (nd.boundary.empty()) {
+            std::cerr << "FieldCageNetwork: fixed node '" << nd.name << "' has no boundary assigned\n";
+            continue;
+        }
+
+        double vb = 0.0;
+        if (!get_boundary_value(nd.boundary, vb)) {
+            std::cerr << "FieldCageNetwork: fixed node '" << nd.name
+                      << "' refers to unknown boundary '" << nd.boundary << "'\n";
+            continue;
+        }
+
+        is_fixed[i] = true;
+        V_fixed[i]  = vb;
+    }
+
+    // Build list of free nodes and map node_index -> free_index
+    std::vector<int> free_nodes;
+    free_nodes.reserve(N);
+    for (int i = 0; i < N; ++i) {
+        if (!is_fixed[i]) { free_nodes.push_back(i); }
+    }
+
+    const int Nf = static_cast<int>(free_nodes.size());
+    if (Nf == 0) {
+        std::cerr << "FieldCageNetwork: No circuit values to compute. Assuming a configuration mistake\n";
+        return;
+    }
+
+    std::vector<int> free_index_of_node(N, -1);
+    for (int k = 0; k < Nf; ++k) {
+        free_index_of_node[free_nodes[k]] = k;
+    }
+
+    // Assemble Ax=b (row-major)
+    std::vector<double> A(Nf * Nf, 0.0);
+    std::vector<double> b(Nf, 0.0);
+
+    auto add_to_A = [&](int row, int col, double val) {
+        A[row * Nf + col] += val;
+    };
+
+    for (const auto &e : edges) {
+        auto it1 = node_index.find(e.n1);
+        auto it2 = node_index.find(e.n2);
+        if (it1 == node_index.end() || it2 == node_index.end()) {
+            std::cerr << "FieldCageNetwork: edge (" << e.n1 << ", " << e.n2
+                      << ") refers to unknown node\n";
+            continue;
+        }
+
+        const int ni = it1->second;
+        const int nj = it2->second;
+
+        auto itR = Rvals.find(e.R_name);
+        if (itR == Rvals.end()) {
+            std::cerr << "FieldCageNetwork: unknown resistor name '" << e.R_name
+                      << "' in edge (" << e.n1 << ", " << e.n2 << ")\n";
+            continue;
+        }
+
+        const double R = itR->second;
+        if (R <= 0.0) {
+            std::cerr << "FieldCageNetwork: non-positive resistance '" << e.R_name << "'\n";
+            continue;
+        }
+
+        const double G = 1.0 / R;
+
+        const int fi = free_index_of_node[ni];
+        const int fj = free_index_of_node[nj];
+
+        if (fi >= 0 && fj >= 0) {
+            add_to_A(fi, fi,  G);
+            add_to_A(fj, fj,  G);
+            add_to_A(fi, fj, -G);
+            add_to_A(fj, fi, -G);
+        }
+        else if (fi >= 0 && fj < 0) {
+            add_to_A(fi, fi, G);
+            b[fi] += G * V_fixed[nj];
+        }
+        else if (fi < 0 && fj >= 0) {
+            add_to_A(fj, fj, G);
+            b[fj] += G * V_fixed[ni];
+        }
+        else {
+            // both fixed -> no equation added
+        }
+    }
+
+    // Gaussian elimination: solve A x = b
+    std::vector<double> x = b;
+
+    for (int k = 0; k < Nf; ++k) {
+        int pivot = k;
+        double max_abs = std::fabs(A[k * Nf + k]);
+        for (int i = k + 1; i < Nf; ++i) {
+            double val = std::fabs(A[i * Nf + k]);
+            if (val > max_abs) { max_abs = val; pivot = i; }
+        }
+
+        if (max_abs == 0.0) {
+            std::cerr << "FieldCageNetwork: no unique solution!\n";
+            break;
+        }
+
+        if (pivot != k) {
+            for (int j = k; j < Nf; ++j) {
+                std::swap(A[k * Nf + j], A[pivot * Nf + j]);
+            }
+            std::swap(x[k], x[pivot]);
+        }
+
+        const double Akk = A[k * Nf + k];
+        for (int i = k + 1; i < Nf; ++i) {
+            const double factor = A[i * Nf + k] / Akk;
+            if (factor == 0.0) { continue; }
+            A[i * Nf + k] = 0.0;
+            for (int j = k + 1; j < Nf; ++j) {
+                A[i * Nf + j] -= factor * A[k * Nf + j];
+            }
+            x[i] -= factor * x[k];
+        }
+    }
+
+    for (int i = Nf - 1; i >= 0; --i) {
+        double sum = x[i];
+        for (int j = i + 1; j < Nf; ++j) {
+            sum -= A[i * Nf + j] * x[j];
+        }
+        const double Aii = A[i * Nf + i];
+        x[i] = (Aii != 0.0) ? (sum / Aii) : 0.0;
+    }
+
+    // Assemble voltage vector V for all nodes
+    std::vector<double> V(N, 0.0);
+    for (int i = 0; i < N; ++i) {
+        if (is_fixed[i]) { V[i] = V_fixed[i]; }
+    }
+    for (int k = 0; k < Nf; ++k) {
+        const int ni = free_nodes[k];
+        V[ni] = x[k];
+    }
+
+    // Write back into YAML boundaries: boundaries[nd.boundary].value = V[i]
+    for (int i = 0; i < N; ++i) {
+        const auto &nd = nodes[i];
+        if (nd.boundary.empty()) { continue; }
+
+        YAML::Node bnd = boundaries[nd.boundary];
+        if (!bnd || !bnd.IsMap()) {
+            std::cerr << "FieldCageNetwork: node '" << nd.name
+                      << "' refers to unknown boundary '" << nd.boundary << "'\n";
+            continue;
+        }
+
+        bnd["value"] = V[i];
     }
 }

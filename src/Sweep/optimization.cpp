@@ -2,58 +2,146 @@
 
 // ===================================== Main Loop ==================================== 
 
-void run_optimization(const Config &init_cfg)
+void run_optimization(const Config &init_cfg, std::string config_str)
 {
+    MPI_Comm comm = MPI_COMM_WORLD;
+    int rank = 0, world_size = 1;
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &world_size);
+
     const auto &opt = init_cfg.optimize;
-    if (!opt.enabled) return;
+    if (!opt.enabled) { return; }
 
     if (opt.variables.empty()) {
         throw std::runtime_error("optimize.enabled=true but no variables specified");
     }
 
-    // Base config from which all evaluations start
-    Config base_cfg = init_cfg;
-
-    // Build initial point x0 from YAML
-    std::vector<double> x0;
-    x0.reserve(opt.variables.size());
-    for (const auto &v : opt.variables) {
-        double x_init = v.initial;
-        if (x_init < v.lower || x_init > v.upper) {
-            x_init = 0.5 * (v.lower + v.upper);
-        }
-        x0.push_back(x_init);
-    }
-
-    // Build objective function (metrics -> scalar)
+    // Build objective function (metrics -> scalar) on all ranks (must be consistent)
     ObjectiveFn objective_fn = make_objective_function(opt);
 
-    // Storage for all runs and logging setup
+    // Storage and logger: only rank 0 owns these
     std::vector<OptRunRecord> records;
-    records.reserve(opt.max_fun_evals > 0 ? opt.max_fun_evals : 100);
-    std::filesystem::path save_root(init_cfg.save_path);
-    OptimizationLogger logger(init_cfg.geometry_id, save_root);
-    logger.initialize();
+    OptimizationLogger *logger_ptr = nullptr;
+    std::unique_ptr<OptimizationLogger> logger_owner;
 
-    // Counter to label runs as run_0001, run_0002, ...
+    std::filesystem::path save_root(init_cfg.save_path);
+
+    if (rank == 0) {
+        records.reserve(opt.max_fun_evals > 0 ? opt.max_fun_evals : 100);
+        logger_owner = std::make_unique<OptimizationLogger>(init_cfg.geometry_id, save_root);
+        logger_owner->initialize();
+        logger_ptr = logger_owner.get();
+    } else {
+        // dummy storage on non-root (evaluate may accept refs)
+        records.clear();
+        records.shrink_to_fit();
+    }
+
+    // Build initial point x0 (deterministic; do it on rank 0, broadcast)
+    std::vector<double> x0;
+    const int nvars = static_cast<int>(opt.variables.size());
+
+    if (rank == 0) {
+        x0.reserve(opt.variables.size());
+        for (const auto &v : opt.variables) {
+            double x_init = v.initial;
+            if (x_init < v.lower || x_init > v.upper) {
+                x_init = 0.5 * (v.lower + v.upper);
+            }
+            x0.push_back(x_init);
+        }
+    } else {
+        x0.resize(opt.variables.size());
+    }
+
+    // Broadcast x0 so all ranks agree (mainly for sanity / potential debug)
+    MPI_Bcast(x0.data(), nvars, MPI_DOUBLE, 0, comm);
+
+    // Command protocol:
+    //   cmd = 1 -> evaluate one point (followed by eval_index + x vector)
+    //   cmd = 0 -> stop service loop
+    const int CMD_EVAL = 1;
+    const int CMD_STOP = 0;
+
+    // Non-root ranks enter a service loop:
+    // They do NOT run Nelder–Mead. They just receive x from rank 0 and participate
+    // in the collective simulation inside evaluate_one_optimization_point.
+    if (rank != 0)
+    {
+        while (true)
+        {
+            int cmd = CMD_STOP;
+            MPI_Bcast(&cmd, 1, MPI_INT, 0, comm);
+
+            if (cmd == CMD_STOP) {
+                break;
+            }
+
+            std::uint64_t eval_index_u64 = 0;
+            MPI_Bcast(&eval_index_u64, 1, MPI_UINT64_T, 0, comm);
+
+            std::vector<double> x(nvars, 0.0);
+            MPI_Bcast(x.data(), nvars, MPI_DOUBLE, 0, comm);
+
+            // Participate in evaluation (collective MPI work happens inside)
+            // Pass dummy logger; records should ideally only be appended on rank 0
+            // (evaluate_one_optimization_point should guard on logger!=nullptr or rank==0).
+            (void)evaluate_one_optimization_point(
+                config_str,
+                opt,
+                x,
+                static_cast<std::size_t>(eval_index_u64),
+                objective_fn,
+                records,
+                /*logger*/ nullptr
+            );
+        }
+
+        // Optionally receive final x_opt (useful if downstream needs it)
+        // Rank 0 will broadcast it.
+        int xopt_n = 0;
+        MPI_Bcast(&xopt_n, 1, MPI_INT, 0, comm);
+        std::vector<double> x_opt(xopt_n, 0.0);
+        if (xopt_n > 0) {
+            MPI_Bcast(x_opt.data(), xopt_n, MPI_DOUBLE, 0, comm);
+        }
+
+        return;
+    }
+
+    // ---------------- Rank 0 runs Nelder–Mead ----------------
+
     std::size_t eval_counter = 0;
 
-    // Wrapper that Nelder–Mead will call for each x
-    auto nm_func = [&](const std::vector<double> &x) -> double {
+    auto nm_func = [&](const std::vector<double> &x) -> double
+    {
+        // Broadcast "evaluate" command
+        int cmd = CMD_EVAL;
+        MPI_Bcast(&cmd, 1, MPI_INT, 0, comm);
+
+        // Broadcast eval index to keep run naming consistent across ranks
+        std::uint64_t eval_index_u64 = static_cast<std::uint64_t>(eval_counter);
+        MPI_Bcast(&eval_index_u64, 1, MPI_UINT64_T, 0, comm);
+
+        // Broadcast x
+        MFEM_VERIFY(static_cast<int>(x.size()) == nvars, "nm_func: x size mismatch");
+        MPI_Bcast(const_cast<double*>(x.data()), nvars, MPI_DOUBLE, 0, comm);
+
+        // Evaluate (all ranks will participate; rank 0 gets the returned objective)
         double f = evaluate_one_optimization_point(
-            base_cfg,
+            config_str,
             opt,
             x,
             eval_counter,
             objective_fn,
             records,
-            &logger
+            logger_ptr
         );
+
         ++eval_counter;
         return f;
     };
 
-    // Run Nelder–Mead
     std::vector<double> x_opt = nelder_mead::find_min(
         nm_func,
         x0,
@@ -65,7 +153,22 @@ void run_optimization(const Config &init_cfg)
         static_cast<unsigned int>(opt.max_fun_evals)
     );
 
-    // find the best recorded run
+    // Tell workers to stop
+    {
+        int cmd = CMD_STOP;
+        MPI_Bcast(&cmd, 1, MPI_INT, 0, comm);
+    }
+
+    // Broadcast final x_opt to all ranks (optional but usually helpful)
+    {
+        int xopt_n = static_cast<int>(x_opt.size());
+        MPI_Bcast(&xopt_n, 1, MPI_INT, 0, comm);
+        if (xopt_n > 0) {
+            MPI_Bcast(x_opt.data(), xopt_n, MPI_DOUBLE, 0, comm);
+        }
+    }
+
+    // Find the best recorded run (rank 0 only)
     double best_f = std::numeric_limits<double>::infinity();
     const OptRunRecord *best_rec = nullptr;
     for (const auto &rec : records) {
@@ -82,24 +185,47 @@ void run_optimization(const Config &init_cfg)
         std::cout << "[OPT] No successful runs recorded.\n";
     }
 
-    // Write meta.txt summarizing all optimization runs
+    // Write meta.txt summarizing all optimization runs (rank 0 only)
     write_optimization_meta(init_cfg.geometry_id, save_root, records);
 }
 
 
-RunAndMetricsResult run_simulation_and_save(const Config &cfg, std::size_t eval_index)
+RunAndMetricsResult run_simulation_and_save(YAML::Node yaml_config, std::size_t eval_index)
 {
     RunAndMetricsResult out;
 
-    std::filesystem::path model_path = cfg.mesh.path;
-    std::filesystem::path save_root(cfg.save_path);
+    MPI_Comm comm = MPI_COMM_WORLD;
+    int rank = 0, world_size = 1;
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &world_size);
 
+    // -------------------------------------------------------------------------
+    // 0) Determine save_root from YAML (supports root["save_path"] or root["config"]["save_path"])
+    // -------------------------------------------------------------------------
+    std::string save_root_str;
+    if (yaml_config["config"] && yaml_config["config"].IsMap() && yaml_config["config"]["save_path"])
+        save_root_str = yaml_config["config"]["save_path"].as<std::string>();
+    else if (yaml_config["save_path"])
+        save_root_str = yaml_config["save_path"].as<std::string>();
+    else
+        throw std::runtime_error("run_simulation_and_save: YAML missing save_path (root.save_path or root.config.save_path)");
+
+    std::filesystem::path save_root(save_root_str);
+
+    // -------------------------------------------------------------------------
+    // 1) Create output directories (rank 0), then barrier
+    // -------------------------------------------------------------------------
     std::error_code ec;
-    std::filesystem::create_directories(save_root, ec);
-    if (ec) {
-        std::cerr << "Warning: could not create save_root directory "
-                  << save_root << " : " << ec.message() << "\n";
+
+    if (rank == 0) {
+        std::filesystem::create_directories(save_root, ec);
+        if (ec) {
+            std::cerr << "Warning: could not create save_root directory "
+                      << save_root << " : " << ec.message() << "\n";
+            ec.clear();
+        }
     }
+    MPI_Barrier(comm);
 
     // Make run name
     std::size_t display_index = eval_index + 1;
@@ -108,20 +234,47 @@ RunAndMetricsResult run_simulation_and_save(const Config &cfg, std::size_t eval_
     out.run_dir_name = run_name.str();
 
     std::filesystem::path run_dir = save_root / out.run_dir_name;
-    std::filesystem::create_directories(run_dir, ec);
-    if (ec) {
-        std::cerr << "Warning: could not create run directory "
-                  << run_dir << " : " << ec.message() << "\n";
+
+    if (rank == 0) {
+        std::filesystem::create_directories(run_dir, ec);
+        if (ec) {
+            std::cerr << "Warning: could not create run directory "
+                      << run_dir << " : " << ec.message() << "\n";
+            ec.clear();
+        }
+    }
+    MPI_Barrier(comm);
+
+    // -------------------------------------------------------------------------
+    // 2) Mutate YAML for this run (all ranks do the same deterministic changes)
+    // -------------------------------------------------------------------------
+    {
+        const std::string run_dir_str = run_dir.string();
+        if (yaml_config["config"] && yaml_config["config"].IsMap())
+            yaml_config["config"]["save_path"] = run_dir_str;
+        else
+            yaml_config["save_path"] = run_dir_str;
     }
 
-    // Copy config and override solver output paths
-    Config cfg_copy = cfg;
-    cfg_copy.save_path = run_dir.string();
+    // Record MPI size in YAML (ensure 'mpi' is a map)
+    {
+        yaml_config["mpi"]["ranks"] = world_size;
+    }
 
+    // -------------------------------------------------------------------------
+    // 3) Build Config from YAML (no struct-level mutation for these fields)
+    // -------------------------------------------------------------------------
+    Config cfg_copy = Config::LoadFromNode(yaml_config);
+
+    // Derive paths from cfg_copy (now reflects YAML mutations)
+    std::filesystem::path model_path(cfg_copy.mesh.path);
+
+    // -------------------------------------------------------------------------
+    // 4) Run simulation
+    // -------------------------------------------------------------------------
     auto cfg_ptr = std::make_shared<Config>(cfg_copy);
 
-    if (cfg.debug.dry_run) {
-        // no actual simulation; out.success is false, but we still return run_dir_name
+    if (cfg_copy.debug.dry_run) {
         out.success = false;
         return out;
     }
@@ -134,8 +287,10 @@ RunAndMetricsResult run_simulation_and_save(const Config &cfg, std::size_t eval_
         return out;
     }
 
-    // Save Results 
-    save_results(result, run_dir);
+    // -------------------------------------------------------------------------
+    // 5) Save results (includes YAML dump; save_results is already MPI-aware)
+    // -------------------------------------------------------------------------
+    save_results(result, run_dir, yaml_config);
 
     out.success = true;
     out.sim     = std::move(result);
@@ -145,7 +300,7 @@ RunAndMetricsResult run_simulation_and_save(const Config &cfg, std::size_t eval_
 
 // ================================ Optimization Targets ==============================
 
-double evaluate_one_optimization_point(const Config &base_cfg,
+double evaluate_one_optimization_point(const std::string &config_str,
                                        const OptimizationSettings &opt,
                                        const std::vector<double> &x,
                                        std::size_t eval_index,
@@ -155,16 +310,16 @@ double evaluate_one_optimization_point(const Config &base_cfg,
 {
     std::cout << "[OPTIMIZATION] Running iteration " << eval_index << std::endl;
     // 1. Build config for this eval
-    Config cfg = base_cfg;
+    auto root = YAML::Load(config_str);
 
     // apply optimization variables
-    apply_opt_vars(cfg, opt, x);
+    apply_opt_vars(root, opt, x);
 
     // apply field cage network (if enabled)
-    apply_fieldcage_network(cfg);
+    apply_fieldcage_network(root);
 
     // 2. Run simulation and save outputs
-    RunAndMetricsResult r = run_simulation_and_save(cfg, eval_index);
+    RunAndMetricsResult r = run_simulation_and_save(root, eval_index);
 
     if (!r.success) {
         // Penalize failures
@@ -179,8 +334,9 @@ double evaluate_one_optimization_point(const Config &base_cfg,
         return penalty;
     }
 
-    // 3. Compute metrics
-    OptimizationMetrics metrics = compute_metrics(cfg, r.sim);
+    // 3. Compute metrics 
+    Config tmp_cfg = Config::LoadFromNode(root);
+    OptimizationMetrics metrics = compute_metrics(tmp_cfg, r.sim);
 
     // 4. Evaluate objective
     double f = objective_fn(metrics);
@@ -311,21 +467,47 @@ OptimizationMetrics compute_metrics(const Config &cfg, const SimulationResult &r
 }
 
 // ================================ Helper function =================================
-void apply_opt_vars(Config &cfg, const OptimizationSettings &opt, const std::vector<double> &x)
+void apply_opt_vars(YAML::Node &root,
+                    const OptimizationSettings &opt,
+                    const std::vector<double> &x)
 {
-    for (std::size_t i = 0; i < opt.variables.size(); ++i) {
+    MFEM_VERIFY(opt.variables.size() == x.size(),
+                "apply_opt_vars: size mismatch between variables and x");
+
+    for (std::size_t i = 0; i < opt.variables.size(); ++i)
+    {
         const auto &var = opt.variables[i];
         double v = x[i];
 
-        // enforce bounds
+        // Enforce bounds
         if (v < var.lower) v = var.lower;
         if (v > var.upper) v = var.upper;
 
-        // write into Config via existing path mechanism
-        set_cfg_value_from_string(cfg, var.path, std::to_string(v));
+        // Traverse YAML path
+        YAML::Node node = root;
+        std::stringstream ss(var.path);
+        std::string key;
+
+        std::vector<std::string> keys;
+        while (std::getline(ss, key, '.')) {
+            keys.push_back(key);
+        }
+
+        MFEM_VERIFY(!keys.empty(),
+                    "apply_opt_vars: empty path for variable " + var.name);
+
+        for (std::size_t k = 0; k + 1 < keys.size(); ++k)
+        {
+            MFEM_VERIFY(node[keys[k]],
+                        "apply_opt_vars: invalid path '" + var.path +
+                        "' (missing key '" + keys[k] + "')");
+            node = node[keys[k]];
+        }
+
+        // Set final value
+        node[keys.back()] = v;
     }
 }
-
 std::vector<std::pair<std::string, std::string>> make_var_list(const OptimizationSettings &opt, const std::vector<double> &x)
 {
     std::vector<std::pair<std::string, std::string>> vars;
@@ -347,6 +529,14 @@ void write_optimization_meta(const std::string &geometry_id,
                              const std::filesystem::path &save_root,
                              const std::vector<OptRunRecord> &records)
 {
+    MPI_Comm comm = MPI_COMM_WORLD;
+    int rank = 0;
+    MPI_Comm_rank(comm, &rank);
+
+    if (rank != 0) {
+        return;
+    }
+
     std::error_code ec;
     std::filesystem::create_directories(save_root, ec);
     if (ec) {
@@ -364,6 +554,8 @@ void write_optimization_meta(const std::string &geometry_id,
 
     if (records.empty()) {
         meta << "(no runs)\n";
+        meta.flush();
+        MPI_Barrier(comm);
         return;
     }
 
@@ -390,7 +582,11 @@ void write_optimization_meta(const std::string &geometry_id,
         meta << "    V_solution: " << (run_dir / "solution_V.gf.000000").string() << "\n";
         meta << "\n";
     }
+
+    meta.flush();
+    MPI_Barrier(comm);
 }
+
 
 void write_single_opt_record_block(std::ostream &meta,
                                    const std::filesystem::path &save_root,

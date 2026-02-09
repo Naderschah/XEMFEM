@@ -61,11 +61,11 @@ class OptimizationLogger;
 
 using ObjectiveFn = std::function<double(const OptimizationMetrics&)>;
 
-void run_optimization(const Config &init_cfg);
+void run_optimization(const Config &init_cfg, std::string config_str);
 
 RunAndMetricsResult run_simulation_and_save(const Config &cfg, std::size_t eval_index);
 
-double evaluate_one_optimization_point(const Config &base_cfg, const OptimizationSettings &opt, const std::vector<double> &x, std::size_t eval_index, const ObjectiveFn &objective_fn, std::vector<OptRunRecord> &records, OptimizationLogger *logger);
+double evaluate_one_optimization_point(const std::string &config_str, const OptimizationSettings &opt, const std::vector<double> &x, std::size_t eval_index, const ObjectiveFn &objective_fn, std::vector<OptRunRecord> &records, OptimizationLogger *logger);
 
 ObjectiveFn make_objective_function(const OptimizationSettings &opt);
 
@@ -73,7 +73,7 @@ double compute_civ(const Config &cfg, const SimulationResult &result);
 
 OptimizationMetrics compute_metrics(const Config &cfg, const SimulationResult &result);
 
-void apply_opt_vars(Config &cfg, const OptimizationSettings &opt, const std::vector<double> &x);
+void apply_opt_vars(YAML::Node &root, const OptimizationSettings &opt, const std::vector<double> &x);
 
 std::vector<std::pair<std::string, std::string>> make_var_list(const OptimizationSettings &opt, const std::vector<double> &x);
 

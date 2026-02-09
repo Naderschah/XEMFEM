@@ -149,7 +149,7 @@ static void save_results_serial(const SimulationResult &result, const std::files
 
     pvdc.Save(); // call on all ranks
 }
-void save_results(const SimulationResult &result, const std::filesystem::path &root_path)
+void save_results(const SimulationResult &result, const std::filesystem::path &root_path, YAML::Node yaml_config)
 {
     MFEM_VERIFY(result.mesh, "save_results: result.mesh is null");
     MPI_Comm comm = result.mesh->GetComm();
@@ -244,6 +244,21 @@ void save_results(const SimulationResult &result, const std::filesystem::path &r
     pvdc.SetHighOrderOutput(true);
 
     pvdc.Save(); // collective
+
+    // --- Dump YAML config as root_path/config.yaml (rank 0 only) ---
+    if (rank == 0)
+    {
+        YAML::Emitter out;
+        out << yaml_config;
+
+        const std::filesystem::path cfg_path = root_path / "config.yaml";
+        std::ofstream cfg_os(cfg_path);
+        MFEM_VERIFY(cfg_os.good(), "save_results: could not open config.yaml for writing");
+
+        cfg_os << out.c_str() << '\n';
+        cfg_os.close();
+    }
+    MPI_Barrier(comm);
 }
 
 
@@ -541,11 +556,14 @@ SimulationResult load_results(const Config &cfg,
 // Single Simulation with file path handling 
 
 std::string run_one(const Config &cfg,
-                           const std::vector<std::pair<std::string, std::string>> &active_params,
-                           std::size_t run_index) // 0-based
+                    YAML::Node yaml_root, 
+                    const std::vector<std::pair<std::string, std::string>> &active_params,
+                    std::size_t run_index) // 0-based
 {
     int rank = 0;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    int world_size = 0;
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
     std::filesystem::path model_path = cfg.mesh.path;
     // Determine root save directory from Config
@@ -576,7 +594,7 @@ std::string run_one(const Config &cfg,
             }
         }
     }}
-
+    
     // Ensure directory exists
     if (rank == 0){std::filesystem::create_directories(save_root, ec);}
     if (ec)
@@ -598,10 +616,19 @@ std::string run_one(const Config &cfg,
                   << run_dir << " : " << ec.message() << "\n";
     }
 
-    // Copy config and override solver output paths so they land in run_dir
-    Config cfg_copy = cfg;
-
+    // Modify save_root
+    {
+        const std::string run_dir_str = run_dir.string();
+        yaml_root["save_path"] = run_dir_str;
+    }
+    // Add number of MPI ranks used for completeness
+    {
+        yaml_root["mpi"]["ranks"] = world_size;
+    }
+    // Dispatch
+    Config cfg_copy = Config::LoadFromNode(yaml_root);
     auto cfg_ptr = std::make_shared<Config>(cfg_copy);
+    MPI_Barrier(MPI_COMM_WORLD);
     if (!cfg.debug.dry_run)
     {
         SimulationResult result = run_simulation(cfg_ptr, model_path);
@@ -609,10 +636,9 @@ std::string run_one(const Config &cfg,
         {
             std::cerr << "Simulation failed for " << run_name.str()
                       << ": " << result.error_message << "\n";
-            return {};  // signal failure to caller
+            return {}; 
         }
-
-        save_results(result, save_root);
+        save_results(result, cfg_copy.save_path, yaml_root);
     }
 
     if (cfg.debug.printBoundaryConditions){
