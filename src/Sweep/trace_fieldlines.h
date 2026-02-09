@@ -124,9 +124,10 @@ struct ElectronFieldLineTracer
     mfem::ParMesh *pmesh = nullptr;
 
     // Owned electric field objects (must persist after Setup)
-    std::unique_ptr<mfem::H1_FECollection>       fec_vec;
+    std::unique_ptr<mfem::FiniteElementCollection> fec_vec;
     std::unique_ptr<mfem::ParFiniteElementSpace> fes_vec;
     std::unique_ptr<mfem::ParGridFunction>       E_gf_owned;
+    mfem::ParGridFunction                       *phi = nullptr;
 
     // Non-owning view used everywhere else
     const mfem::ParGridFunction *E_gf = nullptr;

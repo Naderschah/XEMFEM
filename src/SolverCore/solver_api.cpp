@@ -85,8 +85,8 @@ SimulationResult run_simulation(std::shared_ptr<Config> cfg,
   return result;
 }
 
-
-void save_results(const SimulationResult &result, const std::filesystem::path &root_path)
+// This was getting too annoying on load, wait for a miniapp to come out, i couldnt get the partition to wrok
+static void save_results_serial(const SimulationResult &result, const std::filesystem::path &root_path)
 {
     int rank = 0;
     MPI_Comm comm = result.mesh->GetComm();
@@ -149,6 +149,104 @@ void save_results(const SimulationResult &result, const std::filesystem::path &r
 
     pvdc.Save(); // call on all ranks
 }
+void save_results(const SimulationResult &result, const std::filesystem::path &root_path)
+{
+    MFEM_VERIFY(result.mesh, "save_results: result.mesh is null");
+    MPI_Comm comm = result.mesh->GetComm();
+
+    int rank = 0, size = 1;
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &size);
+
+    // --- Create output directory (rank 0) ---
+    if (rank == 0)
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(root_path, ec);
+        if (ec)
+        {
+            std::cerr << "Warning: could not create output directory "
+                      << root_path << " : " << ec.message() << "\n";
+        }
+    }
+    MPI_Barrier(comm);
+
+    // -------------------------------------------------------------------------
+    // 1) Save a PARALLEL mesh (each rank writes its piece)
+    // -------------------------------------------------------------------------
+    {
+        std::ostringstream fn;
+        fn << (root_path / "simulation_pmesh").string()
+        << "." << std::setw(6) << std::setfill('0') << rank;
+
+        std::ofstream os(fn.str());
+        MFEM_VERIFY(os.good(), "Could not open parallel mesh output file.");
+        result.mesh->ParPrint(os);  // <-- parallel MFEM mesh format
+    }
+    // -------------------------------------------------------------------------
+    // 2) Save ParGridFunctions in PARALLEL form (each rank writes its piece)
+    // -------------------------------------------------------------------------
+    auto SaveParGF = [&](const char *base, const std::unique_ptr<mfem::ParGridFunction> &gf)
+    {
+        if (!gf) { return; }
+        MFEM_VERIFY(gf->ParFESpace(), "save_results: ParGridFunction has no ParFESpace");
+        MFEM_VERIFY(gf->Size() > 0, "save_results: ParGridFunction has invalid size");
+
+        std::ostringstream fname;
+        fname << (root_path / base).string()
+            << ".pgf."
+            << std::setw(6) << std::setfill('0') << rank;
+
+        std::ofstream out(fname.str());
+        MFEM_VERIFY(out.good(), "save_results: could not open ParGridFunction output file");
+
+        out.precision(16);
+        out.setf(std::ios::scientific);
+
+        // Vector::Load(in) expects the size first. :contentReference[oaicite:4]{index=4}
+        out << gf->Size() << '\n';
+
+        // Print entries only (Vector::Print does NOT print size). :contentReference[oaicite:5]{index=5}
+        gf->Print(out, 8);
+    };
+
+    SaveParGF("V",    result.V);
+    SaveParGF("E",    result.E);
+    SaveParGF("Emag", result.Emag);
+
+    // -------------------------------------------------------------------------
+    // 3) ParaView output (.pvtu + per-rank .vtu)
+    // -------------------------------------------------------------------------
+    // This remains the recommended visualization output.
+    mfem::ParaViewDataCollection pvdc("Simulation", result.mesh.get());
+    pvdc.SetPrefixPath(root_path.string());
+
+    auto RegisterIfReady = [&](const char *name,
+                               const std::unique_ptr<mfem::ParGridFunction> &gf)
+    {
+        if (!gf) { return; }
+        if (!gf->ParFESpace()) { return; }
+        if (gf->Size() <= 0) { return; }
+        pvdc.RegisterField(name, gf.get());
+    };
+
+    RegisterIfReady("V",    result.V);
+    RegisterIfReady("E",    result.E);
+    RegisterIfReady("Emag", result.Emag);
+
+    // Choose LoD from V if available
+    if (result.V && result.V->ParFESpace())
+    {
+        const int order = result.V->ParFESpace()->GetOrder(0);
+        pvdc.SetLevelsOfDetail(order);
+    }
+    pvdc.SetDataFormat(mfem::VTKFormat::BINARY);
+    pvdc.SetHighOrderOutput(true);
+
+    pvdc.Save(); // collective
+}
+
+
 namespace
 {
 std::optional<std::filesystem::path>
@@ -210,7 +308,7 @@ static mfem::Array<int> BuildElementPartitioningFromParMesh(mfem::ParMesh &pmesh
 }
 
 
-SimulationResult load_results(const Config &cfg,
+static SimulationResult load_results_old(const Config &cfg,
                               const std::filesystem::path &root_path)
 {
     using namespace mfem;
@@ -260,17 +358,19 @@ SimulationResult load_results(const Config &cfg,
 
     // --- 3) Convert to PAR objects required by SimulationResult ---
     result.mesh = std::make_unique<mfem::ParMesh>(MPI_COMM_WORLD, serial_mesh);
-
-    // Build element->rank partitioning for THIS ParMesh distribution
-    mfem::Array<int> part = BuildElementPartitioningFromParMesh(*result.mesh);
-
-    const int dim = result.mesh->Dimension();
-    result.fec  = std::make_unique<mfem::H1_FECollection>(cfg.solver.order, dim);
+    
+    result.fec  = std::make_unique<mfem::H1_FECollection>(cfg.solver.order, result.mesh->Dimension());
     result.pfes = std::make_unique<mfem::ParFiniteElementSpace>(result.mesh.get(), result.fec.get(), 1);
 
-    // IMPORTANT: construct ParGridFunction by distributing serial GridFunction using partitioning.
-    // This avoids ProjectCoefficient(GridFunctionCoefficient(...)) and the refinement-transform path.
-    result.V = std::make_unique<mfem::ParGridFunction>(result.mesh.get(), V_s.get(), part.GetData());
+    // Build parallel phi
+    result.V = std::make_unique<mfem::ParGridFunction>(result.pfes.get());
+
+    // Interpolate serial V_s into the parallel space
+    mfem::GridFunctionCoefficient Vcoeff(V_s.get());
+    result.V->ProjectCoefficient(Vcoeff);
+
+    // Make sure shared DOFs are consistent
+    result.V->ExchangeFaceNbrData();
 
     // --- 4) Rebuild E/Emag from components as you already do ---
     try
@@ -288,6 +388,148 @@ SimulationResult load_results(const Config &cfg,
     {
         // leave E/Emag null; V + mesh valid
         std::cerr << "load_results: failed to reconstruct E/Emag: " << e.what() << "\n";
+    }
+
+    result.success = true;
+    result.error_message.clear();
+    return result;
+}
+SimulationResult load_results(const Config &cfg,
+                              const std::filesystem::path &root_path)
+{
+    using namespace mfem;
+
+    SimulationResult result;
+    result.success = false;
+
+    int rank = 0, size = 1;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    // ---------------------------------------------------------------------
+    // 1) Load PARALLEL mesh (each rank reads its own piece)
+    // ---------------------------------------------------------------------
+    const std::string mesh_prefix = (root_path / "simulation_pmesh").string();
+
+    std::ostringstream mesh_fname;
+    mesh_fname << mesh_prefix << "."
+               << std::setw(6) << std::setfill('0') << rank;
+
+    if (!std::filesystem::exists(mesh_fname.str()))
+    {
+        result.error_message =
+            "load_results: missing " + mesh_fname.str() +
+            " (saved with different MPI size or wrong prefix?)";
+        return result;
+    }
+
+    try
+    {
+        std::ifstream mesh_in(mesh_fname.str());
+        if (!mesh_in)
+        {
+            result.error_message = "load_results: cannot open " + mesh_fname.str();
+            return result;
+        }
+        result.mesh = std::make_unique<mfem::ParMesh>(MPI_COMM_WORLD, mesh_in);
+    }
+    catch (const std::exception &e)
+    {
+        result.error_message = std::string("load_results: failed to load parallel mesh: ") + e.what();
+        return result;
+    }
+
+    // ---------------------------------------------------------------------
+    // 2) Build parallel FE space for V (phi)
+    // ---------------------------------------------------------------------
+    const int dim = result.mesh->Dimension();
+    result.fec  = std::make_unique<mfem::H1_FECollection>(cfg.solver.order, dim);
+    result.pfes = std::make_unique<mfem::ParFiniteElementSpace>(result.mesh.get(),
+                                                                result.fec.get(), 1);
+
+    // Helper to load a per-rank ParGridFunction file into the given pfes
+    auto load_pgf = [&](const char *base,
+                    std::unique_ptr<mfem::ParGridFunction> &out) -> bool
+    {
+        std::ostringstream fname;
+        fname << (root_path / base).string()
+            << ".pgf."
+            << std::setw(6) << std::setfill('0') << rank;
+
+        if (!std::filesystem::exists(fname.str()))
+        {
+            return false;
+        }
+
+        std::ifstream in(fname.str());
+        if (!in) { return false; }
+
+        out = std::make_unique<mfem::ParGridFunction>(result.pfes.get());
+
+        // --- Read size header (Vector::Load expects size first if using Load(in)) ---
+        int file_size = -1;
+        in >> file_size;
+        if (!in || file_size < 0)
+        {
+            // Bad file / wrong format
+            out.reset();
+            return false;
+        }
+
+        const int expected = out->Size();
+        if (file_size != expected)
+        {
+            // Most common causes: different polynomial order, different dim,
+            // different FE space, or different partitioning than expected.
+            out.reset();
+            return false;
+        }
+
+        // Load the raw vector entries
+        out->Load(in, file_size);  // mfem::Vector::Load(std::istream&, int) :contentReference[oaicite:3]{index=3}
+
+        // Optional, only if you need face-neighbor data later
+        out->ExchangeFaceNbrData();
+        return true;
+    };
+
+    // ---------------------------------------------------------------------
+    // 3) Load V (required)
+    // ---------------------------------------------------------------------
+    if (!load_pgf("V", result.V))
+    {
+        result.error_message =
+            "load_results: missing V.pgf.<rank> in " + root_path.string();
+        return result;
+    }
+
+    // ---------------------------------------------------------------------
+    // 4) Load E and/or Emag (optional) + Emag rebuild if only E exists
+    // ---------------------------------------------------------------------
+    // If you saved E/Emag as parallel pgf files, load them.
+    // Otherwise, we do NOT compute E here (no ElectricFieldCoeff in this module).
+    const bool haveE    = load_pgf("E", result.E);
+    const bool haveEmag = load_pgf("Emag", result.Emag);
+
+    // If Emag not saved but E is available, compute Emag from E (same tool you use)
+    if (!haveEmag && haveE)
+    {
+        try
+        {
+            ElectricFieldPostprocessor efpp(*result.pfes);
+            auto Emag = efpp.MakeEmag();
+            efpp.ComputeFieldMagnitude(*result.E, *Emag);
+            Emag->ExchangeFaceNbrData();
+            result.Emag = std::move(Emag);
+        }
+        catch (const std::exception &e)
+        {
+            if (rank == 0)
+            {
+                std::cerr << "load_results: failed to rebuild Emag from E: "
+                          << e.what() << "\n";
+            }
+        }
     }
 
     result.success = true;

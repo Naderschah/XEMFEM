@@ -24,6 +24,16 @@ services:
       - BLIS_NUM_THREADS=1
       - VECLIB_MAXIMUM_THREADS=1
       - NUMEXPR_NUM_THREADS=1
+      # Force VTK to use OSMesa offscreen window
+      - VTK_DEFAULT_OPENGL_WINDOW=vtkOSOpenGLRenderWindow
+      # Force Mesa software rendering (no /dev/dri)
+      - LIBGL_ALWAYS_SOFTWARE=1
+      - MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
+      - GALLIUM_DRIVER=llvmpipe
+      # Extra: reduce any EGL/DRM probing noise and help diagnostics
+      - MESA_DEBUG=1
+      - LIBGL_DEBUG=verbose
+
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw       # X11 (for paraview and the like)
       - $XAUTHORITY:/tmp/.Xauthority:ro        # X auth (for paraview and the like)
@@ -53,6 +63,15 @@ services:
       - BLIS_NUM_THREADS=1
       - VECLIB_MAXIMUM_THREADS=1
       - NUMEXPR_NUM_THREADS=1
+      # Force VTK to use OSMesa offscreen window
+      - VTK_DEFAULT_OPENGL_WINDOW=vtkOSOpenGLRenderWindow
+      # Force Mesa software rendering (no /dev/dri)
+      - LIBGL_ALWAYS_SOFTWARE=1
+      - MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
+      - GALLIUM_DRIVER=llvmpipe
+      # Extra: reduce any EGL/DRM probing noise and help diagnostics
+      - MESA_DEBUG=1
+      - LIBGL_DEBUG=verbose
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw       # X11 (for paraview and the like)
       - $XAUTHORITY:/tmp/.Xauthority:ro        # X auth (for paraview and the like)
