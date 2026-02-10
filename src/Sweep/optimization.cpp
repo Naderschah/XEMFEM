@@ -555,57 +555,57 @@ void write_optimization_meta(const std::string &geometry_id,
     int rank = 0;
     MPI_Comm_rank(comm, &rank);
 
-    if (rank != 0) {
-        return;
-    }
+    if (rank == 0) {
 
-    std::error_code ec;
-    std::filesystem::create_directories(save_root, ec);
-    if (ec) {
-        std::cerr << "Warning: could not create save_root directory "
-                  << save_root << " : " << ec.message() << "\n";
-    }
-
-    std::ofstream meta(save_root / "meta.txt");
-    if (!meta) {
-        std::cerr << "Warning: could not open meta.txt in " << save_root << "\n";
-        return;
-    }
-
-    meta << geometry_id << "\n\n";
-
-    if (records.empty()) {
-        meta << "(no runs)\n";
-        meta.flush();
-        MPI_Barrier(comm);
-        return;
-    }
-
-    for (const auto &rec : records) {
-        std::filesystem::path run_dir = save_root / rec.run_dir_name;
-
-        meta << rec.run_dir_name << ":\n";
-        meta << "  objective: " << rec.objective_value << "\n";
-
-        meta << "  params:\n";
-        if (rec.vars.empty()) {
-            meta << "    (none)\n";
-        } else {
-            for (const auto &p : rec.vars) {
-                meta << "    " << p.first << " = " << p.second << "\n";
-            }
+        std::error_code ec;
+        std::filesystem::create_directories(save_root, ec);
+        if (ec) {
+            std::cerr << "Warning: could not create save_root directory "
+                    << save_root << " : " << ec.message() << "\n";
         }
 
-        meta << "  outputs:\n";
-        meta << "    field_ex: " << (run_dir / "field_ex.gf").string() << "\n";
-        meta << "    field_ey: " << (run_dir / "field_ey.gf").string() << "\n";
-        meta << "    field_mag: " << (run_dir / "field_mag.gf").string() << "\n";
-        meta << "    mesh: " << (run_dir / "simulation_mesh.msh.000000").string() << "\n";
-        meta << "    V_solution: " << (run_dir / "solution_V.gf.000000").string() << "\n";
-        meta << "\n";
-    }
+        std::ofstream meta(save_root / "meta.txt");
+        if (!meta) {
+            std::cerr << "Warning: could not open meta.txt in " << save_root << "\n";
+            return;
+        }
 
-    meta.flush();
+        meta << geometry_id << "\n\n";
+
+        if (records.empty()) {
+            meta << "(no runs)\n";
+            meta.flush();
+            MPI_Barrier(comm);
+            return;
+        }
+
+        for (const auto &rec : records) {
+            std::filesystem::path run_dir = save_root / rec.run_dir_name;
+
+            meta << rec.run_dir_name << ":\n";
+            meta << "  objective: " << rec.objective_value << "\n";
+
+            meta << "  params:\n";
+            if (rec.vars.empty()) {
+                meta << "    (none)\n";
+            } else {
+                for (const auto &p : rec.vars) {
+                    meta << "    " << p.first << " = " << p.second << "\n";
+                }
+            }
+
+            meta << "  outputs:\n";
+            meta << "    field_ex: " << (run_dir / "field_ex.gf").string() << "\n";
+            meta << "    field_ey: " << (run_dir / "field_ey.gf").string() << "\n";
+            meta << "    field_mag: " << (run_dir / "field_mag.gf").string() << "\n";
+            meta << "    mesh: " << (run_dir / "simulation_mesh.msh.000000").string() << "\n";
+            meta << "    V_solution: " << (run_dir / "solution_V.gf.000000").string() << "\n";
+            meta << "\n";
+        }
+
+        meta.flush();
+
+    }
     MPI_Barrier(comm);
 }
 
