@@ -24,9 +24,28 @@ struct Material {
     int id = -1;            // attr_id
     double epsilon_r = 1.0;
 };
+struct MeshOptimization {
+    // TODO: TMOP https://docs.mfem.org/4.8/mesh-optimizer_8cpp_source.html
+    // Implement at some point - Requires identification of all boundaries that are not meant to move
+    bool enable = false;
+    // This will not be exposed, unless I find a need for it
+    bool allow_boundary_motion = false;
+
+    std::string quality_metric;
+    // Degree to which nodes may be moved per iteration
+    int step_limiting;
+    // Solver choice Netwon vs L-BFGS
+    std::string outer_optimizer = "Newton";
+    // Jacobian Target to evaluate 
+    // 1) Unit = the ideal shape target (for whichever chosen metric)
+    // 2) Initial-Size : Improve skewness but dont change volume 
+    // 3) Size field : Provide scalar/tensor field determining target (ie target gradients)
+    std::string jacobian_target = "Unit";
+}
 
 struct MeshSettings {
     std::string path = "geometry.msh"; // TODO Does mesh need more settings?
+    MeshOptimization optimization;
 };
 
 // -------------------- Compute / Runtime Settings ----------------------------
