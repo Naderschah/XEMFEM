@@ -3,7 +3,7 @@ services:
     build:
       context: .
       network: host
-    user: "${UID}:${GID}"
+    user: "${DOCKER_UID}:${GID}"
     labels:
       keep: "true"
     container_name: mfem_shell
@@ -46,7 +46,7 @@ services:
     build:
       context: .
       network: host
-    user: "${UID}:${GID}"
+    user: "${DOCKER_UID}:${GID}"
     container_name: mfem_jupyter
     ports:
       - "8888:8888"
