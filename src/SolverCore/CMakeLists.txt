@@ -38,7 +38,7 @@ endif()
 # --- SolverCore library ----------------------------------
 # ---------------------------------------------------------
 add_library(SolverCore STATIC
-  load_mesh.cpp
+  mesh_tools.cpp
   parallelization.cpp
   boundary_conditions.cpp
   solver.cpp

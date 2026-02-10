@@ -41,7 +41,7 @@ compute:
 optimize:
   enabled: true
   print_results: true
-  objective: CIV
+  objective: self_weighting
   max_evals: 1
   max_iters: 1
   rel_tol_f: 0.001
@@ -75,19 +75,19 @@ optimize:
     UpperPercentile: 0.95
   variables:
   - name: BottomScreenVoltage
-    path: boundaries.BC_BottomScreen.value
+    path: boundaries.BC_BottomScreeningElectrode.value
     kind: continuous
     lower: -3000.0
     upper: 3000.0
     initial: 0.0
   - name: TopScreenVoltage
-    path: boundaries.BC_TopScreen.value
+    path: boundaries.BC_TopScreeningElectrode.value
     kind: continuous
     lower: -3000.0
     upper: 3000.0
     initial: 0.0
   - name: FirstFieldCageVoltage
-    path: boundaries.FieldCage_1.value
+    path: boundaries.BC_FieldShapingRings0.value
     kind: continuous
     lower: -2000.0
     upper: 0.0

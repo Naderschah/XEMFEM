@@ -479,33 +479,55 @@ void apply_opt_vars(YAML::Node &root,
         const auto &var = opt.variables[i];
         double v = x[i];
 
-        // Enforce bounds
         if (v < var.lower) v = var.lower;
         if (v > var.upper) v = var.upper;
 
-        // Traverse YAML path
-        YAML::Node node = root;
+        if (!root) std::cout << "<root is undefined/null>\n";
+        else if (!root.IsMap()) std::cout << "<root is not a map>\n";
+
+        // Split path
         std::stringstream ss(var.path);
         std::string key;
-
         std::vector<std::string> keys;
-        while (std::getline(ss, key, '.')) {
-            keys.push_back(key);
-        }
+        while (std::getline(ss, key, '.')) keys.push_back(key);
 
         MFEM_VERIFY(!keys.empty(),
                     "apply_opt_vars: empty path for variable " + var.name);
 
+        // Rebind without operator= using optional.emplace()
+        std::optional<YAML::Node> cur;
+        cur.emplace(root);  // copy-construct handle
+
         for (std::size_t k = 0; k + 1 < keys.size(); ++k)
         {
-            MFEM_VERIFY(node[keys[k]],
-                        "apply_opt_vars: invalid path '" + var.path +
-                        "' (missing key '" + keys[k] + "')");
-            node = node[keys[k]];
+            // Existence check WITHOUT creating nodes: use const operator[]
+            const YAML::Node cur_const = *cur;
+            YAML::Node child = cur_const[keys[k]];
+            if (!child)
+            {
+                std::ostringstream msg;
+                msg << "apply_opt_vars: invalid path '" << var.path
+                    << "' (missing key '" << keys[k] << "')\n"
+                    << "Available keys at this level:\n";
+
+                if (cur_const.IsMap()) {
+                    for (auto it = cur_const.begin(); it != cur_const.end(); ++it) {
+                        try { msg << it->first.as<std::string>() << ", "; }
+                        catch (...) { msg << "<non-string-key>, "; }
+                    }
+                } else {
+                    msg << "<node is not a map>";
+                }
+
+                MFEM_VERIFY(false, msg.str());
+            }
+
+            // Now rebind to mutable child WITHOUT operator=
+            cur.emplace((*cur)[keys[k]]);
         }
 
         // Set final value
-        node[keys.back()] = v;
+        (*cur)[keys.back()] = v;
     }
 }
 std::vector<std::pair<std::string, std::string>> make_var_list(const OptimizationSettings &opt, const std::vector<double> &x)
