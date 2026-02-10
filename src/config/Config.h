@@ -41,7 +41,7 @@ struct MeshOptimization {
     // 2) Initial-Size : Improve skewness but dont change volume 
     // 3) Size field : Provide scalar/tensor field determining target (ie target gradients)
     std::string jacobian_target = "Unit";
-}
+};
 
 struct MeshSettings {
     std::string path = "geometry.msh"; // TODO Does mesh need more settings?
