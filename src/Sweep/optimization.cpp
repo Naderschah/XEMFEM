@@ -567,7 +567,6 @@ void write_optimization_meta(const std::string &geometry_id,
         std::ofstream meta(save_root / "meta.txt");
         if (!meta) {
             std::cerr << "Warning: could not open meta.txt in " << save_root << "\n";
-            return;
         }
 
         meta << geometry_id << "\n\n";
@@ -575,10 +574,9 @@ void write_optimization_meta(const std::string &geometry_id,
         if (records.empty()) {
             meta << "(no runs)\n";
             meta.flush();
-            MPI_Barrier(comm);
-            return;
         }
-
+        else
+        {
         for (const auto &rec : records) {
             std::filesystem::path run_dir = save_root / rec.run_dir_name;
 
@@ -601,7 +599,7 @@ void write_optimization_meta(const std::string &geometry_id,
             meta << "    mesh: " << (run_dir / "simulation_mesh.msh.000000").string() << "\n";
             meta << "    V_solution: " << (run_dir / "solution_V.gf.000000").string() << "\n";
             meta << "\n";
-        }
+        }}
 
         meta.flush();
 
