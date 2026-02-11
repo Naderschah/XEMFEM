@@ -273,46 +273,50 @@ params = config['mesh']['NetgenParams']
 # https://docs.salome-platform.org/latest/gui/NETGENPLUGIN/netgen_2d_3d_hypo_page.html
 NETGEN_2D_Params = NETGEN_1D_2D.Parameters()
 # Get a preset
-preset = None
-if params["preset"] == "VeryFine": preset = smeshBuilder.VeryFine
-elif params["preset"] == "Fine": preset = smeshBuilder.Fine
-elif params["preset"] == "Moderate": preset = smeshBuilder.Moderate
-elif params["preset"] == "Coarse": preset = smeshBuilder.Coarse
-elif params["preset"] == "VeryCoarse": preset = smeshBuilder.VeryCoarse
-else: raise Exception("Netgen Preset " + params["preset"] + " not recognized")
-NETGEN_2D_Params.SetFineness(preset)  
-# --- General sizing ---
-# Min and max edge lengths
-NETGEN_2D_Params.SetMaxSize(params['maxSize']) # 1/100 of our largest part
-NETGEN_2D_Params.SetMinSize(params['minSize'])        # Dont set a minimum
-NETGEN_2D_Params.SetGrowthRate(params['growthRate'])  # Mesh element growth rate relative to one another 
-# --- Curvature-driven sizing ---
-# Lots of curves we want to optimize against
-NETGEN_2D_Params.SetUseSurfaceCurvature(params['UseSurfaceCurvature'])
-# Minimum segments per topological edge
-NETGEN_2D_Params.SetNbSegPerEdge(params['NBSegmentsPerEdge'])
-# For a circle the local target size is radius / N
-# Number of segments on a circle then 2piR / (R/N) = 2piN
-# So with N NbSegPerRadius we get ~2piN segments around the circle
-# So for 12 edges on a circle we want ~2=N
-NETGEN_2D_Params.SetNbSegPerRadius(params['NBSegmentsPerEdge']) # 8  
-# Alternatively we can use this with a maximum allowed deviation - not enabled
-NETGEN_2D_Params.SetChordalErrorEnabled(params['UseChordalError'])
-NETGEN_2D_Params.SetChordalError(params['ChordalErrorValue'])
-# --- Local Size Control ---
-# This can be used to set local sizes on individual shapes
-# A source file can also be used
-#NETGEN_2D_Params.SetLocalSizeOnShape
-# --- Advanced Quality Algorithms ---
-NETGEN_2D_Params.SetElemSizeWeight(params['AQ_ElemSizeWeight']) # Prioritize mesh quality over accuracy
-NETGEN_2D_Params.SetUseDelauney(params['AQ_UseDelauney']) # advancing front is a bit more fragile but sometimes nicer mesh
-NETGEN_2D_Params.SetCheckOverlapping(params['AQ_CheckOverlapping']) # Surface elements cant overlap
-NETGEN_2D_Params.SetCheckChartBoundary(params['AQ_CheckChartBoundary']) # Strict checking
-NETGEN_2D_Params.SetFuseEdges(params['AQ_FuseEdges'])        # Avoid Duplicate edges 
-# --- Element Types and Optimization ---
-NETGEN_2D_Params.SetQuadAllowed(params['Opt_QuadAllowed'])  # Dont allow quad meshes
-NETGEN_2D_Params.SetSecondOrder(params['Opt_SecondOrder'])      # Overkill for our purposes - also not sure MFEM supports this by default
-NETGEN_2D_Params.SetOptimize(params['Opt_Optimize'])      # Post meshing optimization of the mesh 
+
+if params["debugCoarse"]:
+    NETGEN_2D_Params.SetFineness("VeryCoarse")
+else:
+    preset = None
+    if params["preset"] == "VeryFine": preset = smeshBuilder.VeryFine
+    elif params["preset"] == "Fine": preset = smeshBuilder.Fine
+    elif params["preset"] == "Moderate": preset = smeshBuilder.Moderate
+    elif params["preset"] == "Coarse": preset = smeshBuilder.Coarse
+    elif params["preset"] == "VeryCoarse": preset = smeshBuilder.VeryCoarse
+    else: raise Exception("Netgen Preset " + params["preset"] + " not recognized")
+    NETGEN_2D_Params.SetFineness(preset)  
+    # --- General sizing ---
+    # Min and max edge lengths
+    NETGEN_2D_Params.SetMaxSize(params['maxSize']) # 1/100 of our largest part
+    NETGEN_2D_Params.SetMinSize(params['minSize'])        # Dont set a minimum
+    NETGEN_2D_Params.SetGrowthRate(params['growthRate'])  # Mesh element growth rate relative to one another 
+    # --- Curvature-driven sizing ---
+    # Lots of curves we want to optimize against
+    NETGEN_2D_Params.SetUseSurfaceCurvature(params['UseSurfaceCurvature'])
+    # Minimum segments per topological edge
+    NETGEN_2D_Params.SetNbSegPerEdge(params['NBSegmentsPerEdge'])
+    # For a circle the local target size is radius / N
+    # Number of segments on a circle then 2piR / (R/N) = 2piN
+    # So with N NbSegPerRadius we get ~2piN segments around the circle
+    # So for 12 edges on a circle we want ~2=N
+    NETGEN_2D_Params.SetNbSegPerRadius(params['NBSegmentsPerEdge']) # 8  
+    # Alternatively we can use this with a maximum allowed deviation - not enabled
+    NETGEN_2D_Params.SetChordalErrorEnabled(params['UseChordalError'])
+    NETGEN_2D_Params.SetChordalError(params['ChordalErrorValue'])
+    # --- Local Size Control ---
+    # This can be used to set local sizes on individual shapes
+    # A source file can also be used
+    #NETGEN_2D_Params.SetLocalSizeOnShape
+    # --- Advanced Quality Algorithms ---
+    NETGEN_2D_Params.SetElemSizeWeight(params['AQ_ElemSizeWeight']) # Prioritize mesh quality over accuracy
+    NETGEN_2D_Params.SetUseDelauney(params['AQ_UseDelauney']) # advancing front is a bit more fragile but sometimes nicer mesh
+    NETGEN_2D_Params.SetCheckOverlapping(params['AQ_CheckOverlapping']) # Surface elements cant overlap
+    NETGEN_2D_Params.SetCheckChartBoundary(params['AQ_CheckChartBoundary']) # Strict checking
+    NETGEN_2D_Params.SetFuseEdges(params['AQ_FuseEdges'])        # Avoid Duplicate edges 
+    # --- Element Types and Optimization ---
+    NETGEN_2D_Params.SetQuadAllowed(params['Opt_QuadAllowed'])  # Dont allow quad meshes
+    NETGEN_2D_Params.SetSecondOrder(params['Opt_SecondOrder'])      # Overkill for our purposes - also not sure MFEM supports this by default
+    NETGEN_2D_Params.SetOptimize(params['Opt_Optimize'])      # Post meshing optimization of the mesh 
 
 # ================================ Surface Groups ====================================
 MSH_GXe_face_group  = mesh.GroupOnGeom(GXeMesh,  "GXe",  SMESH.FACE)
