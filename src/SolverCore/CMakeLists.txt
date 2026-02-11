@@ -30,8 +30,8 @@ if (IS_SOLVERCORE_TOPLEVEL)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../config
                      ${CMAKE_CURRENT_BINARY_DIR}/config)
 
-    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../cmdLineParser
-                     ${CMAKE_CURRENT_BINARY_DIR}/cmdLineParser)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../cmdLineInteraction
+                     ${CMAKE_CURRENT_BINARY_DIR}/cmdLineInteraction)
 endif()
 
 # ---------------------------------------------------------
@@ -56,7 +56,7 @@ target_link_libraries(SolverCore
   PUBLIC
     mfem
     config
-    cmdLineParser
+    cmdLineInteraction
     yaml-cpp
     MPI::MPI_CXX
     OpenMP::OpenMP_CXX

@@ -42,9 +42,80 @@ struct MeshOptimization {
     // 3) Size field : Provide scalar/tensor field determining target (ie target gradients)
     std::string jacobian_target = "Unit";
 };
+struct AMRSettings
+{
+    // ---- Core control ----
+    bool enable = true;          // Master AMR switch
+    int  max_iter = 10;           // Max adaptive solve iterations
+
+    // ---- Refinement tolerance ----
+    double local_error_goal = 1e-3;  // Stop when all element errors <= this
+
+    // If > 0, additionally limit by global total error (p-norm)
+    // Leave 0.0 to ignore (purely local goal driven)
+    double total_error_goal = 0.0;
+
+    // Only used if you want total-error-fraction based marking.
+    // Set to 0.0 for pure local-threshold mode.
+    double total_error_fraction = 0.0;
+
+    // p-norm used to compute total error (2.0 = L2 norm)
+    double total_error_norm_p = 2.0;
+
+    // ---- Derefinement control ----
+    bool enable_derefine = false;
+
+    // Derefine threshold = hysteresis * local_error_goal
+    // Should be < 1.0 to avoid oscillation (typical 0.3 – 0.7)
+    double derefine_hysteresis = 0.5;
+
+    // Combine children error when testing derefinement:
+    // 0 = min, 1 = sum, 2 = max  (matches MFEM ThresholdDerefiner::SetOp)
+    int derefine_op = 2;
+
+    // ---- Mesh safety limits ----
+    long long max_elements = 0;   // 0 = unlimited
+    long long max_dofs = 0;       // 0 = unlimited (user-enforced check)
+
+    // Limit nonconforming refinement level difference (0 = unlimited)
+    int nc_limit = 0;
+
+    // Prefer conforming refinement (true for simplices)
+    // For quad/hex local AMR typically false (prefer nonconforming)
+    bool prefer_conforming_refinement = true;
+
+    // ---- Early termination heuristics ----
+
+    // Stop if fewer than this many elements were marked in a refine step
+    int min_marked_elements = 1;
+
+    // Stop if relative total error reduction between iterations
+    // is smaller than this threshold (e.g. 1e-3)
+    double min_rel_error_reduction = 0.0;
+
+    // ---- Estimator selection ----
+    enum class EstimatorType
+    {
+        Kelly,              // KellyErrorEstimator
+        ZienkiewiczZhu,     // ZienkiewiczZhuEstimator
+        L2ZienkiewiczZhu    // L2ZZ (smoother, slightly more expensive)
+    };
+
+    EstimatorType estimator = EstimatorType::Kelly;
+
+    // ---- Parallel-specific behavior ----
+
+    // Rebalance ParMesh after refinement/derefine
+    bool enable_rebalance = true;
+
+    // Print AMR diagnostics (per rank 0 typically)
+    bool verbose = false;
+};
+
 
 struct MeshSettings {
-    std::string path = "geometry.msh"; // TODO Does mesh need more settings?
+    std::string path = ""; // TODO Does mesh need more settings?
+    AMRSettings amr;
     MeshOptimization optimization;
 };
 
@@ -79,6 +150,7 @@ struct ComputeSettings {
 struct DebugSettings
 {
     bool debug                   = false;
+    bool timing                  = false;
     bool dry_run                 = false; // TODO Remove? 
     bool printBoundaryConditions = true;
     bool printHypreWarnings      = true;
@@ -189,6 +261,8 @@ struct FieldSpreadParams {
 
 // -------------------- Compute / Runtime Settings ----------------------------
 struct SolverSettings {
+    // Postprocessing controls
+    bool generate_E = true;
     // MFEM / solve controls
     bool axisymmetric = false;
     int order = 3;

@@ -49,14 +49,16 @@ struct BoundaryData
   bool has_surface_charge = false;
 };
 
+std::string PrecomputeAMRMesh(const Config &cfg, int precision = 16);
+
 // Core solver entry point (no CLI, no file I/O)
 SimulationResult run_simulation(
     std::shared_ptr<Config> cfg,
-    const std::filesystem::path& model_path
-);
+    const std::filesystem::path& model_path,
+    bool skip_amr);
 
 void save_results(const SimulationResult &result, const std::filesystem::path &root_path, YAML::Node yaml_config);
 
 SimulationResult load_results(const Config &cfg, const std::filesystem::path &root_path);
 
-std::string run_one(const Config& cfg, YAML::Node yaml_root, const std::vector<std::pair<std::string, std::string>>& active_params, std::size_t run_index);
+std::string run_one(const Config& cfg, YAML::Node yaml_root, const std::vector<std::pair<std::string, std::string>>& active_params, std::size_t run_index, bool skip_amr = false);

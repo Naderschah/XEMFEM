@@ -5,8 +5,9 @@
 #include "solver.h"
 #include "ComputeElectricField.h"
 #include "Config.h"
-#include "cmdLineParser.h"
+#include "cmdLineInteraction.h"
 #include "solver_api.h"
+#include "mesh_tools.h"
 
 #include <iostream>
 #include <fstream>
@@ -15,14 +16,55 @@
 #include <stdexcept>
 #include <omp.h>
 #include <filesystem>
-
+#include <chrono>
 
 
 using namespace mfem;
 
+std::string PrecomputeAMRMesh(const Config &cfg,
+                              int precision)
+{
+    int rank = 0;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    std::chrono::steady_clock::time_point t_start;
+    auto cfg_ptr = std::make_shared<Config>(cfg);
+    if (cfg.debug.timing) t_start = std::chrono::steady_clock::now();
+    SimulationResult res = run_simulation(cfg_ptr, cfg.mesh.path, false);
+    if (cfg.debug.timing)
+    {
+        auto t_end = std::chrono::steady_clock::now();
+        auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count();
+        std::cout << "[Timing]: AMR timing (" << dt << " ms)" << std::endl;
+    }
+
+    const std::filesystem::path out_dir = std::filesystem::path(cfg.save_path);
+    const std::filesystem::path mesh_path = out_dir / "amr_mesh";
+
+    if (rank == 0)
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(out_dir, ec);
+        if (ec)
+        {
+            std::cerr << "Warning: could not create output directory "
+                      << mesh_path << " : " << ec.message() << "\n";
+        }
+    }
+
+    std::ostringstream fn;
+    fn << (mesh_path / "amr_mesh").string()
+    << "." << std::setw(6) << std::setfill('0') << rank;
+
+    std::ofstream os(fn.str());
+    MFEM_VERIFY(os.good(), "Could not open parallel mesh output file.");
+    res.mesh->ParPrint(os);
+
+    return mesh_path.string();
+}
 
 SimulationResult run_simulation(std::shared_ptr<Config> cfg,
-                                const std::filesystem::path& model_path)
+                                const std::filesystem::path& model_path,
+                                bool skip_amr = false)
 {
   // What will this default to if I do nothing with MPI
   MPI_Comm comm = MPI_COMM_WORLD;
@@ -30,7 +72,7 @@ SimulationResult run_simulation(std::shared_ptr<Config> cfg,
   // Solve voltages in circuit
   apply_fieldcage_network(*cfg);
 
-  // 1. Create the mesh
+  // Create the mesh
   auto mesh = CreateSimulationDomain(model_path, comm); 
   if (cfg->solver.axisymmetric) {
     if (mesh->Dimension() != 2) { std::cerr << "Axisymmetric Simulation but Geometry is not 2D" << std::endl;  }
@@ -38,48 +80,53 @@ SimulationResult run_simulation(std::shared_ptr<Config> cfg,
     CheckAxisymmetricMesh(*mesh,0);
   }
 
-  // 2. Create finite element collection and space
-  std::unique_ptr<mfem::FiniteElementCollection> fec =
-    std::make_unique<mfem::H1_FECollection>(cfg->solver.order,
-                                            mesh->Dimension());
+  auto fec  = std::make_unique<mfem::H1_FECollection>(cfg->solver.order, mesh->Dimension());
   auto pfes = std::make_unique<mfem::ParFiniteElementSpace>(mesh.get(), fec.get());
 
-  // 3. Get Dirichlet boundary attributes
   BoundaryConditionGroups BCs = GetBoundaryConditionGroups(mesh.get(), cfg);
 
-  // 4. Solve Poisson
-  auto V = SolvePoisson(*pfes, BCs, cfg);
+  // Solve Mesh and AMR 
+  std::unique_ptr<mfem::ParGridFunction> V;
 
-  std::unique_ptr<mfem::FiniteElementSpace> vec_fes, scalar_fes;
-  mfem::ParMesh *pmesh = mesh.get();  // mesh is std::unique_ptr<ParMesh>
+  const int max_iter = ((cfg->mesh.amr.enable && !skip_amr) ? cfg->mesh.amr.max_iter : 1);
+  for (int it = 0; it < max_iter; ++it)
+  {
+    // Solve Poisson
+    V = SolvePoisson(*pfes, BCs, cfg);
 
-  vec_fes    = std::make_unique<mfem::ParFiniteElementSpace>(pmesh,
-                                                            fec.get(),
-                                                            pmesh->Dimension());
-  scalar_fes = std::make_unique<mfem::ParFiniteElementSpace>(pmesh,
-                                                            fec.get(),
-                                                            1);
+    // Break if no AMR
+    if (!cfg->mesh.amr.enable || skip_amr) { break; }
 
-  // Initialize postprocessor 
-  InitFieldPostprocessor(*pfes);
+    bool changed = ApplyAMRRefineDerefineStep(*mesh, *pfes, *V, *cfg);
 
-  // 3) Allocate output fields on the right spaces
-  std::unique_ptr<mfem::ParGridFunction> E    = CreateE();  
-  std::unique_ptr<mfem::ParGridFunction> Emag = CreateEmag();  
+    // Break if goal is reached
+    if (!changed) { break; }
+  }
 
-  // 4) Compute E and |E|
-  ComputeElectricField(*V, *E, /*scale=*/-1.0); // V/m
-  ComputeFieldMagnitude(*E, *Emag);
 
-  // 5) Pack result and transfer ownership of all dependent objects
   SimulationResult result;
-  result.mesh = std::move(mesh);
-  result.fec  = std::move(fec);
-  result.pfes = std::move(pfes);
-  result.V    = std::move(V);
-  result.E    = std::move(E);
-  result.Emag = std::move(Emag);
 
+  // Postprocessing
+  if (cfg->solver.generate_E) 
+  {
+    mfem::ParMesh *pmesh = mesh.get(); 
+    InitFieldPostprocessor(*pfes);
+
+    std::unique_ptr<mfem::ParGridFunction> E    = CreateE();  
+    std::unique_ptr<mfem::ParGridFunction> Emag = CreateEmag();  
+
+    // Compute E and |E|
+    ComputeElectricField(*V, *E, /*scale=*/-1.0); // V/m
+    ComputeFieldMagnitude(*E, *Emag);
+
+    // Transfer ownership
+    result.E    = std::move(E);
+    result.Emag = std::move(Emag);
+  }
+  result.mesh = std::move(mesh);
+  result.pfes = std::move(pfes);
+  result.fec  = std::move(fec);
+  result.V    = std::move(V);
   result.success = true;
 
   return result;
@@ -409,6 +456,7 @@ static SimulationResult load_results_old(const Config &cfg,
     result.error_message.clear();
     return result;
 }
+// TODO Modify cant handle run_000n directories yet
 SimulationResult load_results(const Config &cfg,
                               const std::filesystem::path &root_path)
 {
@@ -558,7 +606,8 @@ SimulationResult load_results(const Config &cfg,
 std::string run_one(const Config &cfg,
                     YAML::Node yaml_root, 
                     const std::vector<std::pair<std::string, std::string>> &active_params,
-                    std::size_t run_index) // 0-based
+                    std::size_t run_index,
+                    bool skip_amr)
 {
     int rank = 0;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -631,7 +680,7 @@ std::string run_one(const Config &cfg,
     MPI_Barrier(MPI_COMM_WORLD);
     if (!cfg.debug.dry_run)
     {
-        SimulationResult result = run_simulation(cfg_ptr, model_path);
+        SimulationResult result = run_simulation(cfg_ptr, model_path, skip_amr);
         if (!result.success)
         {
             std::cerr << "Simulation failed for " << run_name.str()

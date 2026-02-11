@@ -1,4 +1,4 @@
-#include "cmdLineParser.h"
+#include "cmdLineInteraction.h"
 
 /*
 https://stackoverflow.com/questions/865668/parsing-command-line-arguments-in-c

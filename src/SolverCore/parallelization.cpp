@@ -1,5 +1,6 @@
 // parallel/runtime.cpp
 #include "parallelization.h"
+#include "cmdLineInteraction.h"
 
 #include <stdexcept>
 #include <string>

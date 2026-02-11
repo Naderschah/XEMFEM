@@ -1,7 +1,10 @@
-#ifndef GEOMETRY_H
-#define GEOMETRY_H
+#pragma once
 
 #include "mfem.hpp"
+#include "Config.h"
+#include <iostream>
+#include <cmath>
+#include <filesystem>
 
 using namespace mfem;
 
@@ -14,4 +17,9 @@ CreateSimulationDomain(const std::string &path,
 void CheckAxisymmetricMesh( const mfem::ParMesh &mesh, int radial_coord_index, MPI_Comm comm);
 void CheckAxisymmetricMesh( const mfem::ParMesh &mesh, int radial_coord_index);
 
-#endif
+
+// --------------------- AMR --------------------------
+bool ApplyAMRRefineDerefineStep(mfem::ParMesh &pmesh,
+                                mfem::ParFiniteElementSpace &pfes,
+                                mfem::ParGridFunction &V,
+                                const Config &cfg);

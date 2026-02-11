@@ -19,8 +19,8 @@ if (IS_SWEEP_TOPLEVEL)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../config
                      ${CMAKE_CURRENT_BINARY_DIR}/config)
 
-    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../cmdLineParser
-                     ${CMAKE_CURRENT_BINARY_DIR}/cmdLineParser)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../cmdLineInteraction
+                     ${CMAKE_CURRENT_BINARY_DIR}/cmdLineInteraction)
 
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../SolverCore
                      ${CMAKE_CURRENT_BINARY_DIR}/SolverCore)

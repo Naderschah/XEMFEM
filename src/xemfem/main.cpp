@@ -2,7 +2,7 @@
 #include <string>
 #include <omp.h>
 
-#include "cmdLineParser.h"
+#include "cmdLineInteraction.h"
 #include "Config.h"
 #include "optimization.h"
 #include "sweeps.h"
@@ -10,6 +10,15 @@
 #include "plotting_api.h"
 #include "interpolator.h"
 
+std::string ReplaceMeshPathInConfig(const std::string& config_str,
+                                    const std::string& new_mesh_path)
+{
+    YAML::Node config = YAML::Load(config_str);
+    config["mesh"]["path"] = new_mesh_path;
+    YAML::Emitter out;
+    out << config;
+    return std::string(out.c_str());
+}
 
 static int run_sim(Config init_cfg, std::string config_str) {
     const auto &sweeps = init_cfg.sweeps;
@@ -17,6 +26,9 @@ static int run_sim(Config init_cfg, std::string config_str) {
     if (init_cfg.optimize.enabled && (!init_cfg.optimize.metrics_only))
     {
         std::cout << "[MAIN] Executing an optimization" << std::endl;
+        std::string mesh_path = PrecomputeAMRMesh(init_cfg);
+        init_cfg.mesh.path = mesh_path;
+        config_str = ReplaceMeshPathInConfig(config_str, mesh_path);
         run_optimization(init_cfg, config_str);
         return 0;
     }
@@ -28,6 +40,10 @@ static int run_sim(Config init_cfg, std::string config_str) {
         std::vector<std::pair<std::string, std::string>> active_params;
         std::vector<RunRecord> records;
         std::vector<Assignment> assignments;
+
+        std::string mesh_path = PrecomputeAMRMesh(init_cfg);
+        init_cfg.mesh.path = mesh_path;
+        config_str = ReplaceMeshPathInConfig(config_str, mesh_path);
 
         sweep_recursive_cfg(init_cfg,
                             config_str, 
@@ -52,7 +68,7 @@ static int run_sim(Config init_cfg, std::string config_str) {
 
         // Single run uses the same run_one + RunRecord machinery as a 1-point sweep
         auto root = YAML::Load(config_str);
-        std::string run_dir_name = run_one(init_cfg, root, active_params, run_counter);
+        std::string run_dir_name = run_one(init_cfg, root, active_params, run_counter, false);
         if (!run_dir_name.empty())
         {
             RunRecord rec;

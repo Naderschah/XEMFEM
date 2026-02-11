@@ -7,6 +7,11 @@
 #include <vector>
 #include <iostream>
 
+#include <mpi.h>
+#include <streambuf>
+#include <unordered_map>
+#include <sstream>
+
 namespace cli {
 
 namespace fs = std::filesystem;
@@ -48,3 +53,4 @@ fs::path to_absolute(const fs::path& p);
 void print_usage(const char* prog);
 
 } // namespace cli
+

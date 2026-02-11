@@ -475,6 +475,7 @@ static void parse_debug_settings(Config &cfg, const YAML::Node &root)
 
     // Primary flags (default to existing config values)
     dbg.debug   = dn["debug"]   ? dn["debug"].as<bool>(dbg.debug)     : dbg.debug;
+    dbg.timing  = dn["timing"]  ? dn["timing"].as<bool>(dbg.timing)   : dbg.timing;
     dbg.dry_run = dn["dry_run"] ? dn["dry_run"].as<bool>(dbg.dry_run) : dbg.dry_run;
 
     const bool debug_enabled = dbg.debug;
@@ -496,6 +497,35 @@ static void parse_debug_settings(Config &cfg, const YAML::Node &root)
     cfg.debug = dbg;
 }
 
+static void parse_mesh_params(Config &cfg, const YAML::Node &root)
+{
+    // --- Mesh path
+  if (!root["mesh"] || !root["mesh"]["path"]) {
+    throw std::runtime_error("Config error: missing mandatory field 'mesh.path'");
+  }
+  cfg.mesh.path = root["mesh"]["path"].as<std::string>("");
+  if (cfg.mesh.path == "") Error("Mesh Path must be provided");
+  if (root["mesh"]["AMR"]) {
+    cfg.mesh.amr.enable = root["mesh"]["AMR"]["enable"].as<bool>(cfg.mesh.amr.enable);
+    cfg.mesh.amr.max_iter = root["mesh"]["AMR"]["max_iter"].as<int>(cfg.mesh.amr.max_iter);
+    cfg.mesh.amr.local_error_goal = root["mesh"]["AMR"]["local_error_goal"].as<double>(cfg.mesh.amr.local_error_goal);
+    cfg.mesh.amr.total_error_goal = root["mesh"]["AMR"]["total_error_goal"].as<double>(cfg.mesh.amr.total_error_goal);
+    cfg.mesh.amr.total_error_fraction = root["mesh"]["AMR"]["total_error_fraction"].as<double>(cfg.mesh.amr.total_error_fraction);
+    cfg.mesh.amr.total_error_norm_p = root["mesh"]["AMR"]["total_error_norm_p"].as<double>(cfg.mesh.amr.total_error_norm_p);
+    cfg.mesh.amr.enable_derefine = root["mesh"]["AMR"]["enable_derefine"].as<bool>(cfg.mesh.amr.enable_derefine);
+    cfg.mesh.amr.derefine_hysteresis = root["mesh"]["AMR"]["derefine_hysteresis"].as<double>(cfg.mesh.amr.derefine_hysteresis);
+    cfg.mesh.amr.derefine_op = root["mesh"]["AMR"]["derefine_op"].as<int>(cfg.mesh.amr.derefine_op);
+    cfg.mesh.amr.max_elements = root["mesh"]["AMR"]["max_elements"].as<long long>(cfg.mesh.amr.max_elements);
+    cfg.mesh.amr.max_dofs = root["mesh"]["AMR"]["max_dofs"].as<long long>(cfg.mesh.amr.max_dofs);
+    cfg.mesh.amr.nc_limit = root["mesh"]["AMR"]["nc_limit"].as<int>(cfg.mesh.amr.nc_limit);
+    cfg.mesh.amr.prefer_conforming_refinement = root["mesh"]["AMR"]["prefer_conforming_refinement"].as<bool>(cfg.mesh.amr.prefer_conforming_refinement);
+    cfg.mesh.amr.min_marked_elements = root["mesh"]["AMR"]["min_marked_elements"].as<int>(cfg.mesh.amr.min_marked_elements);
+    cfg.mesh.amr.min_rel_error_reduction = root["mesh"]["AMR"]["min_rel_error_reduction"].as<double>(cfg.mesh.amr.min_rel_error_reduction);
+    { std::string est = root["mesh"]["AMR"]["estimator"].as<std::string>("Kelly"); if (est == "Kelly") cfg.mesh.amr.estimator = AMRSettings::EstimatorType::Kelly; else if (est == "ZienkiewiczZhu") cfg.mesh.amr.estimator = AMRSettings::EstimatorType::ZienkiewiczZhu; else if (est == "L2ZienkiewiczZhu") cfg.mesh.amr.estimator = AMRSettings::EstimatorType::L2ZienkiewiczZhu; }
+    cfg.mesh.amr.enable_rebalance = root["mesh"]["AMR"]["enable_rebalance"].as<bool>(cfg.mesh.amr.enable_rebalance);
+    cfg.mesh.amr.verbose = root["mesh"]["AMR"]["verbose"].as<bool>(cfg.mesh.amr.verbose);
+  }
+}
 
 static void parse_solver_params(Config &cfg, const YAML::Node &root)
 {
@@ -503,11 +533,12 @@ static void parse_solver_params(Config &cfg, const YAML::Node &root)
     if (!s) return;
 
     // Required/optional scalars with defaults
-    cfg.solver.atol       = s["atol"].as<double>(1.0);
-    cfg.solver.rtol       = s["rtol"].as<double>(0.0);
-    cfg.solver.maxiter    = s["maxiter"].as<int>(100000);
-    cfg.solver.printlevel = s["printlevel"].as<int>(1);
-    cfg.solver.axisymmetric  = s["axisymmetric"].as<bool>(false);
+    cfg.solver.atol         = s["atol"].as<double>(cfg.solver.atol);
+    cfg.solver.rtol         = s["rtol"].as<double>(cfg.solver.rtol);
+    cfg.solver.maxiter      = s["maxiter"].as<int>(cfg.solver.maxiter);
+    cfg.solver.printlevel   = s["printlevel"].as<int>(cfg.solver.printlevel);
+    cfg.solver.axisymmetric = s["axisymmetric"].as<bool>(cfg.solver.axisymmetric);
+    cfg.solver.generate_E   = s["generate_E"].as<bool>(cfg.solver.generate_E);
 
     // Optional overrides (keep existing stored defaults if absent)
     if (s["assembly_mode"])
@@ -584,12 +615,6 @@ static Config _LoadFromNode(const YAML::Node &root, Config cfg) {
   cfg.schema_version = root["schema_version"].as<int>(1);
   cfg.geometry_id    = root["geometry_id"].as<std::string>("");
 
-  // --- Mesh path
-  if (!root["mesh"] || !root["mesh"]["path"]) {
-    throw std::runtime_error("Config error: missing mandatory field 'mesh.path'");
-  }
-  cfg.mesh.path = root["mesh"]["path"].as<std::string>("geometry.msh");
-
   // --- Results save path 
   if (!root["save_path"]) {
     throw std::runtime_error("Config error: missing mandatory field 'save_path'");
@@ -598,6 +623,8 @@ static Config _LoadFromNode(const YAML::Node &root, Config cfg) {
   cfg.delete_files_present = root["delete_files_present"].as<bool>(false);
 
   parse_debug_settings(cfg, root);
+
+  parse_mesh_params(cfg, root);
 
   parse_solver_params(cfg, root);
   parse_material_params(cfg, root);
@@ -613,6 +640,8 @@ static Config _LoadFromNode(const YAML::Node &root, Config cfg) {
   parse_interp_params(cfg, root);
 
   verify_cross_dependence(cfg);
+
+  // TODO Need to parse all keys and check if not recognized ones are present
 
   return cfg;
 }

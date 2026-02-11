@@ -124,7 +124,8 @@ void sweep_recursive_cfg(const Config &base_cfg,
             (void)run_one(base_cfg,
                           yaml_root,
                           active_params_recv,
-                          static_cast<std::size_t>(run_counter_u64));
+                          static_cast<std::size_t>(run_counter_u64), 
+                          true);
         }
 
         return;
@@ -176,7 +177,7 @@ void sweep_recursive_cfg(const Config &base_cfg,
 
         // Collective compute
         YAML::Node yaml_root = YAML::Load(run_config_str);
-        std::string run_dir_name = run_one(base_cfg, yaml_root, active_params, run_counter);
+        std::string run_dir_name = run_one(base_cfg, yaml_root, active_params, run_counter, true);
 
         if (!run_dir_name.empty())
         {

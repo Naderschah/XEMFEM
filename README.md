@@ -89,6 +89,96 @@ mesh:
   # Wheter or not to autoappend the generated boundaries and attributes to the currently used config file -> Otherwise BC's and materials need to be copied from the config_autogen file 
   autoappend: true
 
+  # Meshing Parameters (used in SALOME only)
+  # If debugCoarse is given all else ignored else all are required
+  NetgenParams:
+    # For quick meshing (significantly reduced number of nodes)
+    debugCoarse: false
+    # Preset to go off, most if not all settings will be overwritten by below
+    preset: VeryFine
+    # Maximum Element size allowed (don't make this too large)
+    maxSize: 0.015008
+    # Minimum allowed element size 
+    minSize: 0
+    # How quickly elements may change size in adjacency space
+    growthRate: 0.1
+    # Use Surface Curvature as element size driver (ie CAD driven)
+    UseSurfaceCurvature: 1
+    # Number of segments per topological edge 
+    NBSegmentsPerEdge: 4
+    # Number of segments for a given radius ie acceptable mesh length is h = R/N where R is the radius and N is the below parameter. So for 12 edges along a circle we want N = 1.91, N=3 is approximately 19 edges
+    NBSegmentsPerRadius: 3
+    # Instead of Surface Curvature use chordal error (maximal deviation from CAD)
+    UseChordalError: 0
+    # Deviation allowed (meters)
+    ChordalErrorValue: 1
+    # Advanced Quality Algorithms 
+    # Weight of mesh "quality" as compared to accuracy (0.5 both are equally important)
+    AQ_ElemSizeWeight: 0.5
+    # delauney vs advancing front algorithms 
+    AQ_UseDelauney: 1
+    # Use Strict overlap checks (overlapping elements = bad)
+    AQ_CheckOverlapping: 1
+    # Netgen splits surfaces into parametric shapes, if 1 it checks that the boudaries align properly 
+    AQ_CheckChartBoundary: 1
+    # Fuse duplicate edges (duplicat edges = bad)
+    AQ_FuseEdges: 1
+    # Allow quadrilateral elements (rather than triangles) dont know how well XEMFEM in its current form handles quadrilaterals (I think tracing will break), but its also not needed for our purposes
+    Opt_QuadAllowed: false
+    # if true a midpoint node is added to each edge and each edge line becomes curved (quadratic interpolation) - also overkill, also will likely break particle tracing (allthough it might work not 100% sure)
+    Opt_SecondOrder: 0
+    # Post meshing optimization
+    Opt_Optimize: true
+
+  # Adaptive Mesh Refinement (Indirectly Physics Driven) - XEMFEM
+  # basic idea is solve the mesh, estimate a per element error, subdivide high error elements and coarsen low error elements. 
+  AMR:
+    # Enable it -> This will significantly increase computational time
+    enable: true
+    # maximal number of refinement/derefinement iterations
+    max_iter: 10
+    # Error estimate used to compute element-wise error
+    # Kelly : Edge/flux jump based (robust for Poisson equation)
+    #     L2 norm of the normal flux jump across faces 
+    #     Each element has a different representation for its boundary, 
+    #     this metric essentially bounds by how much the normal flux 
+    #     (delta V dot n) may disagree between two adjacent elements
+    #     at the boundary 
+    #     In 2D it has units of Volts (in 3D Volts sqrt(m))
+    # ZienkiewiczZhu : recovered graident estimator
+    # L2ZienkiewiczZhu : Smoothed L2 projection variant
+    estimator: Kelly
+    # Absolute per element error tolerance, measured in the norm of the estimator used
+    local_error_goal: 1e-3
+    # Absolute gloabl error tolerance (p-norm of element errors), 0.0 for disabled
+    total_error_goal: 0.0
+    # Controls refinement aggression when using global error marking, 0.0 is purely local threshhold driven
+    total_error_fraction: 0.0
+    # p-value to compute global total error from element errors (1.0 -> L1 norm, 2.0 -> L2 norm) the larger the value the stronger peak element errors are emphasized
+    total_error_norm_p: 2.0
+    # Wheter or not to enable derefine (essentially do we care about elements having a smaller error)
+    enable_derefine: true
+    # Control parameter to determine if an element is eligible for coarsening, must be leq 1.0, so if an element has error e/allowed_err < derefine_hysterisis it will be considered for coarsening
+    derefine_hysterisis: 0.5
+    # How child errors are combined when deciding coarsening, 0->MinChildError, 1->SumOfChildErrors, 2->MaximumChildError
+    derefine_op: 2
+    # Cap on total number of elements, 0 is disabled
+    max_elements: 0 
+    # Maximal degrees of freedom (1 Triangle 2D = 3 DOF), 0 is disabled
+    max_dofs: 0
+    # Maximum allowed nonconforming refinement level difference between neighbors, 0 unlimited
+    nc_limit: 0
+    # Wheter to prefer conforming vs nonconforming refinement (for quad/hex this should be false)
+    prefer_conforming_refinement: true
+    # minimal number of elements that must be marked for refinement before loop early terminates
+    min_marked_elements: 1
+    # Minimum relative reduction in total error between iterations (fraction not percentage), 0 is disabled 
+    min_rel_error_reduction: 0.0
+    # Rebalance parallel mesh afterwards (redistribute over MPI nodes - if MPI it should be true, if not MPI it will not do anything so it should be true)
+    enable_rebalance: true
+    # Print AMR diagnostics
+    verbose: false
+
 # Where Simulation results should be saved
 save_path: "/work/sim_results"
 # Wheter to overwrite existing files (trashes the directory if true) - meta file is always overwritten
@@ -329,6 +419,12 @@ Hypre:
 - Previous versions 
   - tried with 2.32.0 : HypreBoomer AMG reports 1 OpenMP thread regardless of set number. Either checks in a funny way, or bugged  
 
+VTK:
+- version 9.5.0
+- Hardcoded opengl2 backend with OSMesa (v6) and no X (assumes no GPU)
+
+GSLib:
+- version 1.0.9
 
 
 # Debugging notes

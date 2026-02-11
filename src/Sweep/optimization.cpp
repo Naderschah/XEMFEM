@@ -281,7 +281,7 @@ RunAndMetricsResult run_simulation_and_save(YAML::Node yaml_config, std::size_t 
         return out;
     }
 
-    SimulationResult result = run_simulation(cfg_ptr, model_path);
+    SimulationResult result = run_simulation(cfg_ptr, model_path, true);
     if (!result.success) {
         std::cerr << "Simulation failed for " << out.run_dir_name
                   << ": " << result.error_message << "\n";
@@ -400,10 +400,9 @@ Ie 1-(Volume where electrons reach liquid gas interface) / (Total Volume)
 */
 {
     std::chrono::steady_clock::time_point t_start;
-    if (cfg.debug.debug)
+    if (cfg.debug.timing)
     {
         t_start = std::chrono::steady_clock::now();
-        std::cout << "[DEBUG:CIV] Timing: start CIV" << std::endl;
     }
 
     const std::string &method = cfg.civ_params.method; // "InformedSweep" or "RandomSample"
@@ -431,11 +430,11 @@ Ie 1-(Volume where electrons reach liquid gas interface) / (Total Volume)
         civ = 1.0;
     }
 
-    if (cfg.debug.debug)
+    if (cfg.debug.timing)
     {
         auto t_end = std::chrono::steady_clock::now();
         auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count();
-        std::cout << "[DEBUG:CIV] Timing: end CIV (" << dt << " ms)" << std::endl;
+        std::cout << "[Timing]: end CIV (" << dt << " ms)" << std::endl;
     }
 
     return civ;

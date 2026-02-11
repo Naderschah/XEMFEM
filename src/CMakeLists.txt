@@ -12,7 +12,7 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY  ${CMAKE_BINARY_DIR})
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY  ${CMAKE_BINARY_DIR})
 
 # Common libraries
-add_subdirectory(cmdLineParser)
+add_subdirectory(cmdLineInteraction)
 add_subdirectory(config)
 
 # Modules / executables
