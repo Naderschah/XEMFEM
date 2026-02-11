@@ -275,7 +275,7 @@ NETGEN_2D_Params = NETGEN_1D_2D.Parameters()
 # Get a preset
 
 if params["debugCoarse"]:
-    NETGEN_2D_Params.SetFineness("VeryCoarse")
+    NETGEN_2D_Params.SetFineness(smeshBuilder.VeryCoarse)
 else:
     preset = None
     if params["preset"] == "VeryFine": preset = smeshBuilder.VeryFine
