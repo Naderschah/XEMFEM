@@ -10,71 +10,76 @@ void run_optimization(const Config &init_cfg, std::string config_str)
     MPI_Comm_size(comm, &world_size);
 
     const auto &opt = init_cfg.optimize;
-    if (!opt.enabled) { return; }
 
-    if (opt.variables.empty()) {
-        throw std::runtime_error("optimize.enabled=true but no variables specified");
-    }
-
-    // Build objective function (metrics -> scalar) on all ranks (must be consistent)
-    ObjectiveFn objective_fn = make_objective_function(opt);
-
-    // Storage and logger: only rank 0 owns these
-    std::vector<OptRunRecord> records;
-    OptimizationLogger *logger_ptr = nullptr;
-    std::unique_ptr<OptimizationLogger> logger_owner;
-
-    std::filesystem::path save_root(init_cfg.save_path);
-
-    if (rank == 0) {
-        records.reserve(opt.max_fun_evals > 0 ? opt.max_fun_evals : 100);
-        logger_owner = std::make_unique<OptimizationLogger>(init_cfg.geometry_id, save_root);
-        logger_owner->initialize();
-        logger_ptr = logger_owner.get();
-    } else {
-        // dummy storage on non-root (evaluate may accept refs)
-        records.clear();
-        records.shrink_to_fit();
-    }
-
-    // Build initial point x0 (deterministic; do it on rank 0, broadcast)
-    std::vector<double> x0;
-    const int nvars = static_cast<int>(opt.variables.size());
-
-    if (rank == 0) {
-        x0.reserve(opt.variables.size());
-        for (const auto &v : opt.variables) {
-            double x_init = v.initial;
-            if (x_init < v.lower || x_init > v.upper) {
-                x_init = 0.5 * (v.lower + v.upper);
-            }
-            x0.push_back(x_init);
-        }
-    } else {
-        x0.resize(opt.variables.size());
-    }
-
-    // Broadcast x0 so all ranks agree (mainly for sanity / potential debug)
-    MPI_Bcast(x0.data(), nvars, MPI_DOUBLE, 0, comm);
+    // Single exit flag; function returns once at the end.
+    bool do_run = opt.enabled;
 
     // Command protocol:
-    //   cmd = 1 -> evaluate one point (followed by eval_index + x vector)
-    //   cmd = 0 -> stop service loop
     const int CMD_EVAL = 1;
     const int CMD_STOP = 0;
 
-    // Non-root ranks enter a service loop:
-    // They do NOT run Nelder–Mead. They just receive x from rank 0 and participate
-    // in the collective simulation inside evaluate_one_optimization_point.
-    if (rank != 0)
+    // Variables used across both roles (root/worker)
+    ObjectiveFn objective_fn;                 // constructed only if do_run
+    std::vector<OptRunRecord> records;
+    OptimizationLogger *logger_ptr = nullptr;
+    std::unique_ptr<OptimizationLogger> logger_owner;
+    std::filesystem::path save_root(init_cfg.save_path);
+
+    std::vector<double> x0;
+    int nvars = 0;
+
+    // -------- Setup (only if enabled) --------
+    if (do_run)
     {
-        while (true)
+        if (opt.variables.empty()) {
+            throw std::runtime_error("optimize.enabled=true but no variables specified");
+        }
+
+        objective_fn = make_objective_function(opt);
+
+        if (rank == 0) {
+            records.reserve(opt.max_fun_evals > 0 ? opt.max_fun_evals : 100);
+            logger_owner = std::make_unique<OptimizationLogger>(init_cfg.geometry_id, save_root);
+            logger_owner->initialize();
+            logger_ptr = logger_owner.get();
+        } else {
+            records.clear();
+            records.shrink_to_fit();
+        }
+
+        nvars = static_cast<int>(opt.variables.size());
+
+        // Build initial point x0 (rank 0), broadcast to all ranks
+        if (rank == 0) {
+            x0.reserve(opt.variables.size());
+            for (const auto &v : opt.variables) {
+                double x_init = v.initial;
+                if (x_init < v.lower || x_init > v.upper) {
+                    x_init = 0.5 * (v.lower + v.upper);
+                }
+                x0.push_back(x_init);
+            }
+        } else {
+            x0.resize(opt.variables.size());
+        }
+
+        MPI_Bcast(x0.data(), nvars, MPI_DOUBLE, 0, comm);
+    }
+
+    // -------- Worker role --------
+    std::cout.clear();
+    if (do_run && rank != 0)
+    {
+        bool running = true;
+
+        while (running)
         {
             int cmd = CMD_STOP;
             MPI_Bcast(&cmd, 1, MPI_INT, 0, comm);
 
             if (cmd == CMD_STOP) {
-                break;
+                running = false;
+                continue;
             }
 
             std::uint64_t eval_index_u64 = 0;
@@ -83,9 +88,6 @@ void run_optimization(const Config &init_cfg, std::string config_str)
             std::vector<double> x(nvars, 0.0);
             MPI_Bcast(x.data(), nvars, MPI_DOUBLE, 0, comm);
 
-            // Participate in evaluation (collective MPI work happens inside)
-            // Pass dummy logger; records should ideally only be appended on rank 0
-            // (evaluate_one_optimization_point should guard on logger!=nullptr or rank==0).
             (void)evaluate_one_optimization_point(
                 config_str,
                 opt,
@@ -97,97 +99,97 @@ void run_optimization(const Config &init_cfg, std::string config_str)
             );
         }
 
-        // Optionally receive final x_opt (useful if downstream needs it)
-        // Rank 0 will broadcast it.
+
+        // Optional receive final x_opt
         int xopt_n = 0;
         MPI_Bcast(&xopt_n, 1, MPI_INT, 0, comm);
         std::vector<double> x_opt(xopt_n, 0.0);
         if (xopt_n > 0) {
             MPI_Bcast(x_opt.data(), xopt_n, MPI_DOUBLE, 0, comm);
         }
-
-        return;
     }
 
-    // ---------------- Rank 0 runs Nelder–Mead ----------------
-
-    std::size_t eval_counter = 0;
-
-    auto nm_func = [&](const std::vector<double> &x) -> double
+    // -------- Root role --------
+    if (do_run && rank == 0)
     {
-        // Broadcast "evaluate" command
-        int cmd = CMD_EVAL;
-        MPI_Bcast(&cmd, 1, MPI_INT, 0, comm);
+        std::size_t eval_counter = 0;
 
-        // Broadcast eval index to keep run naming consistent across ranks
-        std::uint64_t eval_index_u64 = static_cast<std::uint64_t>(eval_counter);
-        MPI_Bcast(&eval_index_u64, 1, MPI_UINT64_T, 0, comm);
+        auto nm_func = [&](const std::vector<double> &x) -> double
+        {
+            int cmd = CMD_EVAL;
+            MPI_Bcast(&cmd, 1, MPI_INT, 0, comm);
 
-        // Broadcast x
-        MFEM_VERIFY(static_cast<int>(x.size()) == nvars, "nm_func: x size mismatch");
-        MPI_Bcast(const_cast<double*>(x.data()), nvars, MPI_DOUBLE, 0, comm);
+            std::uint64_t eval_index_u64 = static_cast<std::uint64_t>(eval_counter);
+            MPI_Bcast(&eval_index_u64, 1, MPI_UINT64_T, 0, comm);
 
-        // Evaluate (all ranks will participate; rank 0 gets the returned objective)
-        double f = evaluate_one_optimization_point(
-            config_str,
-            opt,
-            x,
-            eval_counter,
-            objective_fn,
-            records,
-            logger_ptr
+            MFEM_VERIFY(static_cast<int>(x.size()) == nvars, "nm_func: x size mismatch");
+            MPI_Bcast(const_cast<double*>(x.data()), nvars, MPI_DOUBLE, 0, comm);
+
+            double f = evaluate_one_optimization_point(
+                config_str,
+                opt,
+                x,
+                eval_counter,
+                objective_fn,
+                records,
+                logger_ptr
+            );
+
+            ++eval_counter;
+            return f;
+        };
+
+        std::vector<double> x_opt = nelder_mead::find_min(
+            nm_func,
+            x0,
+            opt.adaptive,
+            /* initial_simplex */ {},
+            opt.tol_fun,
+            opt.tol_x,
+            static_cast<unsigned int>(opt.max_iters),
+            static_cast<unsigned int>(opt.max_fun_evals)
         );
 
-        ++eval_counter;
-        return f;
-    };
-
-    std::vector<double> x_opt = nelder_mead::find_min(
-        nm_func,
-        x0,
-        opt.adaptive,
-        /* initial_simplex */ {},
-        opt.tol_fun,
-        opt.tol_x,
-        static_cast<unsigned int>(opt.max_iters),
-        static_cast<unsigned int>(opt.max_fun_evals)
-    );
-
-    // Tell workers to stop
-    {
-        int cmd = CMD_STOP;
-        MPI_Bcast(&cmd, 1, MPI_INT, 0, comm);
-    }
-
-    // Broadcast final x_opt to all ranks (optional but usually helpful)
-    {
-        int xopt_n = static_cast<int>(x_opt.size());
-        MPI_Bcast(&xopt_n, 1, MPI_INT, 0, comm);
-        if (xopt_n > 0) {
-            MPI_Bcast(x_opt.data(), xopt_n, MPI_DOUBLE, 0, comm);
+        // Tell workers to stop
+        {
+            int cmd = CMD_STOP;
+            MPI_Bcast(&cmd, 1, MPI_INT, 0, comm);
         }
-    }
 
-    // Find the best recorded run (rank 0 only)
-    double best_f = std::numeric_limits<double>::infinity();
-    const OptRunRecord *best_rec = nullptr;
-    for (const auto &rec : records) {
-        if (rec.objective_value < best_f) {
-            best_f = rec.objective_value;
-            best_rec = &rec;
+        // Broadcast final x_opt
+        {
+            int xopt_n = static_cast<int>(x_opt.size());
+            MPI_Bcast(&xopt_n, 1, MPI_INT, 0, comm);
+            if (xopt_n > 0) {
+                MPI_Bcast(x_opt.data(), xopt_n, MPI_DOUBLE, 0, comm);
+            }
         }
+
+        // Best run summary (rank 0 only)
+        double best_f = std::numeric_limits<double>::infinity();
+        const OptRunRecord *best_rec = nullptr;
+        for (const auto &rec : records) {
+            if (rec.objective_value < best_f) {
+                best_f = rec.objective_value;
+                best_rec = &rec;
+            }
+        }
+
+        if (best_rec) {
+            std::cout << "[OPT] Best objective: " << best_f
+                      << " in " << best_rec->run_dir_name << "\n";
+        } else {
+            std::cout << "[OPT] No successful runs recorded.\n";
+        }
+
+
+        if (rank == 0){ write_optimization_meta(init_cfg.geometry_id, save_root, records); }
     }
 
-    if (best_rec) {
-        std::cout << "[OPT] Best objective: " << best_f
-                  << " in " << best_rec->run_dir_name << "\n";
-    } else {
-        std::cout << "[OPT] No successful runs recorded.\n";
-    }
-
-    // Write meta.txt summarizing all optimization runs (rank 0 only)
-    write_optimization_meta(init_cfg.geometry_id, save_root, records);
+    // -------- Single return --------
+    return;
 }
+
 
 
 RunAndMetricsResult run_simulation_and_save(YAML::Node yaml_config, std::size_t eval_index)
@@ -551,60 +553,51 @@ void write_optimization_meta(const std::string &geometry_id,
                              const std::filesystem::path &save_root,
                              const std::vector<OptRunRecord> &records)
 {
-    MPI_Comm comm = MPI_COMM_WORLD;
-    int rank = 0;
-    MPI_Comm_rank(comm, &rank);
-
-    if (rank == 0) {
-
-        std::error_code ec;
-        std::filesystem::create_directories(save_root, ec);
-        if (ec) {
-            std::cerr << "Warning: could not create save_root directory "
-                    << save_root << " : " << ec.message() << "\n";
-        }
-
-        std::ofstream meta(save_root / "meta.txt");
-        if (!meta) {
-            std::cerr << "Warning: could not open meta.txt in " << save_root << "\n";
-        }
-
-        meta << geometry_id << "\n\n";
-
-        if (records.empty()) {
-            meta << "(no runs)\n";
-            meta.flush();
-        }
-        else
-        {
-        for (const auto &rec : records) {
-            std::filesystem::path run_dir = save_root / rec.run_dir_name;
-
-            meta << rec.run_dir_name << ":\n";
-            meta << "  objective: " << rec.objective_value << "\n";
-
-            meta << "  params:\n";
-            if (rec.vars.empty()) {
-                meta << "    (none)\n";
-            } else {
-                for (const auto &p : rec.vars) {
-                    meta << "    " << p.first << " = " << p.second << "\n";
-                }
-            }
-
-            meta << "  outputs:\n";
-            meta << "    field_ex: " << (run_dir / "field_ex.gf").string() << "\n";
-            meta << "    field_ey: " << (run_dir / "field_ey.gf").string() << "\n";
-            meta << "    field_mag: " << (run_dir / "field_mag.gf").string() << "\n";
-            meta << "    mesh: " << (run_dir / "simulation_mesh.msh.000000").string() << "\n";
-            meta << "    V_solution: " << (run_dir / "solution_V.gf.000000").string() << "\n";
-            meta << "\n";
-        }}
-
-        meta.flush();
-
+    std::error_code ec;
+    std::filesystem::create_directories(save_root, ec);
+    if (ec) {
+        std::cerr << "Warning: could not create save_root directory "
+                << save_root << " : " << ec.message() << "\n";
     }
-    MPI_Barrier(comm);
+
+    std::ofstream meta(save_root / "meta.txt");
+    if (!meta) {
+        std::cerr << "Warning: could not open meta.txt in " << save_root << "\n";
+    }
+
+    meta << geometry_id << "\n\n";
+
+    if (records.empty()) {
+        meta << "(no runs)\n";
+        meta.flush();
+    }
+    else
+    {
+    for (const auto &rec : records) {
+        std::filesystem::path run_dir = save_root / rec.run_dir_name;
+
+        meta << rec.run_dir_name << ":\n";
+        meta << "  objective: " << rec.objective_value << "\n";
+
+        meta << "  params:\n";
+        if (rec.vars.empty()) {
+            meta << "    (none)\n";
+        } else {
+            for (const auto &p : rec.vars) {
+                meta << "    " << p.first << " = " << p.second << "\n";
+            }
+        }
+
+        meta << "  outputs:\n";
+        meta << "    field_ex: " << (run_dir / "field_ex.gf").string() << "\n";
+        meta << "    field_ey: " << (run_dir / "field_ey.gf").string() << "\n";
+        meta << "    field_mag: " << (run_dir / "field_mag.gf").string() << "\n";
+        meta << "    mesh: " << (run_dir / "simulation_mesh.msh.000000").string() << "\n";
+        meta << "    V_solution: " << (run_dir / "solution_V.gf.000000").string() << "\n";
+        meta << "\n";
+    }}
+
+    meta.flush();
 }
 
 
