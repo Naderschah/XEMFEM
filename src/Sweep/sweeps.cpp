@@ -137,9 +137,9 @@ void sweep_recursive_cfg(const Config &base_cfg,
     {
         // Leaf: build per-run YAML string
         YAML::Node root = YAML::Load(config_str);
-        for (const auto &a : assignments) {
-            set_by_dot_path(root, a.path, parse_scalar(a.value));
-        }
+        //for (const auto &a : assignments) {
+        //    set_by_dot_path(root, a.path, parse_scalar(a.value));
+        //}
 
         YAML::Emitter out;
         out << root;

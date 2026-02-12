@@ -25,3 +25,4 @@ plots
 *.pyc
 mount/
 geometry/createGeometryFromCAD/out
+XENT-TPC*

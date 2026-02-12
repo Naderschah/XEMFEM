@@ -44,7 +44,9 @@ static int run_sim(Config init_cfg, std::string config_str) {
         std::string mesh_path = PrecomputeAMRMesh(init_cfg);
         init_cfg.mesh.path = mesh_path;
         config_str = ReplaceMeshPathInConfig(config_str, mesh_path);
-
+        std::cout << "mesh_path = " << mesh_path << "\n";
+        for (auto &p : std::filesystem::directory_iterator(mesh_path))
+        std::cout << "  " << p.path().string() << "\n";
         sweep_recursive_cfg(init_cfg,
                             config_str, 
                             sweeps,

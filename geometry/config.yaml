@@ -27,6 +27,7 @@ mesh:
     Opt_Optimize: true
   AMR:
     enable: true
+    max_iter: 1
     local_error_goal: 1e-4
     total_error_goal: 0.0
     total_error_fraction: 0.0
@@ -59,7 +60,7 @@ compute:
     num: -1
     affinity: scatter
 optimize:
-  enabled: true
+  enabled: false
   print_results: true
   objective: self_weighting
   max_evals: 1
@@ -108,6 +109,19 @@ optimize:
     lower: -2000.0
     upper: 0.0
     initial: -950.0
+sweeps:
+    # Some Name for the sweep 
+  - name: "AnodeSweep"
+    # Path inside the YAML from root (anything can be sweeped)
+    path: "boundaries.BC_AnodeElectrode.value" 
+    # Specify a range sweep
+    kind: "range"
+    # Starting at 
+    start: 1900.0
+    # Ending At 
+    end:   4900.0
+    # in number steps 
+    steps: 4
 solver:
   generate_E: false
   axisymmetric: true

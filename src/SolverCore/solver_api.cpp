@@ -624,31 +624,6 @@ std::string run_one(const Config &cfg,
     std::filesystem::path save_root(cfg.save_path);
     std::error_code ec;
 
-    // Check save path is empty 
-    if (rank == 0){
-    if (std::filesystem::exists(save_root)) {
-        bool empty = std::filesystem::is_empty(save_root, ec);
-        if (ec) {
-            throw std::runtime_error("Failed to check save_path directory: " + ec.message());
-        }
-        if (!empty) {
-            if (!cfg.delete_files_present) {
-                throw std::runtime_error(
-                    "Directory '" + save_root.string() + "' is not empty.");
-            } else {
-                // Delete all contents but not the directory itself
-                for (const auto& entry : std::filesystem::directory_iterator(save_root)) {
-                    std::filesystem::remove_all(entry.path(), ec);
-                    if (ec) {
-                        throw std::runtime_error(
-                            "Failed to delete '" + entry.path().string() +
-                            "': " + ec.message());
-                    }
-                }
-            }
-        }
-    }}
-    
     // Ensure directory exists
     if (rank == 0){std::filesystem::create_directories(save_root, ec);}
     if (ec)
