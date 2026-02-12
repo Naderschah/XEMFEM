@@ -37,29 +37,34 @@ std::string PrecomputeAMRMesh(const Config &cfg,
         std::cout << "[Timing]: AMR timing (" << dt << " ms)" << std::endl;
     }
 
-    const std::filesystem::path out_dir = std::filesystem::path(cfg.save_path);
-    const std::filesystem::path mesh_path = out_dir / "amr_mesh";
+    const std::filesystem::path out_dir  = cfg.save_path;
+    const std::filesystem::path mesh_dir = out_dir / "amr_mesh";
 
-    if (rank == 0)
-    {
+    if (rank == 0) {
         std::error_code ec;
-        std::filesystem::create_directories(out_dir, ec);
-        if (ec)
-        {
-            std::cerr << "Warning: could not create output directory "
-                      << mesh_path << " : " << ec.message() << "\n";
-        }
+        std::filesystem::create_directories(mesh_dir, ec);
+        MFEM_VERIFY(!ec, "Could not create output directory: " << mesh_dir.string()
+                                                            << " : " << ec.message());
     }
 
-    std::ostringstream fn;
-    fn << (mesh_path / "amr_mesh").string()
-    << "." << std::setw(6) << std::setfill('0') << rank;
+    // ensure all ranks see the directory before opening files
+    MPI_Barrier(res.mesh->GetComm()); 
 
-    std::ofstream os(fn.str());
-    MFEM_VERIFY(os.good(), "Could not open parallel mesh output file.");
+    // Build the full output file path once
+    std::ostringstream name;
+    name << "amr_mesh." << std::setw(6) << std::setfill('0') << rank;
+
+    const std::filesystem::path file_path = mesh_dir / name.str();
+
+    std::ofstream os(file_path);
+    MFEM_VERIFY(os.good(),
+                "Could not open parallel mesh output file. Rank "
+                << rank << " : " << file_path.string());
+
     res.mesh->ParPrint(os);
 
-    return mesh_path.string();
+
+    return mesh_dir.string();
 }
 
 SimulationResult run_simulation(std::shared_ptr<Config> cfg,

@@ -67,7 +67,6 @@ void run_optimization(const Config &init_cfg, std::string config_str)
     }
 
     // -------- Worker role --------
-    std::cout.clear();
     if (do_run && rank != 0)
     {
         bool running = true;
