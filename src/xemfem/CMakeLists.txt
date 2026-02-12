@@ -22,4 +22,5 @@ target_link_libraries(XEMFEM PRIVATE
   sweep_objects
   interpolator
   neldermead_headers
+  path_handler
 )

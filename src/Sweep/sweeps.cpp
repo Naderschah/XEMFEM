@@ -40,27 +40,39 @@ void sweep_recursive_cfg(const Config &base_cfg,
     };
 
     // Helper: set root[path] = value_node, where path is dot-separated
-    auto set_by_dot_path = [&](YAML::Node &root, const std::string &path, const YAML::Node &value_node) {
+    auto set_by_dot_path = [&](YAML::Node &root,
+                           const std::string &path,
+                           const YAML::Node &value_node)
+    {
         std::stringstream ss(path);
         std::string key;
         std::vector<std::string> keys;
         while (std::getline(ss, key, '.')) {
             if (!key.empty()) keys.push_back(key);
         }
-        if (keys.empty()) {
+        if (keys.empty())
             throw std::runtime_error("sweep_recursive_cfg: empty assignment path");
+
+        if (!root || !root.IsMap())
+            throw std::runtime_error("sweep_recursive_cfg: root is not a map for path '" + path + "'");
+
+        YAML::Node cur = root; // handle into the same underlying node
+
+        for (std::size_t i = 0; i + 1 < keys.size(); ++i) {
+            const std::string &kk = keys[i];
+
+            if (!cur[kk])
+                throw std::runtime_error("sweep_recursive_cfg: invalid path '" + path +
+                                        "' (missing key '" + kk + "')");
+
+            if (!cur[kk].IsMap())
+                throw std::runtime_error("sweep_recursive_cfg: path '" + path +
+                                        "' traverses non-map key '" + kk + "'");
+
+            cur.reset(cur[kk]); // rebind handle to child node (no copy of subtree)
         }
 
-        YAML::Node node = root;
-        for (std::size_t k = 0; k + 1 < keys.size(); ++k) {
-            const std::string &kk = keys[k];
-            if (!node[kk]) {
-                throw std::runtime_error(
-                    "sweep_recursive_cfg: invalid path '" + path + "' (missing key '" + kk + "')");
-            }
-            node = node[kk];
-        }
-        node[keys.back()] = value_node;
+        cur[keys.back()] = value_node;
     };
 
     // Command protocol:
@@ -137,9 +149,10 @@ void sweep_recursive_cfg(const Config &base_cfg,
     {
         // Leaf: build per-run YAML string
         YAML::Node root = YAML::Load(config_str);
-        //for (const auto &a : assignments) {
-        //    set_by_dot_path(root, a.path, parse_scalar(a.value));
-        //}
+        for (const auto &a : assignments) {
+            set_by_dot_path(root, a.path, parse_scalar(a.value));
+        }
+        root["save_path"] = make_run_folder(root, static_cast<int>(run_counter)).string();
 
         YAML::Emitter out;
         out << root;

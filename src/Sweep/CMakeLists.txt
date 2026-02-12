@@ -131,7 +131,6 @@ target_include_directories(sweep_objects PRIVATE
   ${MFEM_INCLUDE_DIRS}
   ${CMAKE_CURRENT_SOURCE_DIR}/..          # src/
   ${CMAKE_CURRENT_SOURCE_DIR}/../SolverCore
-  ${CMAKE_CURRENT_SOURCE_DIR}/../SolverCore/mesh_tracing
   ${CMAKE_CURRENT_SOURCE_DIR}/../SolverCore/common_tracing
   ${neldermead_SOURCE_DIR}
   ${boost_SOURCE_DIR}
@@ -144,5 +143,6 @@ target_link_libraries(sweep_objects PRIVATE
   interpolator
   indicators_headers
   mfem
+  path_handler
 )
 

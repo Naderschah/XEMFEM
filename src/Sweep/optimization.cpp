@@ -200,68 +200,10 @@ RunAndMetricsResult run_simulation_and_save(YAML::Node yaml_config, std::size_t 
     MPI_Comm_rank(comm, &rank);
     MPI_Comm_size(comm, &world_size);
 
-    // -------------------------------------------------------------------------
-    // 0) Determine save_root from YAML (supports root["save_path"] or root["config"]["save_path"])
-    // -------------------------------------------------------------------------
-    std::string save_root_str;
-    if (yaml_config["config"] && yaml_config["config"].IsMap() && yaml_config["config"]["save_path"])
-        save_root_str = yaml_config["config"]["save_path"].as<std::string>();
-    else if (yaml_config["save_path"])
-        save_root_str = yaml_config["save_path"].as<std::string>();
-    else
-        throw std::runtime_error("run_simulation_and_save: YAML missing save_path (root.save_path or root.config.save_path)");
-
-    std::filesystem::path save_root(save_root_str);
-
-    // -------------------------------------------------------------------------
-    // 1) Create output directories (rank 0), then barrier
-    // -------------------------------------------------------------------------
-    std::error_code ec;
-
-    if (rank == 0) {
-        std::filesystem::create_directories(save_root, ec);
-        if (ec) {
-            std::cerr << "Warning: could not create save_root directory "
-                      << save_root << " : " << ec.message() << "\n";
-            ec.clear();
-        }
-    }
-    MPI_Barrier(comm);
-
-    // Make run name
-    std::size_t display_index = eval_index + 1;
-    std::ostringstream run_name;
-    run_name << "run_" << std::setw(4) << std::setfill('0') << display_index;
-    out.run_dir_name = run_name.str();
-
-    std::filesystem::path run_dir = save_root / out.run_dir_name;
-
-    if (rank == 0) {
-        std::filesystem::create_directories(run_dir, ec);
-        if (ec) {
-            std::cerr << "Warning: could not create run directory "
-                      << run_dir << " : " << ec.message() << "\n";
-            ec.clear();
-        }
-    }
-    MPI_Barrier(comm);
-
-    // -------------------------------------------------------------------------
-    // 2) Mutate YAML for this run (all ranks do the same deterministic changes)
-    // -------------------------------------------------------------------------
-    {
-        const std::string run_dir_str = run_dir.string();
-        if (yaml_config["config"] && yaml_config["config"].IsMap())
-            yaml_config["config"]["save_path"] = run_dir_str;
-        else
-            yaml_config["save_path"] = run_dir_str;
-    }
-
-    // Record MPI size in YAML (ensure 'mpi' is a map)
-    {
-        yaml_config["mpi"]["ranks"] = world_size;
-    }
-
+    if (!yaml_config["save_path"])
+        throw std::runtime_error("run_simulation_and_save: YAML missing save_path");
+    const std::filesystem::path run_dir(yaml_config["save_path"].as<std::string>());
+    out.run_dir_name = yaml_config["save_path"].as<std::string>();
     // -------------------------------------------------------------------------
     // 3) Build Config from YAML (no struct-level mutation for these fields)
     // -------------------------------------------------------------------------
@@ -320,6 +262,7 @@ double evaluate_one_optimization_point(const std::string &config_str,
     apply_fieldcage_network(root);
 
     // 2. Run simulation and save outputs
+    root["save_path"] = make_run_folder(root, eval_index).string();
     RunAndMetricsResult r = run_simulation_and_save(root, eval_index);
 
     if (!r.success) {
@@ -740,42 +683,21 @@ static std::vector<std::string> read_root_level_runs_from_meta(const std::filesy
     return runs;
 }
 
-// TODO add option for multiple runs 
 void run_metrics_only(const Config &cfg)
 {
-    std::filesystem::path save_root(cfg.save_path);
+    for (const auto& run_dir : targets_from_save_root(cfg))
+    {
+        std::cout << "[METRICS] Loading results from " << run_dir << "\n";
 
-    std::filesystem::path run_dir;
-
-    auto runs = read_root_level_runs_from_meta(save_root);
-    if (runs.empty()) {
-        run_dir = save_root;
-        std::cout << "[METRICS] meta.txt not found or empty; "
-                  << "using save_root directly: " << run_dir << "\n";
-    } else if (runs.size() == 1) {
-        run_dir = save_root / runs.front();
-        std::cout << "[METRICS] Found single run in meta.txt: "
-                  << runs.front() << " → " << run_dir << "\n";
-    } else {
-        std::cerr << "[METRICS] meta.txt contains multiple runs under "
-                  << save_root << ":\n";
-        for (const auto &r : runs) {
-            std::cerr << "  - " << r << "\n";
+        SimulationResult result = load_results(cfg, run_dir);
+        if (!result.success) {
+            std::cerr << "[METRICS] Failed to load results: "
+                      << result.error_message << "\n";
+            std::exit(1);
         }
-        std::cerr << "Please specify which run to use (CLI/config).\n";
-        std::exit(1);
+
+        OptimizationMetrics m = compute_metrics(cfg, result);
+        std::cout << "[METRICS] CIV = " << m.CIV << "\n";
+        std::cout << "[METRICS] FieldSpread = " << m.FieldSpread << "\n";
     }
-
-    std::cout << "[METRICS] Loading results from " << run_dir << "\n";
-
-    SimulationResult result = load_results(cfg, run_dir);
-    if (!result.success) {
-        std::cerr << "[METRICS] Failed to load results: "
-                  << result.error_message << "\n";
-        std::exit(1);
-    }
-
-    OptimizationMetrics m = compute_metrics(cfg, result);
-    std::cout << "[METRICS] CIV = " << m.CIV << "\n";
-    std::cout << "[METRICS] FieldSpread = " << m.FieldSpread << "\n";
 }

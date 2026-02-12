@@ -60,7 +60,7 @@ compute:
     num: -1
     affinity: scatter
 optimize:
-  enabled: false
+  enabled: true
   print_results: true
   objective: self_weighting
   max_evals: 1
@@ -109,19 +109,6 @@ optimize:
     lower: -2000.0
     upper: 0.0
     initial: -950.0
-sweeps:
-    # Some Name for the sweep 
-  - name: "AnodeSweep"
-    # Path inside the YAML from root (anything can be sweeped)
-    path: "boundaries.BC_AnodeElectrode.value" 
-    # Specify a range sweep
-    kind: "range"
-    # Starting at 
-    start: 1900.0
-    # Ending At 
-    end:   4900.0
-    # in number steps 
-    steps: 4
 solver:
   generate_E: false
   axisymmetric: true

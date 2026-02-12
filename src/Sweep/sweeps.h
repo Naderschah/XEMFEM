@@ -9,6 +9,7 @@
 #include "Config.h"
 #include "config_modification.h"
 #include "solver_api.h"
+#include "path_handler.h" 
 
 // Recursive function executing each sweep combination
 void sweep_recursive_cfg(

@@ -27,6 +27,7 @@ No built in bounds or constraints -> We need to handle these manually
 #include "CIV.h"
 #include "field_spread.h"
 #include "nelder-mead.h" 
+#include "path_handler.h" 
 
 
 

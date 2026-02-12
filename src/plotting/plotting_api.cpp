@@ -1,35 +1,22 @@
 #include "plotting_api.h"
+#include "path_handler.h"
 // -----------------------------------------------------------------------------
 // API entry
 // -----------------------------------------------------------------------------
 int make_plot_api(Config cfg)
 {
-  // First check if we had multy or single run
-  const std::filesystem::path root = cfg.save_path;
-  bool single_run = false;
-  // --- detect single run by presence of .msh in root ---
-  for (const auto& e : std::filesystem::directory_iterator(root)) {
-      if (e.is_regular_file() && e.path().extension() == ".msh") {
-          single_run = true;
-          break;
-      }
-  }
-  if (single_run) {
-    std::cout << "Print Single Line" << std::endl;
-    std::filesystem::path pvd = root / "Simulation" / "Simulation.pvd";
-    return _make_plots(pvd, cfg.debug.debug);
-  }
+    const auto targets = targets_from_save_root(cfg);
 
-  // --- multiple runs ---
-  for (const auto& e : std::filesystem::directory_iterator(root)) {
-    if (!e.is_directory()) continue;
+    // Optional: keep your message behavior
+    if (targets.size() == 1 && targets.front() == std::filesystem::path(cfg.save_path)) {
+        std::cout << "Print Single Line" << std::endl;
+    }
 
-    const std::string name = e.path().filename().string();
-    if (name.rfind("run_", 0) != 0) continue;
+    for (const auto& run_dir : targets)
+    {
+        const std::filesystem::path pvd = run_dir / "Simulation" / "Simulation.pvd";
+        _make_plots(pvd, cfg.debug.debug);
+    }
 
-    std::filesystem::path pvd = e.path() / "Simulation" / "Simulation.pvd";
-
-    _make_plots(pvd, cfg.debug.debug);
-  }
-  return 0;
+    return 0;
 }

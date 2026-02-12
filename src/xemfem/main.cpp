@@ -9,6 +9,7 @@
 #include "parallelization.h"
 #include "plotting_api.h"
 #include "interpolator.h"
+#include "path_handler.h"
 
 std::string ReplaceMeshPathInConfig(const std::string& config_str,
                                     const std::string& new_mesh_path)
@@ -22,13 +23,19 @@ std::string ReplaceMeshPathInConfig(const std::string& config_str,
 
 static int run_sim(Config init_cfg, std::string config_str) {
     const auto &sweeps = init_cfg.sweeps;
+
+    if (init_cfg.mesh.amr.enable)
+    {
+        std::cout << "[MAIN] Producing AMR Mesh" << std::endl;
+        std::string mesh_path = PrecomputeAMRMesh(init_cfg);
+        init_cfg.mesh.path = mesh_path;
+        config_str = ReplaceMeshPathInConfig(config_str, mesh_path);
+    }
+
     // Do optimization
     if (init_cfg.optimize.enabled && (!init_cfg.optimize.metrics_only))
     {
         std::cout << "[MAIN] Executing an optimization" << std::endl;
-        std::string mesh_path = PrecomputeAMRMesh(init_cfg);
-        init_cfg.mesh.path = mesh_path;
-        config_str = ReplaceMeshPathInConfig(config_str, mesh_path);
         run_optimization(init_cfg, config_str);
         return 0;
     }
@@ -41,12 +48,6 @@ static int run_sim(Config init_cfg, std::string config_str) {
         std::vector<RunRecord> records;
         std::vector<Assignment> assignments;
 
-        std::string mesh_path = PrecomputeAMRMesh(init_cfg);
-        init_cfg.mesh.path = mesh_path;
-        config_str = ReplaceMeshPathInConfig(config_str, mesh_path);
-        std::cout << "mesh_path = " << mesh_path << "\n";
-        for (auto &p : std::filesystem::directory_iterator(mesh_path))
-        std::cout << "  " << p.path().string() << "\n";
         sweep_recursive_cfg(init_cfg,
                             config_str, 
                             sweeps,
@@ -111,6 +112,8 @@ int main(int argc, char** argv)
 
     int rank = 0;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    int world_size = 1;
+    MPI_Comm_rank(MPI_COMM_WORLD, &world_size);
     // -------------------- Check Subcommand ----------------------
     cli::InputParser pre_args(argc, argv);
 
@@ -175,8 +178,17 @@ int main(int argc, char** argv)
     // MPI Set Up
     parallel::init_environment(init_cfg);
 
+    // Mark the number of ranks used 
+    {
+        YAML::Node root_tmp = YAML::Load(config_str);
+        root_tmp["mpi"]["ranks"] = world_size;
+        YAML::Emitter out;
+        out << root_tmp;
+        config_str = std::string(out.c_str());
+    }
     // ------------------------- Dispatch ------------------------------
     if (cmd == "sim") {
+        ensure_directory(init_cfg);
         run_sim(init_cfg, config_str);
         std::cout << "Done" <<std::endl;
         return 0;

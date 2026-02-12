@@ -57,6 +57,7 @@ target_link_libraries(plotting
     PUBLIC
         ${VTK_LIBRARIES}
         config
+        path_handler
 )
 
 # Thin wrapper executable

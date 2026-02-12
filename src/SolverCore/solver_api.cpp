@@ -620,40 +620,9 @@ std::string run_one(const Config &cfg,
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
     std::filesystem::path model_path = cfg.mesh.path;
-    // Determine root save directory from Config
-    std::filesystem::path save_root(cfg.save_path);
-    std::error_code ec;
+    const std::filesystem::path run_dir(cfg.save_path);
+    std::string run_name = run_dir.filename().string();
 
-    // Ensure directory exists
-    if (rank == 0){std::filesystem::create_directories(save_root, ec);}
-    if (ec)
-    {
-        std::cerr << "Warning: could not create save_root directory "
-                  << save_root << " : " << ec.message() << "\n";
-    }
-
-    // Per-run directory: run_0001, run_0002, ...
-    std::size_t display_index = run_index + 1;  // make it 1-based for naming
-    std::ostringstream run_name;
-    run_name << "run_" << std::setw(4) << std::setfill('0') << display_index;
-
-    std::filesystem::path run_dir = save_root / run_name.str();
-    if (rank == 0) {std::filesystem::create_directories(run_dir, ec);}
-    if (ec)
-    {
-        std::cerr << "Warning: could not create run directory "
-                  << run_dir << " : " << ec.message() << "\n";
-    }
-
-    // Modify save_root
-    {
-        const std::string run_dir_str = run_dir.string();
-        yaml_root["save_path"] = run_dir_str;
-    }
-    // Add number of MPI ranks used for completeness
-    {
-        yaml_root["mpi"]["ranks"] = world_size;
-    }
     // Dispatch
     Config cfg_copy = Config::LoadFromNode(yaml_root);
     auto cfg_ptr = std::make_shared<Config>(cfg_copy);
@@ -663,7 +632,7 @@ std::string run_one(const Config &cfg,
         SimulationResult result = run_simulation(cfg_ptr, model_path, skip_amr);
         if (!result.success)
         {
-            std::cerr << "Simulation failed for " << run_name.str()
+            std::cerr << "Simulation failed for " << run_name
                       << ": " << result.error_message << "\n";
             return {}; 
         }
@@ -676,5 +645,5 @@ std::string run_one(const Config &cfg,
             std::cout << name << ": " << b.value << '\n';
         }
     }
-    return run_name.str();
+    return run_name;
 }
