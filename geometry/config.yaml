@@ -53,14 +53,14 @@ debug:
   dry_run: false
   printBoundaryConditions: false
   printHypreWarnings: false
-  dumpdata: false
+  dumpdata: true
 compute:
   threads:
     enabled: false
     num: -1
     affinity: scatter
 optimize:
-  enabled: true
+  enabled: false
   print_results: true
   objective: self_weighting
   max_evals: 1
@@ -81,7 +81,7 @@ optimize:
     redistribution_every: 1
   civ_params:
     method: RandomSample
-    num_seed_elements: 1
+    num_seed_elements: 100
     nr: 25
     nz: 75
     max_levels: 2

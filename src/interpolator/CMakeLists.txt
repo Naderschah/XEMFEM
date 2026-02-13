@@ -19,4 +19,5 @@ target_link_libraries(interpolator
         config
         SolverCore
         HDF5::HDF5
+        path_handler
 )

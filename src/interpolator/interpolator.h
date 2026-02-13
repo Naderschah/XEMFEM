@@ -9,6 +9,7 @@
 #include <limits>
 #include "mfem.hpp"
 #include <mfem/fem/gslib.hpp>
+#include "path_handler.h"
 
 using namespace mfem;
 

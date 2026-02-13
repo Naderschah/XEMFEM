@@ -358,8 +358,8 @@ void SampleEFieldOnCartesianGrid(mfem::ParMesh &pmesh,
                                  const int Nx, const int Ny, const int Nz,
                                  GridSample &out,
                                  Config cfg,
-                                 const bool H1_project,
-                                 const bool accept_surface_projection)
+                                 const bool H1_project,    // IGNORED – always direct gradient
+                                 const bool accept_surface_projection) // IGNORED
 {
     using namespace mfem;
 
@@ -368,13 +368,12 @@ void SampleEFieldOnCartesianGrid(mfem::ParMesh &pmesh,
     MPI_Comm_rank(comm, &myid);
     MPI_Comm_size(comm, &np);
 
-    const int field_dim = pmesh.Dimension();      // 2 or 3: field dimension of grad(V) / E
-    const int space_dim = pmesh.SpaceDimension(); // 2 or 3: coordinate dimension for FindPoints
-    MFEM_VERIFY(field_dim == 2 || field_dim == 3, "Only 2D/3D elements supported");
+    const int space_dim = pmesh.SpaceDimension();
+    const int field_dim = pmesh.Dimension();
     MFEM_VERIFY(space_dim == 2 || space_dim == 3, "Only 2D/3D physical space supported");
 
     // ------------------------------------------------------------------
-    // Global bounding box (ParMesh::GetBoundingBox is global over comm)
+    // Global bounding box
     // ------------------------------------------------------------------
     Vector bbmin_s(space_dim), bbmax_s(space_dim);
     pmesh.GetBoundingBox(bbmin_s, bbmax_s);
@@ -406,7 +405,7 @@ void SampleEFieldOnCartesianGrid(mfem::ParMesh &pmesh,
     const int N = Nx * Ny * Nz;
 
     // ------------------------------------------------------------------
-    // Partition global point indices p in [0, N) into contiguous blocks
+    // Partition global points
     // ------------------------------------------------------------------
     const int base = (np > 0) ? (N / np) : 0;
     const int rem  = (np > 0) ? (N % np) : 0;
@@ -414,21 +413,20 @@ void SampleEFieldOnCartesianGrid(mfem::ParMesh &pmesh,
     const int p0   = myid * base + (myid < rem ? myid : rem);
 
     // ------------------------------------------------------------------
-    // Local query points (byNODES: component-major, size space_dim*nq)
-    // Workaround for MFEM/GSLIB paths that dislike nq==0:
-    // if nloc==0, query 1 dummy point and ignore results.
+    // Local query points – dummy if nloc == 0
     // ------------------------------------------------------------------
     const bool need_dummy = (nloc == 0);
     const int nq = need_dummy ? 1 : nloc;
 
-    Vector point_pos(space_dim * nq);
+    // Create vector of coordinates in "byNODES" layout (all x, then all y, then all z)
+    Vector point_pos(space_dim * nq);   // FIXED: no ordering enum in constructor
+
     if (!need_dummy)
     {
-        // Build local subset deterministically from global linear index p = p0 + lp
+        // Build local subset deterministically in byNODES order
         for (int lp = 0; lp < nq; ++lp)
         {
             const int p = p0 + lp;
-
             const int i = p % Nx;
             const int t = p / Nx;
             const int j = t % Ny;
@@ -437,24 +435,20 @@ void SampleEFieldOnCartesianGrid(mfem::ParMesh &pmesh,
             point_pos[0 * nq + lp] = bbmin3[0] + i * spacing[0];
             point_pos[1 * nq + lp] = bbmin3[1] + j * spacing[1];
             if (space_dim == 3)
-            {
                 point_pos[2 * nq + lp] = bbmin3[2] + k * spacing[2];
-            }
         }
     }
     else
     {
-        // Dummy point inside bbox
+        // Dummy point inside bbox, still byNODES layout
         point_pos = 0.0;
         point_pos[0] = bbmin3[0];
-        if (space_dim >= 2) { point_pos[1] = bbmin3[1]; }
-        if (space_dim == 3) { point_pos[2] = bbmin3[2]; }
+        if (space_dim >= 2) point_pos[1] = bbmin3[1];
+        if (space_dim == 3) point_pos[2] = bbmin3[2];
     }
 
     // ------------------------------------------------------------------
-    // Local outputs for nq points
-    // NOTE: GridSample::valid appears to be std::vector<unsigned char>.
-    // We'll gather that as MPI_UNSIGNED_CHAR.
+    // Local output containers (size nq, but only first nloc are meaningful)
     // ------------------------------------------------------------------
     GridSample local;
     local.dim = field_dim;
@@ -469,32 +463,88 @@ void SampleEFieldOnCartesianGrid(mfem::ParMesh &pmesh,
     local.valid.assign(nq, static_cast<unsigned char>(0));
 
     // ------------------------------------------------------------------
-    // Point location + interpolation (collective over comm)
+    // Point location (collective) – explicitly specify byNODES layout
     // ------------------------------------------------------------------
     pmesh.EnsureNodes();
     MFEM_VERIFY(pmesh.GetNodes() != nullptr, "Mesh nodes are required for FindPointsGSLIB");
 
     FindPointsGSLIB finder(comm);
     finder.Setup(pmesh);
-    finder.FindPoints(point_pos, Ordering::byNODES);
+    finder.FindPoints(point_pos, Ordering::byNODES);   // FIXED: ordering passed here
 
-    const auto &code_local = finder.GetCode(); // size nq
+    // ------------------------------------------------------------------
+    // --- PORTED LOGIC: distribute to owning ranks, evaluate E = -∇V ---
+    // ------------------------------------------------------------------
+    Array<unsigned int> recv_elem, recv_code;
+    Vector recv_ref;   // reference coordinates, returned in byVDIM layout
+    finder.DistributePointInfoToOwningMPIRanks(recv_elem, recv_ref, recv_code);
 
-    if (!H1_project)
+    const int nrecv = recv_elem.Size();
+    const int sdim = space_dim;
+
+    // Buffer for E field on the points we received (byVDIM)
+    Vector recv_E(nrecv * sdim);
+    Vector grad(sdim);
+
+    for (int j = 0; j < nrecv; ++j)
     {
-        SampleGradV(pmesh, V, finder, code_local, nq, accept_surface_projection, local);
+        if (recv_code[j] == 2)
+        {
+            recv_E(j * sdim + 0) = std::numeric_limits<double>::quiet_NaN();
+            recv_E(j * sdim + 1) = std::numeric_limits<double>::quiet_NaN();
+            if (sdim == 3)
+                recv_E(j * sdim + 2) = std::numeric_limits<double>::quiet_NaN();
+            continue;
+        }
+
+        const int elem_id = (int)recv_elem[j];
+        ElementTransformation *T = pmesh.GetElementTransformation(elem_id);
+        MFEM_VERIFY(T != nullptr, "Null ElementTransformation");
+
+        IntegrationPoint ip;
+        if (sdim == 2)
+            ip.Set2(recv_ref(j * sdim + 0), recv_ref(j * sdim + 1));
+        else // sdim == 3
+            ip.Set3(recv_ref(j * sdim + 0), recv_ref(j * sdim + 1), recv_ref(j * sdim + 2));
+
+        T->SetIntPoint(&ip);
+        V.GetGradient(*T, grad);
+        grad *= -1.0;   // E = -∇φ
+
+        recv_E(j * sdim + 0) = grad[0];
+        recv_E(j * sdim + 1) = grad[1];
+        if (sdim == 3)
+            recv_E(j * sdim + 2) = grad[2];
     }
-    else
+
+    // Scatter the computed E field back to the original ranks / original point order
+    // DistributeInterpolatedValues always returns in byVDIM layout.
+    Vector Evals_flat(nq * sdim);
+    finder.DistributeInterpolatedValues(recv_E, sdim, Ordering::byVDIM, Evals_flat);
+
+    // ------------------------------------------------------------------
+    // Fill local arrays for the first nloc real points
+    // ------------------------------------------------------------------
+    const Array<unsigned int> &code_local = finder.GetCode(); // original point status
+    for (int lp = 0; lp < nloc; ++lp)
     {
-        const ProjectedH1VectorField proj = BuildEFieldH1Projection(pmesh, V, cfg);
-        SampleH1Projection(pmesh, *(proj.E), finder, code_local, nq, accept_surface_projection, local);
+        const double ex = Evals_flat(lp * sdim + 0);
+        const double ey = Evals_flat(lp * sdim + 1);
+        const double ez = (sdim == 3) ? Evals_flat(lp * sdim + 2) : 0.0;
+
+        local.Ex[lp] = ex;
+        local.Ey[lp] = ey;
+        local.Ez[lp] = ez;
+
+        double emag = std::sqrt(ex*ex + ey*ey + ez*ez);
+        local.Emag[lp] = std::isfinite(emag) ? emag : std::numeric_limits<double>::quiet_NaN();
+
+        // Valid if the point was successfully located (code == 0)
+        local.valid[lp] = (code_local[lp] == 0) ? 1 : 0;
     }
 
     // ------------------------------------------------------------------
-    // Gather to rank 0 in global p-order (contiguous blocks)
-    // Only gather the real portion [0, nloc) (exclude dummy if present).
-    // Avoid passing nullptr recvcounts/displs/recvbuf on non-root:
-    // some MPI impls dereference them anyway.
+    // Gather to rank 0 (same as original)
     // ------------------------------------------------------------------
     const int send_n = nloc;
 
@@ -507,7 +557,6 @@ void SampleEFieldOnCartesianGrid(mfem::ParMesh &pmesh,
         displs[r]     = rp0;
     }
 
-    // Root allocates full out; non-root can leave out untouched.
     if (myid == 0)
     {
         out.dim = field_dim;
@@ -525,14 +574,12 @@ void SampleEFieldOnCartesianGrid(mfem::ParMesh &pmesh,
     double dummy_d = 0.0;
     unsigned char dummy_uc = 0;
 
-    // send buffers: only valid for send_n>0
     const double *sendEx   = (send_n > 0) ? local.Ex.data()   : nullptr;
     const double *sendEy   = (send_n > 0) ? local.Ey.data()   : nullptr;
     const double *sendEz   = (send_n > 0) ? local.Ez.data()   : nullptr;
     const double *sendEmag = (send_n > 0) ? local.Emag.data() : nullptr;
     const unsigned char *sendVal = (send_n > 0) ? local.valid.data() : nullptr;
 
-    // recv buffers: always valid pointers on all ranks
     double *recvEx   = (myid == 0) ? out.Ex.data()   : &dummy_d;
     double *recvEy   = (myid == 0) ? out.Ey.data()   : &dummy_d;
     double *recvEz   = (myid == 0) ? out.Ez.data()   : &dummy_d;
@@ -542,30 +589,22 @@ void SampleEFieldOnCartesianGrid(mfem::ParMesh &pmesh,
     MPI_Gatherv(sendEx, send_n, MPI_DOUBLE,
                 recvEx, recvcounts.data(), displs.data(), MPI_DOUBLE,
                 0, comm);
-
     MPI_Gatherv(sendEy, send_n, MPI_DOUBLE,
                 recvEy, recvcounts.data(), displs.data(), MPI_DOUBLE,
                 0, comm);
-
     if (field_dim == 3)
     {
         MPI_Gatherv(sendEz, send_n, MPI_DOUBLE,
                     recvEz, recvcounts.data(), displs.data(), MPI_DOUBLE,
                     0, comm);
     }
-
     MPI_Gatherv(sendEmag, send_n, MPI_DOUBLE,
                 recvEmag, recvcounts.data(), displs.data(), MPI_DOUBLE,
                 0, comm);
-
     MPI_Gatherv(sendVal, send_n, MPI_UNSIGNED_CHAR,
                 recvVal, recvcounts.data(), displs.data(), MPI_UNSIGNED_CHAR,
                 0, comm);
-
-    // After this, only rank 0 has a fully populated 'out' suitable for writing.
 }
-
-
 
 
 
@@ -797,67 +836,38 @@ static void WriteGridSampleBinary(const GridSample &g,
 
 int do_interpolate(Config cfg)
 {
-  int mpi_inited = 0;
-  MPI_Initialized(&mpi_inited);
+  int world_rank = 0;
+  int world_size = 1;
+  MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+  MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+  const auto targets = targets_from_save_root(cfg);
 
-  int world_rank = 0, world_size = 1;
-  if (mpi_inited)
+  for (const auto& run_dir : targets)
   {
-    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+    // Load data (must be called on all ranks if it builds ParMesh/ParGridFunction on world comm)
+    SimulationResult result = load_results(cfg, run_dir);
+
+    const int Nx = cfg.interp.Nx;
+    const int Ny = cfg.interp.Ny;
+    const int Nz = cfg.interp.Nz;
+    const bool accept_surface = false;
+
+    GridSample grid;
+    grid.dim = result.mesh->Dimension();
+
+    // Interpolate (collective across result.mesh->GetComm())
+    SampleEFieldOnCartesianGrid(*result.mesh, *result.V,
+                                Nx, Ny, Nz, grid,
+                                cfg, cfg.interp.H1_project, accept_surface);
+
+    // Rank-0-only write
+    if (world_rank == 0)
+    {
+      const auto out_dir = run_dir / "interpolated";
+      std::filesystem::create_directories(out_dir);
+      WriteGridSampleBinary(grid, out_dir);
+      std::cout << "[INTERP] wrote interpolated grid to: " << out_dir << "\n";
+    }
   }
-
-  // Get filepath (OK to do on all ranks; if you want, you can print only on rank 0)
-  std::filesystem::path save_root(cfg.save_path);
-  std::filesystem::path run_dir;
-
-  auto runs = read_root_level_runs_from_meta(save_root);
-  if (runs.empty()) {
-      run_dir = save_root;
-      if (world_rank == 0)
-        std::cout << "[METRICS] meta.txt not found or empty; using save_root directly: "
-                  << run_dir << "\n";
-  } else if (runs.size() == 1) {
-      run_dir = save_root / runs.front();
-      if (world_rank == 0)
-        std::cout << "[METRICS] Found single run in meta.txt: "
-                  << runs.front() << " → " << run_dir << "\n";
-  } else {
-      if (world_rank == 0)
-      {
-        std::cerr << "[METRICS] meta.txt contains multiple runs under " << save_root << ":\n";
-        for (const auto &r : runs) { std::cerr << "  - " << r << "\n"; }
-        std::cerr << "Please specify which run to use (CLI/config).\n";
-      }
-      // make sure all ranks stop together
-      if (mpi_inited) { MPI_Abort(MPI_COMM_WORLD, 1); }
-      std::exit(1);
-  }
-
-  // Load data (must be called on all ranks if it builds ParMesh/ParGridFunction on world comm)
-  SimulationResult result = load_results(cfg, run_dir);
-
-  const int Nx = cfg.interp.Nx;
-  const int Ny = cfg.interp.Ny;
-  const int Nz = cfg.interp.Nz;
-  const bool accept_surface = false;
-
-  GridSample grid;
-  grid.dim = result.mesh->Dimension();
-
-  // Interpolate (collective across result.mesh->GetComm())
-  SampleEFieldOnCartesianGrid(*result.mesh, *result.V,
-                              Nx, Ny, Nz, grid,
-                              cfg, cfg.interp.H1_project, accept_surface);
-
-  // Rank-0-only write
-  if (!mpi_inited || world_rank == 0)
-  {
-    const auto out_dir = run_dir / "interpolated";
-    std::filesystem::create_directories(out_dir);
-    WriteGridSampleBinary(grid, out_dir);
-    std::cout << "[INTERP] wrote interpolated grid to: " << out_dir << "\n";
-  }
-
   return 0;
 }
