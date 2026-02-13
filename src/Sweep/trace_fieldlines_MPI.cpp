@@ -1,5 +1,7 @@
 #include "trace_fieldlines_MPI.h"
 
+#include <chrono>
+
 namespace mpitracing
 {
 static inline void ClampAxisIfNeeded(mfem::Vector &x, double geom_tol, bool axisymmetric)
@@ -31,6 +33,313 @@ static inline void AddFinished(std::vector<TraceSummaryPOD> &finished,
     finished.push_back(s);
 }
 
+// -------------------------------- Field Eval -----------------------------
+FieldEvaluator::FieldEvaluator(mfem::ParMesh& mesh,
+                               const mfem::ParGridFunction& phi,
+                               mfem::FindPointsGSLIB& finder,
+                               int sdim)
+    : mesh_(mesh), phi_(phi), finder_(finder), sdim_(sdim)
+{
+    // The finder must already be attached to the mesh.
+    // No further initialisation required.
+}
+
+void FieldEvaluator::EvaluateE(const mfem::Vector& points,
+                               int n_points,
+                               mfem::Vector& E)
+{
+    // 1. Locate all points on the distributed mesh.
+    //    Assumes points are in byVDIM ordering.
+    finder_.FindPoints(points, mfem::Ordering::byVDIM);
+
+    // 2. Distribute point information to the ranks that own the elements.
+    finder_.DistributePointInfoToOwningMPIRanks(recv_elem_, recv_ref_, recv_code_);
+    const int n_recv = recv_elem_.Size();
+    MFEM_VERIFY(recv_ref_.Size() == n_recv * sdim_, "Invalid reference coordinates size");
+
+    // 3. Compute electric field on the owning ranks.
+    recv_E_.SetSize(n_recv * sdim_);
+    mfem::Vector grad(sdim_);
+
+    for (int i = 0; i < n_recv; ++i) {
+        if (recv_code_[i] == 2) { // point not found
+            for (int d = 0; d < sdim_; ++d)
+                recv_E_[i * sdim_ + d] = std::numeric_limits<double>::quiet_NaN();
+            continue;
+        }
+
+        // Element is local to this rank (guaranteed by the distribute call)
+        int elem_id = (int)recv_elem_[i];
+        mfem::ElementTransformation* T = mesh_.GetElementTransformation(elem_id);
+        MFEM_VERIFY(T != nullptr, "Null element transformation");
+
+        // Reference coordinates (GSLIB returns in [0,1] for MFEM mesh)
+        const double* ref = recv_ref_.GetData() + i * sdim_;
+        mfem::IntegrationPoint ip;
+        if (sdim_ == 2) ip.Set2(ref[0], ref[1]);
+        else            ip.Set3(ref[0], ref[1], ref[2]);
+
+        T->SetIntPoint(&ip);
+        phi_.GetGradient(*T, grad);
+        grad *= -1.0;   // E = -∇φ
+
+        for (int d = 0; d < sdim_; ++d)
+            recv_E_[i * sdim_ + d] = grad[d];
+    }
+
+    // 4. Distribute computed E values back to the original ranks.
+    //    The output 'E' will be ordered consistently with the input 'points'.
+    finder_.DistributeInterpolatedValues(recv_E_, sdim_,
+                                         mfem::Ordering::byVDIM, E);
+}
+
+
+// ---------------------------- Steppers/Integrators --------------------------
+class EulerIntegrator : public Integrator {
+public:
+    /// No special initialisation required.
+    void Initialize(mfem::ParticleSet&) override { }  
+
+    /// Perform one Euler step for all active particles.
+    void Step(mfem::ParticleSet& particles,
+          double dt,
+          FieldEvaluator& field,
+          mfem::Array<int>& to_remove,
+          std::vector<ElectronExitCode>& exit_codes) override
+    {
+        const int n_active = particles.GetNParticles();
+        const int sdim = particles.GetDim();
+
+        // Always call EvaluateE (collective), even with n_active == 0.
+        mfem::Vector& X = particles.Coords();  // may be empty
+        mfem::Vector E_flat;
+        field.EvaluateE(X, n_active, E_flat);
+
+        to_remove.SetSize(0);
+        exit_codes.clear();
+
+        if (n_active == 0) return;
+
+        MFEM_VERIFY(E_flat.Size() == n_active * sdim, "Field evaluator returned wrong size");
+
+        to_remove.Reserve(n_active);
+        exit_codes.reserve(n_active);
+
+        double* X_data = X.GetData();           // layout: [x0,y0, x1,y1, ...]
+        const double* E_data = E_flat.GetData(); // layout: [Ex0,Ey0, Ex1,Ey1, ...]
+
+        for (int i = 0; i < n_active; ++i) {
+            double* xi = X_data + i * sdim;
+            const double* Ei = E_data + i * sdim;
+
+            // 3a. Check for degenerate field.
+            bool ok = true;
+            double n2 = 0.0;
+            for (int d = 0; d < sdim; ++d) {
+                const double e = Ei[d];
+                ok = ok && std::isfinite(e);
+                n2 += e * e;
+            }
+            ok = ok && std::isfinite(n2) && (n2 > 1e-30);
+            if (!ok) {
+                to_remove.Append(i);
+                exit_codes.push_back(ElectronExitCode::DegenerateTimeStep);
+                continue;
+            }
+
+            const double inv_nrm = 1.0 / std::sqrt(n2);
+            double v[3] = {0.0, 0.0, 0.0}; 
+            double d2 = 0.0;
+            for (int d = 0; d < sdim; ++d) {
+                const double vd = -Ei[d] * inv_nrm;
+                v[d] = vd;
+                d2 += vd * vd;
+            }
+            if (!(d2 > 1e-30)) {
+                to_remove.Append(i);
+                exit_codes.push_back(ElectronExitCode::DegenerateTimeStep);
+                continue;
+            }
+
+            // 3c. Euler update: x = x + dt * v.
+            for (int d = 0; d < sdim; ++d) {
+                xi[d] += dt * v[d];
+            }
+
+        }
+    }
+};
+
+/// 4th‑order Runge–Kutta integrator for drift velocity v = -E/|E|.
+class RK4Integrator : public Integrator {
+private:
+    int k1_idx, k2_idx, k3_idx, k4_idx;
+
+public:
+    void Initialize(mfem::ParticleSet& particles) override {
+        const int sdim = particles.GetDim();
+        const auto ord = particles.Coords().GetOrdering();
+        k1_idx = particles.AddField(sdim, ord, "k1");
+        k2_idx = particles.AddField(sdim, ord, "k2");
+        k3_idx = particles.AddField(sdim, ord, "k3");
+        k4_idx = particles.AddField(sdim, ord, "k4");
+    }
+
+    void Step(mfem::ParticleSet& particles,
+              double dt,
+              FieldEvaluator& field,
+              mfem::Array<int>& to_remove,
+              std::vector<ElectronExitCode>& exit_codes) override
+    {
+        const int n_active = particles.GetNParticles();
+        const int sdim = particles.GetDim();
+
+        if (n_active == 0) {
+            // Collective empty calls
+            mfem::Vector empty;
+            mfem::Vector dummy;
+            for (int i = 0; i < 4; ++i) field.EvaluateE(empty, 0, dummy);
+            to_remove.SetSize(0);
+            exit_codes.clear();
+            return;
+        }
+
+        // Access fields using stored indices
+        mfem::ParticleVector& k1 = particles.Field(k1_idx);
+        mfem::ParticleVector& k2 = particles.Field(k2_idx);
+        mfem::ParticleVector& k3 = particles.Field(k3_idx);
+        mfem::ParticleVector& k4 = particles.Field(k4_idx);
+
+        mfem::Vector X_temp(n_active * sdim);
+        mfem::Vector E_flat;
+
+        std::vector<char> valid(n_active, 1);
+
+        auto compute_k = [&](const mfem::Vector& E_flat, mfem::ParticleVector& k) {
+            const double* E_data = E_flat.GetData();
+            for (int i = 0; i < n_active; ++i) {
+                double* ki = &k(i, 0);
+                double norm2 = 0.0;
+                bool ok = true;
+                for (int d = 0; d < sdim; ++d) {
+                    double e = E_data[i * sdim + d];
+                    ok = ok && std::isfinite(e);
+                    norm2 += e * e;
+                }
+                ok = ok && (norm2 > 1e-30);
+                if (!ok) {
+                    valid[i] = 0;
+                    for (int d = 0; d < sdim; ++d) ki[d] = std::numeric_limits<double>::quiet_NaN();
+                } else {
+                    double inv_norm = 1.0 / std::sqrt(norm2);
+                    for (int d = 0; d < sdim; ++d) ki[d] = -E_data[i * sdim + d] * inv_norm;
+                }
+            }
+        };
+
+        // Stage 1
+        field.EvaluateE(particles.Coords(), n_active, E_flat);
+        compute_k(E_flat, k1);
+
+        // Stage 2
+        {
+            double* Xt = X_temp.GetData();
+            const double* X0 = particles.Coords().GetData();
+            for (int i = 0; i < n_active; ++i) {
+                const double* k1i = &k1(i, 0);
+                double* xt = Xt + i * sdim;
+                const double* x0 = X0 + i * sdim;
+                for (int d = 0; d < sdim; ++d)
+                    xt[d] = x0[d] + 0.5 * dt * k1i[d];
+            }
+            field.EvaluateE(X_temp, n_active, E_flat);
+            compute_k(E_flat, k2);
+        }
+
+        // Stage 3
+        {
+            double* Xt = X_temp.GetData();
+            const double* X0 = particles.Coords().GetData();
+            for (int i = 0; i < n_active; ++i) {
+                const double* k2i = &k2(i, 0);
+                double* xt = Xt + i * sdim;
+                const double* x0 = X0 + i * sdim;
+                for (int d = 0; d < sdim; ++d)
+                    xt[d] = x0[d] + 0.5 * dt * k2i[d];
+            }
+            field.EvaluateE(X_temp, n_active, E_flat);
+            compute_k(E_flat, k3);
+        }
+
+        // Stage 4
+        {
+            double* Xt = X_temp.GetData();
+            const double* X0 = particles.Coords().GetData();
+            for (int i = 0; i < n_active; ++i) {
+                const double* k3i = &k3(i, 0);
+                double* xt = Xt + i * sdim;
+                const double* x0 = X0 + i * sdim;
+                for (int d = 0; d < sdim; ++d)
+                    xt[d] = x0[d] + dt * k3i[d];
+            }
+            field.EvaluateE(X_temp, n_active, E_flat);
+            compute_k(E_flat, k4);
+        }
+
+        // Final combination into X_temp
+        double* Xnew = X_temp.GetData();
+        const double* X0 = particles.Coords().GetData();
+        for (int i = 0; i < n_active; ++i) {
+            if (valid[i]) {
+                const double* k1i = &k1(i, 0);
+                const double* k2i = &k2(i, 0);
+                const double* k3i = &k3(i, 0);
+                const double* k4i = &k4(i, 0);
+                double* xnew = Xnew + i * sdim;
+                const double* x0 = X0 + i * sdim;
+                for (int d = 0; d < sdim; ++d)
+                    xnew[d] = x0[d] + (dt / 6.0) *
+                            (k1i[d] + 2.0 * k2i[d] + 2.0 * k3i[d] + k4i[d]);
+            } else {
+                double* xnew = Xnew + i * sdim;
+                for (int d = 0; d < sdim; ++d)
+                    xnew[d] = std::numeric_limits<double>::quiet_NaN();
+            }
+        }
+
+        // Copy back
+        double* X_dst = particles.Coords().GetData();
+        for (int i = 0; i < n_active; ++i) {
+            const double* src = Xnew + i * sdim;
+            double* dst = X_dst + i * sdim;
+            for (int d = 0; d < sdim; ++d)
+                dst[d] = src[d];
+        }
+
+        // Post-update NaN check
+        for (int i = 0; i < n_active; ++i) {
+            if (valid[i]) {
+                double* xi = X_dst + i * sdim;
+                bool ok = true;
+                for (int d = 0; d < sdim; ++d)
+                    ok = ok && std::isfinite(xi[d]);
+                if (!ok) valid[i] = 0;
+            }
+        }
+
+        // Build removal list
+        to_remove.SetSize(0);
+        exit_codes.clear();
+        for (int i = 0; i < n_active; ++i) {
+            if (!valid[i]) {
+                to_remove.Append(i);
+                exit_codes.push_back(ElectronExitCode::DegenerateTimeStep);
+            }
+        }
+    }
+};
+
+// ---------------------------- Particle Handling ----------------------------
 static void GatherFinishedToRoot(MPI_Comm comm,
                                  int rank,
                                  int size,
@@ -217,7 +526,8 @@ static void GatherFinishedToRoot(MPI_Comm comm,
 }
 
 
-void TraceDistributedEuler(
+// ------------------------------- Tracing ----------------------------------
+void TraceDistributed(
     mfem::ParMesh& mesh,
     mfem::FindPointsGSLIB& finder,
     const mfem::ParGridFunction& phi,
@@ -237,36 +547,33 @@ void TraceDistributedEuler(
     MPI_Comm_size(comm, &size);
 
     const int sdim = mesh.SpaceDimension();
-
     const std::size_t n_seeds = seeds.positions.size();
 
+    // ----- Distribute seeds among ranks -----
     std::size_t ib = 0, ie = 0;
     SeedRangeForRank(n_seeds, rank, size, ib, ie);
     const std::size_t n_local_init = ie - ib;
 
+    // ----- Step size and max steps -----
     const double ds = params.c_step * h_ref;
-    MFEM_VERIFY(ds > 0.0 && std::isfinite(ds), "TraceDistributedEuler: ds must be positive finite.");
+    MFEM_VERIFY(ds > 0.0 && std::isfinite(ds),
+                "TraceDistributed: ds must be positive finite.");
 
     const long long max_steps = ComputeMaxStepsFromLimit(params, ds, params.max_traversals);
     const long long N = (max_steps > 0) ? max_steps : std::numeric_limits<long long>::max();
 
+    // ----- Geometry -----
     const TpcGeometry geom(params);
 
+    // ----- Particle set initialisation -----
     mfem::ParticleSet active(comm, (int)n_local_init, sdim, mfem::Ordering::byVDIM);
+    const int tag_seed    = active.AddTag("seed_id");
+    const int tag_owner   = active.AddTag("owner_rank");   // sticky owner
+    const int tag_last_elem = active.AddTag("last_elem");  // (may be removed later)
+    const int tag_has_last  = active.AddTag("has_last");
 
-    const int tag_seed = active.AddTag("seed_id");
-    // For code == 1 to stop flip flopping between owners (causes position pattern ABABABABAB)
-    const int tag_owner = active.AddTag("owner_rank");
-    const int tag_last_elem = active.AddTag("last_elem"); // stores last stable element id per particle
-    const int tag_has_last  = active.AddTag("has_last");  // 0/1 flag: whether last_elem is initialized
-
-
-    const mfem::Ordering::Type ord = active.Coords().GetOrdering();
-    const int fld_E   = active.AddField(sdim, ord, "E");
-    const int fld_dir = active.AddField(sdim, ord, "dir");
-
-    mfem::ParticleVector &X = active.Coords();
-
+    // Initialise particles from local seeds
+    mfem::ParticleVector& X = active.Coords();
     for (std::size_t li = 0; li < n_local_init; ++li)
     {
         const std::size_t gi = ib + li;
@@ -274,27 +581,48 @@ void TraceDistributedEuler(
         for (int d = 0; d < sdim; ++d) { xi[d] = seeds.positions[gi][d]; }
         ClampAxisIfNeeded(xi, params.geom_tol, axisymmetric);
         for (int d = 0; d < sdim; ++d) { X((int)li, d) = xi[d]; }
+
         active.Tag(tag_seed)[(int)li] = (int)gi;
         active.Tag(tag_owner)[(int)li] = rank;
-
         active.Tag(tag_has_last)[(int)li]  = 0;
         active.Tag(tag_last_elem)[(int)li] = -1;
     }
+    std::cout << "Active Particles " << active.GetNParticles() << std::endl;
 
+    // ----- Field evaluator -----
+    FieldEvaluator evaluator(mesh, phi, finder, sdim);
+
+    // ----- Integrator selection -----
+    std::unique_ptr<Integrator> integrator;
+    // Assume params contains an enum IntegratorType; default to Euler.
+    if (params.method == "Euler-Cauchy") {
+      integrator = std::make_unique<EulerIntegrator>();
+    }
+    else if (params.method == "RK4") {
+      integrator = std::make_unique<RK4Integrator>();
+    }
+    // else if (...) { integrator = std::make_unique<RK4Integrator>(); }
+
+    integrator->Initialize(active);   // let integrator add any required fields
+    std::cout << "Post Initialize" << std::endl;
+
+    // ----- Termination storage -----
     std::vector<TraceSummaryPOD> finished_local;
     finished_local.reserve(n_local_init);
 
-    // Pathline logging
+    // ----- Path logging (optional) -----
     std::vector<TrackPointPOD> track_log_local;
-    if (save_path) track_log_local.reserve(N);
+    if (save_path) {
+        track_log_local.reserve(N);   // may be large; consider not reserving
+    }
 
+    // ----- Helper lambda to remove particles and record summaries -----
     auto kill_indices =
         [&](const mfem::Array<int> &rm, const std::vector<ElectronExitCode> *codes_opt)
     {
-        if (rm.Size() == 0) { return; }
+        if (rm.Size() == 0) return;
 
-        mfem::ParticleVector &Xk = active.Coords();
-
+        mfem::ParticleVector& Xk = active.Coords();
         for (int j = 0; j < rm.Size(); ++j)
         {
             const int idx = rm[j];
@@ -312,13 +640,13 @@ void TraceDistributedEuler(
         active.RemoveParticles(rm);
     };
 
+    // ----- Main time stepping loop -----
     for (long long step = 0; step < N; ++step)
     {
-        const int n_active = active.GetNParticles();
-
+        int n_active = active.GetNParticles();
         int global_active = 0;
         MPI_Allreduce(&n_active, &global_active, 1, MPI_INT, MPI_SUM, comm);
-        if (global_active == 0) { break; }
+        if (global_active == 0) break;
 
         if (debug && debug_every > 0 && (step % debug_every == 0))
         {
@@ -328,157 +656,60 @@ void TraceDistributedEuler(
                     << std::endl;
         }
 
-        // --- Locate + remote-evaluate field at current coords (collective) ---
-        finder.FindPoints(active.Coords(), active.Coords().GetOrdering());
-        const mfem::Array<unsigned int> &codes = finder.GetCode();
-        const mfem::Array<unsigned int> &elem  = finder.GetElem();
+        // ----- 1. Integrator step -----
+        mfem::Array<int> rm_fail;
+        std::vector<ElectronExitCode> fail_codes;
+        integrator->Step(active, ds, evaluator, rm_fail, fail_codes);
 
-        // Distribute elements for interpolation and derivative (CUSTOM interpolation path)
-        mfem::Array<unsigned int> recv_elem, recv_code;
-        mfem::Vector recv_ref; // ordered by vdim: (r0,s0, r1,s1, ...)
-        finder.DistributePointInfoToOwningMPIRanks(recv_elem, recv_ref, recv_code);
-
-        // Compute E = -grad(phi) on owning ranks at recv_ref, then send back.
-        const int nrecv = recv_elem.Size();
-        MFEM_VERIFY(recv_ref.Size() == nrecv * sdim, "recv_ref size mismatch");
-
-        // Values to send back: byVDIM (Ex0,Ey0, Ex1,Ey1, ...)
-        mfem::Vector recv_E(nrecv * sdim);
-        mfem::Vector grad(sdim);
-
-        for (int j = 0; j < nrecv; ++j)
+        if (rm_fail.Size() > 0)
         {
-            // If gslib says not found, fill NaNs (or any sentinel)
-            if (recv_code[j] == 2)
-            {
-                recv_E[j*sdim + 0] = std::numeric_limits<double>::quiet_NaN();
-                recv_E[j*sdim + 1] = std::numeric_limits<double>::quiet_NaN();
-                continue;
-            }
-
-            // MFEM element id valid on the OWNING rank (that’s the point of distributing)
-            const int e = (int)recv_elem[j];
-
-            mfem::ElementTransformation *T = mesh.GetElementTransformation(e);
-            MFEM_VERIFY(T != nullptr, "Null ElementTransformation");
-
-            // MFEM reference coordinates in [0,1] (mapped from gslib [-1,1] already)
-            const double r = recv_ref[j*sdim + 0];
-            const double s = recv_ref[j*sdim + 1];
-
-            mfem::IntegrationPoint ip;
-            ip.Set2(r, s);
-
-            // Evaluate gradient in physical space
-            T->SetIntPoint(&ip);
-            phi.GetGradient(*T, grad); // grad = ∇phi
-            grad *= -1.0;              // E = -∇phi
-
-            recv_E[j*sdim + 0] = grad[0];
-            recv_E[j*sdim + 1] = grad[1];
+            kill_indices(rm_fail, &fail_codes);
+            n_active = active.GetNParticles();
         }
 
-        // Now return the computed E values to the original ranks / original point ordering
-        mfem::Vector Evals_flat(active.GetNParticles() * sdim); // byVDIM
-        finder.DistributeInterpolatedValues(recv_E, sdim, mfem::Ordering::byVDIM, Evals_flat);
-
-        // Proceed with direction and Euler update using Evals_flat
-        mfem::ParticleVector &dir = active.Field(fld_dir);
-        mfem::ParticleVector &Xc  = active.Coords();
-
-        // --- Integrate one Euler step + removals (single batch) ---
-        if (n_active > 0)
+        // ----- 2. Axis clamping -----
+        if (axisymmetric && n_active > 0)
         {
-            mfem::Array<int> rm_all; rm_all.Reserve(n_active);
-            std::vector<ElectronExitCode> rm_codes; rm_codes.reserve((std::size_t)n_active);
-
+            mfem::ParticleVector& Xc = active.Coords();
             for (int i = 0; i < n_active; ++i)
             {
-                // Not found / invalid location
-                if (elem[i] < 0 || codes[i] == 2)
-                {
-                    rm_all.Append(i);
-                    rm_codes.push_back(ElectronExitCode::LeftVolume);
-                    continue;
-                }
+                double& r = Xc(i, 0);
+                if (r <= params.geom_tol) { r = params.geom_tol; }
+            }
+        }
+        // ----- 3. Geometry exit check -----
+        if (n_active > 0)
+        {
+            mfem::Array<int> rm_geom;
+            std::vector<ElectronExitCode> geom_codes;
+            rm_geom.Reserve(n_active);
+            geom_codes.reserve(n_active);
 
-                // Previous element validation 
-                const int  has_last  = active.Tag(tag_has_last)[i];
-                const int  last_elem = active.Tag(tag_last_elem)[i];
-                const long long cur_elem = elem[i];
-                if (codes[i] == 0)
-                {
-                    active.Tag(tag_has_last)[i]  = 1;
-                    active.Tag(tag_last_elem)[i] = (int)cur_elem;
-                }
-
-                // Compute direction from E
-                double n2 = 0.0;
-                bool ok = true;
-                for (int d = 0; d < sdim; ++d)
-                {
-                    const double e = Evals_flat[i*sdim + d];
-                    ok = ok && std::isfinite(e);
-                    n2 += e * e;
-                }
-                ok = ok && std::isfinite(n2) && (n2 > 1e-30);
-                if (!ok)
-                {
-                    rm_all.Append(i);
-                    rm_codes.push_back(ElectronExitCode::DegenerateTimeStep);
-                    continue;
-                }
-
-                const double inv_nrm = 1.0 / std::sqrt(n2);
-                double d2 = 0.0;
-                for (int d = 0; d < sdim; ++d)
-                {
-                    const double v = -Evals_flat[i*sdim + d] * inv_nrm;
-                    ok = ok && std::isfinite(v);
-                    dir(i, d) = v;
-                    d2 += v * v;
-                }
-
-                if (!ok || !(d2 > 1e-30))
-                {
-                    rm_all.Append(i);
-                    rm_codes.push_back(ElectronExitCode::DegenerateTimeStep);
-                    continue;
-                }
-                
-                // Euler update
-                mfem::Vector xi(sdim);
-                for (int d = 0; d < sdim; ++d) { xi[d] = Xc(i, d); }
-                for (int d = 0; d < sdim; ++d) { xi[d] += ds * dir(i, d); }
-
-                ClampAxisIfNeeded(xi, params.geom_tol, axisymmetric);
-
-                for (int d = 0; d < sdim; ++d) { Xc(i, d) = xi[d]; }
-
-                // Geometry exit check (uses updated position)
+            mfem::ParticleVector& Xc = active.Coords();
+            for (int i = 0; i < n_active; ++i)
+            {
                 const double r = Xc(i, 0);
                 const double z = Xc(i, 1);
                 if (!geom.Inside(r, z))
                 {
-                    rm_all.Append(i);
-                    rm_codes.push_back(ClassifyExitOrLeftVolume(geom, xi, params.geom_tol));
+                    rm_geom.Append(i);
+                    mfem::Vector xi(&Xc(i,0), sdim);
+                    geom_codes.push_back(ClassifyExitOrLeftVolume(geom, xi, params.geom_tol));
                 }
             }
 
-            if (rm_all.Size() > 0)
+            if (rm_geom.Size() > 0)
             {
-                MFEM_VERIFY((std::size_t)rm_all.Size() == rm_codes.size(),
-                            "rm_all / rm_codes size mismatch");
-                kill_indices(rm_all, &rm_codes);
+                kill_indices(rm_geom, &geom_codes);
+                n_active = active.GetNParticles();
             }
         }
 
-        // --- Pathline logging ---
-        if (save_path)
+        // ----- 4. Path logging -----
+        if (save_path && n_active > 0)
         {
-            mfem::ParticleVector &Xlog = active.Coords();
-            const int np = active.GetNParticles();
-            for (int i = 0; i < np; ++i)
+            mfem::ParticleVector& Xlog = active.Coords();
+            for (int i = 0; i < n_active; ++i)
             {
                 TrackPointPOD p;
                 p.seed_id = active.Tag(tag_seed)[i];
@@ -490,39 +721,45 @@ void TraceDistributedEuler(
             }
         }
 
-        // Redistribution with sticky owner on exit code 1 
+        // ----- 5. Redistribution -----
         if (redistribution_every > 0 && (step % redistribution_every) == 0)
         {
-            finder.FindPoints(active.Coords(), active.Coords().GetOrdering());
+            // Locate all remaining particles (collective)
+            finder.FindPoints(active.Coords(), mfem::Ordering::byVDIM);
+            const auto& codes = finder.GetCode();
+            const auto& procs = finder.GetProc();
 
-            const auto &codes = finder.GetCode();
-            const auto &procs = finder.GetProc();
-
-            const int np0 = active.GetNParticles();
-
-            mfem::Array<int> rm;
-            rm.Reserve(np0);
-            for (int i = 0; i < np0; ++i)
+            // Remove particles that are now outside the mesh (local operation)
+            mfem::Array<int> rm_outside;
+            const int np = active.GetNParticles();
+            for (int i = 0; i < np; ++i)
             {
-                if (codes[i] == 2) { rm.Append(i); }
+                if (codes[i] == 2) { rm_outside.Append(i); }
+            }
+            if (rm_outside.Size() > 0)
+            {
+                kill_indices(rm_outside, nullptr);
             }
 
-            if (rm.Size() > 0) { kill_indices(rm, nullptr); }
+            // After removal, get fresh location data (collective – must be called by all ranks)
+            finder.FindPoints(active.Coords(), mfem::Ordering::byVDIM);
 
-            // 3) Redistribute remaining particles
-            finder.FindPoints(active.Coords(), active.Coords().GetOrdering());
+            // Redistribute particles to their element owners (collective – all ranks call it)
             active.Redistribute(finder.GetProc());
         }
-        const int n_active2 = active.GetNParticles();
-        global_active = 0;
-        MPI_Allreduce(&n_active2, &global_active, 1, MPI_INT, MPI_SUM, comm);
-    }
+        n_active = active.GetNParticles();
 
+        if (debug && debug_every > 0 && (step % debug_every == 0))
+        {
+            std::cout << "[rank " << rank << "] step " << step
+                    << std::endl;
+        }
+    } // end of time loop
 
-    // Mark remaining active particles as MaxSteps
+    // ----- After loop: remove any particles still active (MaxSteps) -----
     if (active.GetNParticles() > 0)
     {
-        mfem::ParticleVector &Xf = active.Coords();
+        mfem::ParticleVector& Xf = active.Coords();
         for (int i = 0; i < active.GetNParticles(); ++i)
         {
             const int sid = active.Tag(tag_seed)[i];
@@ -531,17 +768,16 @@ void TraceDistributedEuler(
             AddFinished(finished_local, sid, ElectronExitCode::MaxSteps, xi, sdim);
         }
 
-        mfem::Array<int> rm_all(active.GetNParticles());
-        for (int i = 0; i < active.GetNParticles(); ++i) { rm_all[i] = i; }
-        active.RemoveParticles(rm_all);
+        mfem::Array<int> all(active.GetNParticles());
+        for (int i = 0; i < active.GetNParticles(); ++i) all[i] = i;
+        active.RemoveParticles(all);
     }
 
+    // ----- Gather all results to root -----
     GatherFinishedToRoot(comm, rank, size,
-                     finished_local,
-                     save_path ? &track_log_local : nullptr,
-                     n_seeds, sdim, out_results);
-
+                         finished_local,
+                         save_path ? &track_log_local : nullptr,
+                         n_seeds, sdim, out_results);
 }
-
 }
 

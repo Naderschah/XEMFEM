@@ -407,8 +407,8 @@ static void parse_trace_params(Config &cfg, const YAML::Node &root)
     { Error("trace_params.provider must be one of {VTK, BOOST}"); }
     cfg.tracing_params = params;
 
-    if ((params.provider == "MPITracer") && (params.method != "Euler-Cauchy"))
-        Error("MPITracer supports Euler-Cauchy only");
+    if ((params.provider == "MPITracer") && (params.method != "Euler-Cauchy") && (params.method != "RK4"))
+        Error("MPITracer supports Euler-Cauchy and RK4 only");
     
     int world_size = 0;
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);

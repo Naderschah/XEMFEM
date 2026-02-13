@@ -1501,7 +1501,7 @@ void ElectronFieldLineTracer::SelectProvider_(const std::string &provider, bool 
             // z_max_overrides not supported in this provider yet (miniapp-style particles)
             // If you need it later, incorporate per-particle z_max into tags/fields.
 
-            mpitracing::TraceDistributedEuler(
+            mpitracing::TraceDistributed(
                 *pmesh,
                 *mpitracer->finder,
                 *phi,
