@@ -88,6 +88,10 @@ mesh:
   voltages: SR3
   # Wheter or not to autoappend the generated boundaries and attributes to the currently used config file -> Otherwise BC's and materials need to be copied from the config_autogen file 
   autoappend: true
+  # Wheter to append fieldshaping (ring and guard) voltages to the generated config file
+  # they are appended for the final written under save_path, but are not mandatory for 
+  # the source config since the field cage network is solved later either way
+  append_fieldShaping_Voltages_toConfig: false
 
   # Meshing Parameters (used in SALOME only)
   # If debugCoarse is given all else ignored else all are required

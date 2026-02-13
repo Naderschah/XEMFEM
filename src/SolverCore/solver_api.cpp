@@ -627,11 +627,13 @@ std::string run_one(const Config &cfg,
     std::string run_name = run_dir.filename().string();
 
     // Dispatch
+    apply_fieldcage_network(yaml_root);
     Config cfg_copy = Config::LoadFromNode(yaml_root);
     auto cfg_ptr = std::make_shared<Config>(cfg_copy);
     MPI_Barrier(MPI_COMM_WORLD);
     if (!cfg.debug.dry_run)
     {
+        std::cout << "CFG Test1" << cfg_ptr->boundaries["BC_FieldShapingRings1"].value << std::endl;
         SimulationResult result = run_simulation(cfg_ptr, model_path, skip_amr);
         if (!result.success)
         {

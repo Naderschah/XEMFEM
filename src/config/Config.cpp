@@ -692,12 +692,13 @@ static Config _LoadFromNode(const YAML::Node &root, Config cfg) {
   
   parse_compute(cfg, root);
   parse_sweeps(cfg, root);
-  parse_fieldcage_network(cfg, root);
   parse_optimization(cfg, root);
   parse_fieldspread(cfg, root);
   parse_trace_params(cfg, root);
   parse_civ_params(cfg, root);
   parse_interp_params(cfg, root);
+
+  parse_fieldcage_network(cfg, root);
 
   verify_cross_dependence(cfg);
 
@@ -1034,6 +1035,15 @@ void apply_fieldcage_network(Config &cfg)
         itb->second.value = V[i];
     }
 }
+
+static const char* yaml_node_type_name(const YAML::Node& n) {
+    if (!n) return "null";
+    if (n.IsScalar()) return "scalar";
+    if (n.IsSequence()) return "sequence";
+    if (n.IsMap()) return "map";
+    return "unknown";
+}
+
 void apply_fieldcage_network(YAML::Node &root)
 {
     YAML::Node fc = root["fieldcage_network"];
@@ -1044,17 +1054,17 @@ void apply_fieldcage_network(YAML::Node &root)
 
     YAML::Node nodes_node = fc["nodes"];
     YAML::Node edges_node = fc["edges"];
+
+    // Support both names: "R_values" (old) and "resistors" (your YAML)
     YAML::Node rvals_node = fc["R_values"];
+    if (!rvals_node) { rvals_node = fc["resistors"]; }
 
     if (!nodes_node || !nodes_node.IsSequence() || nodes_node.size() == 0) { return; }
     if (!edges_node || !edges_node.IsSequence() || edges_node.size() == 0) { return; }
     if (!rvals_node || !rvals_node.IsMap()) { return; }
 
     YAML::Node boundaries = root["boundaries"];
-    if (!boundaries || !boundaries.IsMap()) {
-        std::cerr << "FieldCageNetwork: root['boundaries'] missing or not a map\n";
-        return;
-    }
+    if (!boundaries || !boundaries.IsMap()) { return; }
 
     struct NodeDesc {
         std::string name;
@@ -1064,7 +1074,7 @@ void apply_fieldcage_network(YAML::Node &root)
     struct EdgeDesc {
         std::string n1;
         std::string n2;
-        std::string R_name;
+        std::string R_name; // resistor key
     };
 
     // Parse nodes
@@ -1078,30 +1088,30 @@ void apply_fieldcage_network(YAML::Node &root)
         d.name     = nd["name"]     ? nd["name"].as<std::string>()     : std::string{};
         d.fixed    = nd["fixed"]    ? nd["fixed"].as<bool>()           : false;
         d.boundary = nd["boundary"] ? nd["boundary"].as<std::string>() : std::string{};
-        if (d.name.empty()) {
-            std::cerr << "FieldCageNetwork: node missing 'name'\n";
-            return;
-        }
+
+        if (d.name.empty()) { return; } // invalid config
         nodes.push_back(std::move(d));
     }
 
-    // Parse edges
+    // Parse edges (support both "R_name" and "R")
     std::vector<EdgeDesc> edges;
     edges.reserve(edges_node.size());
+
     for (std::size_t i = 0; i < edges_node.size(); ++i) {
         YAML::Node e = edges_node[i];
         EdgeDesc d;
-        d.n1     = e["n1"]     ? e["n1"].as<std::string>()     : std::string{};
-        d.n2     = e["n2"]     ? e["n2"].as<std::string>()     : std::string{};
-        d.R_name = e["R_name"] ? e["R_name"].as<std::string>() : std::string{};
-        if (d.n1.empty() || d.n2.empty() || d.R_name.empty()) {
-            std::cerr << "FieldCageNetwork: edge missing n1/n2/R_name\n";
-            return;
-        }
+        d.n1 = e["n1"] ? e["n1"].as<std::string>() : std::string{};
+        d.n2 = e["n2"] ? e["n2"].as<std::string>() : std::string{};
+
+        if (e["R_name"])      d.R_name = e["R_name"].as<std::string>();
+        else if (e["R"])      d.R_name = e["R"].as<std::string>();
+        else                  d.R_name.clear();
+
+        if (d.n1.empty() || d.n2.empty() || d.R_name.empty()) { return; } // invalid config
         edges.push_back(std::move(d));
     }
 
-    // Parse R_values
+    // Parse resistor values
     std::unordered_map<std::string, double> Rvals;
     Rvals.reserve(rvals_node.size());
     for (auto it = rvals_node.begin(); it != rvals_node.end(); ++it) {
@@ -1121,13 +1131,14 @@ void apply_fieldcage_network(YAML::Node &root)
         }
     }
 
-    // Classify fixed vs free nodes and read fixed potential from YAML boundaries
-    std::vector<bool>  is_fixed(N, false);
+    // Classify fixed vs free nodes and read fixed potentials from YAML boundaries
+    std::vector<bool>   is_fixed(N, false);
     std::vector<double> V_fixed(N, 0.0);
 
     auto get_boundary_value = [&](const std::string &bname, double &out_val) -> bool {
         YAML::Node b = boundaries[bname];
-        if (!b || !b.IsMap() || !b["value"]) { return false; }
+        if (!b || !b.IsMap()) { return false; }
+        if (!b["value"])      { return false; }
         out_val = b["value"].as<double>();
         return true;
     };
@@ -1135,16 +1146,11 @@ void apply_fieldcage_network(YAML::Node &root)
     for (int i = 0; i < N; ++i) {
         const auto &nd = nodes[i];
         if (!nd.fixed) { continue; }
-
-        if (nd.boundary.empty()) {
-            std::cerr << "FieldCageNetwork: fixed node '" << nd.name << "' has no boundary assigned\n";
-            continue;
-        }
+        if (nd.boundary.empty()) { continue; }
 
         double vb = 0.0;
         if (!get_boundary_value(nd.boundary, vb)) {
-            std::cerr << "FieldCageNetwork: fixed node '" << nd.name
-                      << "' refers to unknown boundary '" << nd.boundary << "'\n";
+            // Fixed node declared, but YAML has no boundary.value -> treat as not fixed.
             continue;
         }
 
@@ -1160,10 +1166,7 @@ void apply_fieldcage_network(YAML::Node &root)
     }
 
     const int Nf = static_cast<int>(free_nodes.size());
-    if (Nf == 0) {
-        std::cerr << "FieldCageNetwork: No circuit values to compute. Assuming a configuration mistake\n";
-        return;
-    }
+    if (Nf == 0) { return; }
 
     std::vector<int> free_index_of_node(N, -1);
     for (int k = 0; k < Nf; ++k) {
@@ -1181,29 +1184,18 @@ void apply_fieldcage_network(YAML::Node &root)
     for (const auto &e : edges) {
         auto it1 = node_index.find(e.n1);
         auto it2 = node_index.find(e.n2);
-        if (it1 == node_index.end() || it2 == node_index.end()) {
-            std::cerr << "FieldCageNetwork: edge (" << e.n1 << ", " << e.n2
-                      << ") refers to unknown node\n";
-            continue;
-        }
+        if (it1 == node_index.end() || it2 == node_index.end()) { continue; }
+
+        auto itR = Rvals.find(e.R_name);
+        if (itR == Rvals.end()) { continue; }
+
+        const double R = itR->second;
+        if (!(R > 0.0)) { continue; }
+
+        const double G = 1.0 / R;
 
         const int ni = it1->second;
         const int nj = it2->second;
-
-        auto itR = Rvals.find(e.R_name);
-        if (itR == Rvals.end()) {
-            std::cerr << "FieldCageNetwork: unknown resistor name '" << e.R_name
-                      << "' in edge (" << e.n1 << ", " << e.n2 << ")\n";
-            continue;
-        }
-
-        const double R = itR->second;
-        if (R <= 0.0) {
-            std::cerr << "FieldCageNetwork: non-positive resistance '" << e.R_name << "'\n";
-            continue;
-        }
-
-        const double G = 1.0 / R;
 
         const int fi = free_index_of_node[ni];
         const int fj = free_index_of_node[nj];
@@ -1223,7 +1215,7 @@ void apply_fieldcage_network(YAML::Node &root)
             b[fj] += G * V_fixed[ni];
         }
         else {
-            // both fixed -> no equation added
+            // both fixed -> no equation
         }
     }
 
@@ -1239,8 +1231,8 @@ void apply_fieldcage_network(YAML::Node &root)
         }
 
         if (max_abs == 0.0) {
-            std::cerr << "FieldCageNetwork: no unique solution!\n";
-            break;
+            // singular; bail out without writing anything
+            return;
         }
 
         if (pivot != k) {
@@ -1268,7 +1260,8 @@ void apply_fieldcage_network(YAML::Node &root)
             sum -= A[i * Nf + j] * x[j];
         }
         const double Aii = A[i * Nf + i];
-        x[i] = (Aii != 0.0) ? (sum / Aii) : 0.0;
+        if (Aii == 0.0) { return; }
+        x[i] = sum / Aii;
     }
 
     // Assemble voltage vector V for all nodes
@@ -1287,12 +1280,8 @@ void apply_fieldcage_network(YAML::Node &root)
         if (nd.boundary.empty()) { continue; }
 
         YAML::Node bnd = boundaries[nd.boundary];
-        if (!bnd || !bnd.IsMap()) {
-            std::cerr << "FieldCageNetwork: node '" << nd.name
-                      << "' refers to unknown boundary '" << nd.boundary << "'\n";
-            continue;
-        }
+        if (!bnd || !bnd.IsMap()) { continue; }
 
-        bnd["value"] = V[i];
+        bnd["value"] = V[i]; // creates the key if missing
     }
 }

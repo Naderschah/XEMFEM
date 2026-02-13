@@ -53,9 +53,10 @@ if to_use is None:
     print("Please Provide which Voltages to load in the config file under mesh.voltage.\nGiven a string it will import get_bc from <string>_*.py")
     sys.exit(1)
 
+write_field_shaping_voltages = cfg.get("mesh", {}).get("append_fieldShaping_Voltages_toConfig", True)
+
 fname = [i for i in os.listdir(".") if (i.endswith(".py") and (to_use in i))]
 get_bc = None
-print(fname)
 for f in fname:
     try:
         module_name = Path(f).stem # Strip .py
@@ -441,10 +442,12 @@ for name, bc in fixed_boundaries.items():
 boundaries_rings = {}
 for name in fieldcage_names:
     tag = boundaries_raw[name]["bdr_id"]
-    boundaries_rings[name] = {"bdr_id": tag, "type": "dirichlet", "value": float(fc_voltages[name])}
+    if (write_field_shaping_voltages or (name == top_fc_name)): boundaries_rings[name] = {"bdr_id": tag, "type": "dirichlet", "value": float(fc_voltages[name])}
+    else: boundaries_rings[name] = {"bdr_id": tag, "type": "dirichlet"}
 for name in guard_names:
     tag = boundaries_raw[name]["bdr_id"]
-    boundaries_rings[name] = {"bdr_id": tag, "type": "dirichlet", "value": float(fc_voltages[name])}
+    if write_field_shaping_voltages: boundaries_rings[name] = {"bdr_id": tag, "type": "dirichlet", "value": float(fc_voltages[name])}
+    else: boundaries_rings[name] = {"bdr_id": tag, "type": "dirichlet"}
 
 assigned_boundary_names = set(boundaries_fixed_out) | set(boundaries_rings)
 unassigned_boundaries = sorted(name for name in boundaries_raw if name not in assigned_boundary_names)
@@ -551,7 +554,7 @@ with output_path.open("w") as out:
         out.write(f"  {name}:\n")
         out.write(f"    bdr_id: {v['bdr_id']}\n")
         out.write(f"    type: {v['type']}\n")
-        out.write(f"    value: {v['value']}\n")
+        if write_field_shaping_voltages or (name == top_fc_name): out.write(f"    value: {v['value']}\n")
 
     out.write("\nfieldcage_network:\n")
     out.write("  enabled: true\n")
