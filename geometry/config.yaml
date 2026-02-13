@@ -60,7 +60,7 @@ compute:
     num: -1
     affinity: scatter
 optimize:
-  enabled: true
+  enabled: false
   print_results: true
   objective: self_weighting
   max_evals: 1
@@ -74,14 +74,14 @@ optimize:
   z_max: 0.004
   trace_params:
     provider: MPITracer
-    method: Euler-Cauchy
+    method: RK4
     c_step: 20
     geom_tol: 1e-6
     max_traversals: 100
     redistribution_every: 1
   civ_params:
     method: RandomSample
-    num_seed_elements: 100
+    num_seed_elements: 200
     nr: 25
     nz: 75
     max_levels: 2
@@ -109,6 +109,19 @@ optimize:
     lower: -2000.0
     upper: 0.0
     initial: -950.0
+sweeps:
+  - name: "Preset"
+    kind: "fixed"
+    configs:
+      - label: "GateIsGround"
+        set:
+          boundaries.BC_GateElectrode.value: 0.0
+          boundaries.BC_AnodeElectrode.value: 1000
+      - label: "AnodeIsGround"
+        set:
+          boundaries.BC_GateElectrode.value: 1000
+          boundaries.BC_AnodeElectrode.value: 0.0
+
 solver:
   generate_E: false
   axisymmetric: true

@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <utility>
+#include "Config.h"
 
 // For bookkeeping of sweeps
 struct RunRecord
@@ -11,10 +12,10 @@ struct RunRecord
 };
 
 // (path, value) for replacement in config  
-struct Assignment {
-    std::string path; 
-    std::string value;
-};
+//struct Assignment {
+//    std::string path; 
+//    std::string value;
+//};
 
 // (YAML) Path helpers 
 static inline std::vector<std::string> split_path(const std::string &path);

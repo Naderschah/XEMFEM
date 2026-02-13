@@ -181,8 +181,18 @@ struct FieldCageNetworkSettings {
 
 
 // -------------------- Sweep description ----------------------------
+struct Assignment {
+    std::string path;   // dot-path into YAML
+    std::string value;  // stored as string; parsed later with your parse_scalar
+};
+
+struct FixedConfig {
+    std::string label;                 // optional, but useful for metadata
+    std::vector<Assignment> assigns;   // multiple path/value pairs
+};
+
 struct SweepEntry { 
-    enum class Kind { Discrete, Range };
+    enum class Kind { Discrete, Range, Fixed };
 
     std::string name;   // optional label
     std::string path;   // dot-path into YAML, e.g. "boundaries.name.value"
@@ -195,6 +205,9 @@ struct SweepEntry {
     double start = 0.0;
     double end   = 0.0;
     int    steps = 0;   // inclusive
+
+    // FIxed configs
+    std::vector<FixedConfig> configs;
 };
 
 // ----------------- Optimization description ------------------------

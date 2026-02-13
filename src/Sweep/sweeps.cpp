@@ -13,93 +13,80 @@ void sweep_recursive_cfg(const Config &base_cfg,
                          std::vector<RunRecord> &records)
 {
     MPI_Comm comm = MPI_COMM_WORLD;
-    int rank = 0, world_size = 1;
+    int rank = 0;
     MPI_Comm_rank(comm, &rank);
-    MPI_Comm_size(comm, &world_size);
 
-    // Helper: parse a string into a YAML scalar with best-effort typing
+    const int CMD_EVAL = 1;
+    const int CMD_STOP = 0;
+    const std::uint32_t SWEEP_MAGIC = 0x53E3E9A1u;
+
+    // Parse string -> YAML scalar with best-effort typing (bool/int/double/string).
     auto parse_scalar = [](const std::string &s) -> YAML::Node {
-        if (s == "true" || s == "True" || s == "TRUE")   return YAML::Node(true);
+        if (s == "true" || s == "True" || s == "TRUE")    return YAML::Node(true);
         if (s == "false" || s == "False" || s == "FALSE") return YAML::Node(false);
 
-        {
-            std::size_t pos = 0;
-            try {
-                long long v = std::stoll(s, &pos);
-                if (pos == s.size()) return YAML::Node(v);
-            } catch (...) {}
-        }
-        {
-            std::size_t pos = 0;
-            try {
-                double v = std::stod(s, &pos);
-                if (pos == s.size()) return YAML::Node(v);
-            } catch (...) {}
-        }
+        { std::size_t pos = 0; try { long long v = std::stoll(s, &pos); if (pos == s.size()) return YAML::Node(v); } catch (...) {} }
+        { std::size_t pos = 0; try { double v = std::stod(s, &pos);    if (pos == s.size()) return YAML::Node(v); } catch (...) {} }
+
         return YAML::Node(s);
     };
 
-    // Helper: set root[path] = value_node, where path is dot-separated
+    // Set root[path] = value_node, where path is dot-separated.
     auto set_by_dot_path = [&](YAML::Node &root,
-                           const std::string &path,
-                           const YAML::Node &value_node)
+                               const std::string &path,
+                               const YAML::Node &value_node)
     {
         std::stringstream ss(path);
         std::string key;
         std::vector<std::string> keys;
-        while (std::getline(ss, key, '.')) {
-            if (!key.empty()) keys.push_back(key);
-        }
+        while (std::getline(ss, key, '.')) if (!key.empty()) keys.push_back(key);
+
         if (keys.empty())
             throw std::runtime_error("sweep_recursive_cfg: empty assignment path");
-
         if (!root || !root.IsMap())
             throw std::runtime_error("sweep_recursive_cfg: root is not a map for path '" + path + "'");
 
-        YAML::Node cur = root; // handle into the same underlying node
-
+        YAML::Node cur = root;
         for (std::size_t i = 0; i + 1 < keys.size(); ++i) {
             const std::string &kk = keys[i];
-
             if (!cur[kk])
-                throw std::runtime_error("sweep_recursive_cfg: invalid path '" + path +
-                                        "' (missing key '" + kk + "')");
-
+                throw std::runtime_error("sweep_recursive_cfg: invalid path '" + path + "' (missing key '" + kk + "')");
             if (!cur[kk].IsMap())
-                throw std::runtime_error("sweep_recursive_cfg: path '" + path +
-                                        "' traverses non-map key '" + kk + "'");
-
-            cur.reset(cur[kk]); // rebind handle to child node (no copy of subtree)
+                throw std::runtime_error("sweep_recursive_cfg: path '" + path + "' traverses non-map key '" + kk + "'");
+            cur.reset(cur[kk]);
         }
-
         cur[keys.back()] = value_node;
     };
 
-    // Command protocol:
-    //   Root rank enumerates all sweep points and broadcasts the leaf work.
-    //   All ranks call run_one for each leaf (collective heavy compute).
-    const int CMD_EVAL = 1;
-    const int CMD_STOP = 0;
-
-    // ---------------- Non-root ranks: service loop ----------------
+    // ---------------------------------------------------------------------
+    // Workers: enter the service loop exactly once (top-level call only).
+    // Root broadcasts: MAGIC, CMD, then payload for each leaf.
+    // ---------------------------------------------------------------------
     if (rank != 0)
     {
+        if (idx != 0) return;
+
         while (true)
         {
-            int cmd = CMD_STOP;
-            MPI_Bcast(&cmd, 1, MPI_INT, 0, comm);
-
-            if (cmd == CMD_STOP) {
-                break;
+            std::uint32_t magic = 0;
+            MPI_Bcast(&magic, 1, MPI_UINT32_T, 0, comm);
+            if (magic != SWEEP_MAGIC) {
+                MPI_Abort(comm, 1);
             }
 
-            // Receive run_counter (for consistent run naming)
+            int cmd = CMD_STOP;
+            MPI_Bcast(&cmd, 1, MPI_INT, 0, comm);
+            if (cmd == CMD_STOP) break;
+
             std::uint64_t run_counter_u64 = 0;
             MPI_Bcast(&run_counter_u64, 1, MPI_UINT64_T, 0, comm);
 
-            // Receive YAML string length + bytes
             std::uint64_t yaml_len_u64 = 0;
             MPI_Bcast(&yaml_len_u64, 1, MPI_UINT64_T, 0, comm);
+
+            if (yaml_len_u64 > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+                MPI_Abort(comm, 2);
+            }
 
             std::string run_config_str;
             run_config_str.resize(static_cast<std::size_t>(yaml_len_u64));
@@ -107,22 +94,26 @@ void sweep_recursive_cfg(const Config &base_cfg,
                 MPI_Bcast(run_config_str.data(), static_cast<int>(yaml_len_u64), MPI_CHAR, 0, comm);
             }
 
-            // Receive active_params for metadata (label/value pairs)
             std::uint64_t nparams_u64 = 0;
             MPI_Bcast(&nparams_u64, 1, MPI_UINT64_T, 0, comm);
             const std::size_t nparams = static_cast<std::size_t>(nparams_u64);
 
-            std::vector<std::pair<std::string, std::string>> active_params_recv;
-            active_params_recv.reserve(nparams);
-
             auto bcast_string = [&](std::string &s) {
                 std::uint64_t len_u64 = 0;
                 MPI_Bcast(&len_u64, 1, MPI_UINT64_T, 0, comm);
+
+                if (len_u64 > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+                    MPI_Abort(comm, 3);
+                }
+
                 s.resize(static_cast<std::size_t>(len_u64));
                 if (len_u64 > 0) {
                     MPI_Bcast(s.data(), static_cast<int>(len_u64), MPI_CHAR, 0, comm);
                 }
             };
+
+            std::vector<std::pair<std::string, std::string>> active_params_recv;
+            active_params_recv.reserve(nparams);
 
             for (std::size_t i = 0; i < nparams; ++i) {
                 std::string k, v;
@@ -131,50 +122,71 @@ void sweep_recursive_cfg(const Config &base_cfg,
                 active_params_recv.emplace_back(std::move(k), std::move(v));
             }
 
-            // Collective heavy compute: all ranks call run_one
+            // make_run_folder() uses MPI_COMM_WORLD internally, so all ranks must call it here.
             YAML::Node yaml_root = YAML::Load(run_config_str);
+            fs::path run_path = make_run_folder(yaml_root, static_cast<int>(run_counter_u64));
+            yaml_root["save_path"] = run_path.string();
+
             (void)run_one(base_cfg,
                           yaml_root,
                           active_params_recv,
-                          static_cast<std::size_t>(run_counter_u64), 
+                          static_cast<std::size_t>(run_counter_u64),
                           true);
+
+            // Keep protocol lockstep between leaf evaluations.
+            MPI_Barrier(comm);
         }
 
         return;
     }
 
-    // ---------------- Rank 0: enumerates sweep points ----------------
-
+    // ---------------------------------------------------------------------
+    // Root: recurse to enumerate sweep points; at each leaf broadcast work.
+    // ---------------------------------------------------------------------
     if (idx == sweeps.size())
     {
-        // Leaf: build per-run YAML string
         YAML::Node root = YAML::Load(config_str);
         for (const auto &a : assignments) {
             set_by_dot_path(root, a.path, parse_scalar(a.value));
         }
-        root["save_path"] = make_run_folder(root, static_cast<int>(run_counter)).string();
 
+        // Do not call make_run_folder() before broadcasting: it contains WORLD collectives.
+        // All ranks call make_run_folder() after receiving the YAML payload.
         YAML::Emitter out;
         out << root;
         std::string run_config_str = out.c_str();
 
-        // Broadcast "evaluate" command and payload to workers
-        int cmd = CMD_EVAL;
-        MPI_Bcast(&cmd, 1, MPI_INT, 0, comm);
+        // Header: MAGIC then CMD (workers validate stream / allow STOP).
+        {
+            std::uint32_t magic = SWEEP_MAGIC;
+            MPI_Bcast(&magic, 1, MPI_UINT32_T, 0, comm);
+
+            int cmd = CMD_EVAL;
+            MPI_Bcast(&cmd, 1, MPI_INT, 0, comm);
+        }
 
         std::uint64_t run_counter_u64 = static_cast<std::uint64_t>(run_counter);
         MPI_Bcast(&run_counter_u64, 1, MPI_UINT64_T, 0, comm);
 
         std::uint64_t yaml_len_u64 = static_cast<std::uint64_t>(run_config_str.size());
         MPI_Bcast(&yaml_len_u64, 1, MPI_UINT64_T, 0, comm);
+
+        if (yaml_len_u64 > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+            MPI_Abort(comm, 2);
+        }
+
         if (yaml_len_u64 > 0) {
             MPI_Bcast(run_config_str.data(), static_cast<int>(yaml_len_u64), MPI_CHAR, 0, comm);
         }
 
-        // Broadcast active_params so all ranks call run_one with identical metadata
         auto bcast_string_root = [&](const std::string &s) {
             std::uint64_t len_u64 = static_cast<std::uint64_t>(s.size());
             MPI_Bcast(&len_u64, 1, MPI_UINT64_T, 0, comm);
+
+            if (len_u64 > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+                MPI_Abort(comm, 3);
+            }
+
             if (len_u64 > 0) {
                 MPI_Bcast(const_cast<char*>(s.data()), static_cast<int>(len_u64), MPI_CHAR, 0, comm);
             }
@@ -188,9 +200,14 @@ void sweep_recursive_cfg(const Config &base_cfg,
             bcast_string_root(kv.second);
         }
 
-        // Collective compute
+        // All ranks must call make_run_folder() (WORLD collectives inside).
         YAML::Node yaml_root = YAML::Load(run_config_str);
+        fs::path run_path = make_run_folder(yaml_root, static_cast<int>(run_counter_u64));
+        yaml_root["save_path"] = run_path.string();
+
         std::string run_dir_name = run_one(base_cfg, yaml_root, active_params, run_counter, true);
+
+        MPI_Barrier(comm);
 
         if (!run_dir_name.empty())
         {
@@ -217,8 +234,7 @@ void sweep_recursive_cfg(const Config &base_cfg,
                 assignments.push_back({ sw.path, val });
 
                 sweep_recursive_cfg(base_cfg, config_str, sweeps, idx + 1,
-                                    active_params, assignments,
-                                    run_counter, records);
+                                    active_params, assignments, run_counter, records);
 
                 assignments.pop_back();
                 active_params.pop_back();
@@ -236,8 +252,7 @@ void sweep_recursive_cfg(const Config &base_cfg,
                 assignments.push_back({ sw.path, val_str });
 
                 sweep_recursive_cfg(base_cfg, config_str, sweeps, idx + 1,
-                                    active_params, assignments,
-                                    run_counter, records);
+                                    active_params, assignments, run_counter, records);
 
                 assignments.pop_back();
                 active_params.pop_back();
@@ -254,8 +269,7 @@ void sweep_recursive_cfg(const Config &base_cfg,
                     assignments.push_back({ sw.path, val_str });
 
                     sweep_recursive_cfg(base_cfg, config_str, sweeps, idx + 1,
-                                        active_params, assignments,
-                                        run_counter, records);
+                                        active_params, assignments, run_counter, records);
 
                     assignments.pop_back();
                     active_params.pop_back();
@@ -263,10 +277,38 @@ void sweep_recursive_cfg(const Config &base_cfg,
             }
             break;
         }
+
+        case SweepEntry::Kind::Fixed:
+        {
+            for (const auto &cfg : sw.configs)
+            {
+                active_params.emplace_back(label, cfg.label);
+
+                const std::size_t n_added = cfg.assigns.size();
+                for (const auto &a : cfg.assigns) assignments.push_back(a);
+
+                sweep_recursive_cfg(base_cfg, config_str, sweeps, idx + 1,
+                                    active_params, assignments, run_counter, records);
+
+                for (std::size_t k = 0; k < n_added; ++k) assignments.pop_back();
+                active_params.pop_back();
+            }
+            break;
+        }
     }
 
-    // Only rank 0 reaches here. Caller (rank 0) should broadcast CMD_STOP after sweep completes.
+    // Top-level only: send STOP. Do not add a barrier here; workers are waiting in Bcast(magic).
+    if (idx == 0)
+    {
+        std::uint32_t magic = SWEEP_MAGIC;
+        MPI_Bcast(&magic, 1, MPI_UINT32_T, 0, comm);
+
+        int cmd = CMD_STOP;
+        MPI_Bcast(&cmd, 1, MPI_INT, 0, comm);
+    }
 }
+
+
 
 
 // -----------------------------------------------------------------------------

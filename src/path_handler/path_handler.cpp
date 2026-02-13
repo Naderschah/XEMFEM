@@ -55,10 +55,10 @@ void ensure_directory(const Config cfg)
 }
 
 
-fs::path make_run_folder(const Config& cfg, int run_id)
+fs::path make_run_folder(const Config& cfg, int run_id, MPI_Comm comm)
 {
     int rank;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_rank(comm, &rank);
 
     std::ostringstream ss;
     ss << "run_" << std::setw(4) << std::setfill('0') << run_id;
@@ -69,31 +69,28 @@ fs::path make_run_folder(const Config& cfg, int run_id)
 
     if (rank == 0)
     {
-        try
-        {
-            if (!fs::exists(run_path))
-            {
+        try {
+            if (!fs::exists(run_path)) {
                 fs::create_directories(run_path);
             }
-        }
-        catch (...)
-        {
+        } catch (...) {
             error_flag = 1;
         }
     }
 
-    MPI_Bcast(&error_flag, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    MPI_Barrier(MPI_COMM_WORLD);
+    MPI_Bcast(&error_flag, 1, MPI_INT, 0, comm);
+    MPI_Barrier(comm);
 
     if (error_flag)
         throw std::runtime_error("Failed to create run folder.");
 
     return run_path;
 }
-fs::path make_run_folder(const YAML::Node yaml_config, int run_id)
+
+fs::path make_run_folder(const YAML::Node yaml_config, int run_id, MPI_Comm comm)
 {
     int rank;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_rank(comm, &rank);
 
     std::ostringstream ss;
     ss << "run_" << std::setw(4) << std::setfill('0') << run_id;
@@ -104,27 +101,24 @@ fs::path make_run_folder(const YAML::Node yaml_config, int run_id)
 
     if (rank == 0)
     {
-        try
-        {
-            if (!fs::exists(run_path))
-            {
+        try {
+            if (!fs::exists(run_path)) {
                 fs::create_directories(run_path);
             }
-        }
-        catch (...)
-        {
+        } catch (...) {
             error_flag = 1;
         }
     }
 
-    MPI_Bcast(&error_flag, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    MPI_Barrier(MPI_COMM_WORLD);
+    MPI_Bcast(&error_flag, 1, MPI_INT, 0, comm);
+    MPI_Barrier(comm);
 
     if (error_flag)
         throw std::runtime_error("Failed to create run folder.");
 
     return run_path;
 }
+
 
 
 std::vector<fs::path> targets_from_save_root(const Config& cfg)

@@ -226,6 +226,18 @@ sweeps:
     path: "solver.order"
     kind: "discrete"
     values: [1, 2, 3]
+  # Or a sweep over fixed configurations (ie solve for all of these)
+  - name: "Preset"
+    kind: "fixed"
+    configs:
+      - label: "GateIsGround"
+        set:
+          boundaries.BC_GateElectrode.value: 0.0
+          boundaries.BC_AnodeElectrode.value: 1000
+      - label: "AnodeIsGround"
+        set:
+          boundaries.BC_GateElectrode.value: 1000
+          boundaries.BC_AnodeElectrode.value: 0.0
 
 # Optimization Configuration (minimize metric relative to some parameters)
 optimize:

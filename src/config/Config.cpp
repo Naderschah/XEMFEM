@@ -135,26 +135,33 @@ static SweepEntry::Kind parse_sweep_kind(const std::string &s_raw)
     std::transform(s.begin(), s.end(), s.begin(),
                    [](unsigned char c) { return std::tolower(c); });
 
-    if (s == "discrete" || s.empty()) {
-        return SweepEntry::Kind::Discrete;
-    }
-    if (s == "range") {
-        return SweepEntry::Kind::Range;
-    }
-    // Default / fallback
+    if (s == "discrete" || s.empty()) return SweepEntry::Kind::Discrete;
+    if (s == "range")                 return SweepEntry::Kind::Range;
+    if (s == "fixed" || s == "preset" || s == "presets") return SweepEntry::Kind::Fixed;
+
     std::cerr << "Warning: unknown sweep kind \"" << s_raw
               << "\"; defaulting to Discrete.\n";
     return SweepEntry::Kind::Discrete;
 }
+static std::string node_to_string(const YAML::Node &n)
+{
+    if (!n) return std::string{};
 
+    // If it's already a scalar, try reading as string (works for "1", "1.2", "true", etc.)
+    if (n.IsScalar()) {
+        return n.as<std::string>();
+    }
+
+    // For non-scalars, emit to YAML one-liner. (Allows e.g. small sequences if you ever want them.)
+    YAML::Emitter out;
+    out << n;
+    return std::string(out.c_str());
+}
 static void parse_sweeps(Config &cfg, const YAML::Node &root)
 {
     cfg.sweeps.clear();
 
-    if (!root["sweeps"]) {
-        // No sweeps defined; nothing to do.
-        return;
-    }
+    if (!root["sweeps"]) return;
 
     const YAML::Node S = root["sweeps"];
     if (!S.IsSequence()) {
@@ -165,58 +172,51 @@ static void parse_sweeps(Config &cfg, const YAML::Node &root)
     for (std::size_t i = 0; i < S.size(); ++i) {
         const YAML::Node &node = S[i];
         if (!node || !node.IsMap()) {
-            std::cerr << "Warning: sweeps[" << i
-                      << "] is not a map; skipping.\n";
+            std::cerr << "Warning: sweeps[" << i << "] is not a map; skipping.\n";
             continue;
         }
 
         SweepEntry sw;
 
-        // Optional label
         sw.name = node["name"].as<std::string>(std::string{});
 
-        // Required: path "solver.order", "mesh.refine", etc.
-        sw.path = node["path"].as<std::string>(std::string{});
-        if (sw.path.empty()) {
-            std::cerr << "Warning: sweeps[" << i
-                      << "] missing 'path'; skipping.\n";
-            continue;
-        }
-
-        // Kind: discrete / range / nelder_mead
         std::string kind_str = node["kind"].as<std::string>(std::string{"discrete"});
         sw.kind = parse_sweep_kind(kind_str);
 
-        // Discrete values
+        // Path is required only for discrete/range
+        sw.path = node["path"].as<std::string>(std::string{});
+        if ((sw.kind == SweepEntry::Kind::Discrete || sw.kind == SweepEntry::Kind::Range) && sw.path.empty()) {
+            std::cerr << "Warning: sweeps[" << i << "] missing 'path'; skipping.\n";
+            continue;
+        }
+
+        // -------- Discrete --------
         if (sw.kind == SweepEntry::Kind::Discrete) {
-            if (node["values"]) {
-                const YAML::Node &vals = node["values"];
-                if (!vals.IsSequence()) {
-                    std::cerr << "Warning: sweeps[" << i
-                              << "].values is not a sequence; skipping entry.\n";
-                    continue;
-                }
-
-                sw.values.clear();
-                sw.values.reserve(vals.size());
-                for (std::size_t j = 0; j < vals.size(); ++j) {
-                    // Store as string, regardless of underlying type
-                    sw.values.push_back(vals[j].as<std::string>());
-                }
-
-                if (sw.values.empty()) {
-                    std::cerr << "Warning: sweeps[" << i
-                              << "] has empty 'values' for discrete kind; skipping.\n";
-                    continue;
-                }
-            } else {
+            if (!node["values"]) {
                 std::cerr << "Warning: sweeps[" << i
                           << "] kind=discrete but no 'values' provided; skipping.\n";
                 continue;
             }
+            const YAML::Node &vals = node["values"];
+            if (!vals.IsSequence()) {
+                std::cerr << "Warning: sweeps[" << i
+                          << "].values is not a sequence; skipping entry.\n";
+                continue;
+            }
+
+            sw.values.clear();
+            sw.values.reserve(vals.size());
+            for (std::size_t j = 0; j < vals.size(); ++j) {
+                sw.values.push_back(node_to_string(vals[j]));
+            }
+            if (sw.values.empty()) {
+                std::cerr << "Warning: sweeps[" << i
+                          << "] has empty 'values' for discrete kind; skipping.\n";
+                continue;
+            }
         }
 
-        // Range sweep
+        // -------- Range --------
         if (sw.kind == SweepEntry::Kind::Range) {
             sw.start = node["start"].as<double>(sw.start);
             sw.end   = node["end"].as<double>(sw.end);
@@ -229,10 +229,70 @@ static void parse_sweeps(Config &cfg, const YAML::Node &root)
             }
         }
 
+        // -------- Fixed --------
+        if (sw.kind == SweepEntry::Kind::Fixed) {
+            if (!node["configs"] || !node["configs"].IsSequence()) {
+                std::cerr << "Warning: sweeps[" << i
+                          << "] kind=fixed requires 'configs' (a sequence); skipping.\n";
+                continue;
+            }
+
+            const YAML::Node &cfgs = node["configs"];
+            sw.configs.clear();
+            sw.configs.reserve(cfgs.size());
+
+            for (std::size_t ci = 0; ci < cfgs.size(); ++ci) {
+                const YAML::Node &cnode = cfgs[ci];
+                if (!cnode || !cnode.IsMap()) {
+                    std::cerr << "Warning: sweeps[" << i << "].configs[" << ci
+                              << "] not a map; skipping that config.\n";
+                    continue;
+                }
+
+                FixedConfig fc;
+                fc.label = cnode["label"].as<std::string>(std::string{});
+                if (fc.label.empty()) {
+                    // provide a stable default label if user omitted it
+                    fc.label = "cfg_" + std::to_string(ci);
+                }
+
+                if (!cnode["set"] || !cnode["set"].IsMap()) {
+                    std::cerr << "Warning: sweeps[" << i << "].configs[" << ci
+                              << "] requires 'set' (a map of dotpath: value); skipping that config.\n";
+                    continue;
+                }
+
+                const YAML::Node &set = cnode["set"];
+                for (auto it = set.begin(); it != set.end(); ++it) {
+                    const std::string p = it->first.as<std::string>();
+                    const YAML::Node  v = it->second;
+                    if (p.empty()) {
+                        std::cerr << "Warning: sweeps[" << i << "].configs[" << ci
+                                  << "] has empty key in 'set'; skipping that entry.\n";
+                        continue;
+                    }
+                    fc.assigns.push_back({p, node_to_string(v)});
+                }
+
+                if (fc.assigns.empty()) {
+                    std::cerr << "Warning: sweeps[" << i << "].configs[" << ci
+                              << "] has empty 'set'; skipping that config.\n";
+                    continue;
+                }
+
+                sw.configs.push_back(std::move(fc));
+            }
+
+            if (sw.configs.empty()) {
+                std::cerr << "Warning: sweeps[" << i
+                          << "] kind=fixed has no valid configs; skipping.\n";
+                continue;
+            }
+        }
+
         cfg.sweeps.push_back(std::move(sw));
     }
 }
-
 
 static void parse_fieldcage_network(Config &cfg, const YAML::Node &root)
 {
