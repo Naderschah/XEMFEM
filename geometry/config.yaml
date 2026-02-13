@@ -60,7 +60,7 @@ compute:
     num: -1
     affinity: scatter
 optimize:
-  enabled: false
+  enabled: true
   print_results: true
   objective: self_weighting
   max_evals: 1

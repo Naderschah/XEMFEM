@@ -94,14 +94,15 @@ static PWConstCoefficient BuildEpsilonPWConst(const Mesh &mesh, const std::share
 
 std::unique_ptr<mfem::ParGridFunction> SolvePoisson(ParFiniteElementSpace &pfes,
                                                     const BoundaryConditionGroups BCs,
-                                                    const std::shared_ptr<const Config>& cfg)
+                                                    const std::shared_ptr<const Config>& cfg,
+                                                    std::string dir_overwrite)
 {
   using namespace mfem;
 
   if (cfg->debug.debug) {std::cout << "[DEBUG] In Poisson Solver" << std::endl;}
   MPI_Comm comm = pfes.GetParMesh()->GetComm();
 
-  const std::filesystem::path directory(cfg->save_path);
+  const std::filesystem::path directory = dir_overwrite.empty() ? cfg->save_path : dir_overwrite;
   const std::filesystem::path log_path = directory / "solver.log";
 
   const Mesh &mesh = *pfes.GetMesh();

@@ -1,13 +1,13 @@
 #pragma once
 
 #include <iosfwd> 
-
+#include <string>
 #include "mfem.hpp"
 #include "boundary_conditions.h"
 #include "Config.h"
 using namespace mfem;
 
-std::unique_ptr<mfem::ParGridFunction> SolvePoisson(ParFiniteElementSpace &pfes, const BoundaryConditionGroups BCs, const std::shared_ptr<const Config>& cfg);
+std::unique_ptr<mfem::ParGridFunction> SolvePoisson(ParFiniteElementSpace &pfes, const BoundaryConditionGroups BCs, const std::shared_ptr<const Config>& cfg, std::string dir_overwrite = "");
 
 // Residual file logging instead of terminal dump
 class ResidualFileMonitor : public mfem::IterativeSolverMonitor

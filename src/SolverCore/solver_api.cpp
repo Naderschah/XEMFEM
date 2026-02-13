@@ -28,14 +28,6 @@ std::string PrecomputeAMRMesh(const Config &cfg,
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     std::chrono::steady_clock::time_point t_start;
     auto cfg_ptr = std::make_shared<Config>(cfg);
-    if (cfg.debug.timing) t_start = std::chrono::steady_clock::now();
-    SimulationResult res = run_simulation(cfg_ptr, cfg.mesh.path, false);
-    if (cfg.debug.timing)
-    {
-        auto t_end = std::chrono::steady_clock::now();
-        auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count();
-        std::cout << "[Timing]: AMR timing (" << dt << " ms)" << std::endl;
-    }
 
     const std::filesystem::path out_dir  = cfg.save_path;
     const std::filesystem::path mesh_dir = out_dir / "amr_mesh";
@@ -45,6 +37,15 @@ std::string PrecomputeAMRMesh(const Config &cfg,
         std::filesystem::create_directories(mesh_dir, ec);
         MFEM_VERIFY(!ec, "Could not create output directory: " << mesh_dir.string()
                                                             << " : " << ec.message());
+    }
+
+    if (cfg.debug.timing) t_start = std::chrono::steady_clock::now();
+    SimulationResult res = run_simulation(cfg_ptr, cfg.mesh.path, false);
+    if (cfg.debug.timing)
+    {
+        auto t_end = std::chrono::steady_clock::now();
+        auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count();
+        std::cout << "[Timing]: AMR timing (" << dt << " ms)" << std::endl;
     }
 
     // ensure all ranks see the directory before opening files
@@ -94,10 +95,12 @@ SimulationResult run_simulation(std::shared_ptr<Config> cfg,
   std::unique_ptr<mfem::ParGridFunction> V;
 
   const int max_iter = ((cfg->mesh.amr.enable && !skip_amr) ? cfg->mesh.amr.max_iter : 1);
+  std::string solver_log_overwrite = 
+    cfg->mesh.amr.enable ? (std::filesystem::path(cfg->save_path) / "amr_mesh").string() : "";
   for (int it = 0; it < max_iter; ++it)
   {
     // Solve Poisson
-    V = SolvePoisson(*pfes, BCs, cfg);
+    V = SolvePoisson(*pfes, BCs, cfg, solver_log_overwrite);
 
     // Break if no AMR
     if (!cfg->mesh.amr.enable || skip_amr) { break; }

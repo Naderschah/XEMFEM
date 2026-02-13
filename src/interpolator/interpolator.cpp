@@ -1,52 +1,5 @@
 #include "interpolator.h"
 
-// Lazy TODO move to utils module same function in optimzation.cpp
-static inline std::string rtrim(const std::string &s)
-{
-    std::string::size_type end = s.find_last_not_of(" \t\r\n");
-    if (end == std::string::npos) return "";
-    return s.substr(0, end + 1);
-}
-static std::vector<std::string> read_root_level_runs_from_meta(const std::filesystem::path &save_root)
-{
-    std::vector<std::string> runs;
-
-    std::filesystem::path meta_path = save_root / "meta.txt";
-    if (!std::filesystem::exists(meta_path)) {
-        return runs; // empty → no meta.txt
-    }
-
-    std::ifstream meta(meta_path);
-    if (!meta) {
-        std::cerr << "Warning: could not open meta.txt in " << save_root << "\n";
-        return runs;
-    }
-
-    std::string line;
-    while (std::getline(meta, line)) {
-        // Ignore empty lines
-        if (line.empty()) continue;
-
-        // Ignore lines starting with whitespace (indented blocks)
-        if (!line.empty() && (line[0] == ' ' || line[0] == '\t')) {
-            continue;
-        }
-
-        // We only care about root-level lines like "run_0001:"
-        std::string trimmed = rtrim(line);
-        if (trimmed.size() < 2) continue;
-
-        if (trimmed.back() == ':') {
-            std::string name = trimmed.substr(0, trimmed.size() - 1);
-            if (!name.empty()) {
-                runs.push_back(name);
-            }
-        }
-    }
-
-    return runs;
-}
-
 // ------------------------- H1 Projection --------------------------
 struct ProjectedH1VectorField
 {
