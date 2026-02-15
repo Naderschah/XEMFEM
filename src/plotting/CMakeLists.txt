@@ -60,17 +60,7 @@ target_link_libraries(plotting
         path_handler
 )
 
-# Thin wrapper executable
-#add_executable(PLOT
-#    main.cpp
-#)
-
-#target_link_libraries(PLOT
-#    PRIVATE
-#        plotting
-#)
-#
-#vtk_module_autoinit(
-#    TARGETS PLOT plotting
-#    MODULES ${VTK_LIBRARIES}
-#)
+vtk_module_autoinit(
+  TARGETS plotting
+  MODULES ${VTK_LIBRARIES}
+)

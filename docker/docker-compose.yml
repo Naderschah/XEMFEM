@@ -1,81 +1,149 @@
+# ---------- Base templates (NOT services) ----------
+x-mfem-base: &mfem_base
+  build:
+    context: .
+    network: host
+  user: "${DOCKER_UID}:${GID}"
+  network_mode: host
+  tty: true
+  stdin_open: true
+  environment: &mfem_env
+    DISPLAY: "${DISPLAY}"
+    XAUTHORITY: /tmp/.Xauthority
+    XDG_RUNTIME_DIR: /tmp
+    QT_X11_NO_MITSHM: "1"
+    OMP_NUM_THREADS: "1"
+    OPENBLAS_NUM_THREADS: "1"
+    MKL_NUM_THREADS: "1"
+    BLIS_NUM_THREADS: "1"
+    VECLIB_MAXIMUM_THREADS: "1"
+    NUMEXPR_NUM_THREADS: "1"
+  volumes:
+    - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    - ${XAUTHORITY}:/tmp/.Xauthority:ro
+    - ${XEMFEM_PATH}:/work:rw,delegated
+    - /run/opengl-driver/share/glvnd/egl_vendor.d/10_nvidia.json:/usr/share/glvnd/egl_vendor.d/10_nvidia.json:ro
+    - /run/opengl-driver/lib:/run/opengl-driver/lib:ro
+    - /nix/store:/nix/store:ro # This is because the drivers point to the store
+
+
+x-mfem-gpu-common: &mfem_gpu_common
+  #devices:
+  #  - /dev/dri:/dev/dri:rwm
+  group_add:
+    - ${VIDEO_GID}
+    - ${RENDER_GID}
+
+x-mfem-no-gpu-soft-vtk: &mfem_no_gpu_soft_vtk
+  environment:
+    <<: *mfem_env
+    VTK_DEFAULT_OPENGL_WINDOW: vtkOSOpenGLRenderWindow
+    LIBGL_ALWAYS_SOFTWARE: "1"
+    MESA_LOADER_DRIVER_OVERRIDE: llvmpipe
+    GALLIUM_DRIVER: llvmpipe
+    MESA_DEBUG: "1"
+    LIBGL_DEBUG: verbose
+
 services:
-  mfem-shell:
-    build:
-      context: .
-      network: host
-    user: "${DOCKER_UID}:${GID}"
+  # ---------- Shell variants ----------
+  mfem-shell-nixos:
+    <<: [*mfem_base, *mfem_gpu_common]
+    container_name: mfem_shell_nixos
     labels:
       keep: "true"
-    container_name: mfem_shell
-    network_mode: host # My OMARCHY install didnt compile with required kernel modules so this is fine 
-    tty: true
-    stdin_open: true
     command: bash
-    profiles: ["shell"]
+    profiles: ["shell", "gpu", "nixos"]
     environment:
-      - DISPLAY=${DISPLAY}
-      - XAUTHORITY=/tmp/.Xauthority
-      - XDG_RUNTIME_DIR=/tmp            # silence SDL/Wayland runtime dir error
-      - QT_X11_NO_MITSHM=1
-      # MPI Specific - These should eventually be removable (currently something sets OpenMP threads - likely due to compiling everything with OpenMP)
-      - OMP_NUM_THREADS=1
-      - OPENBLAS_NUM_THREADS=1
-      - MKL_NUM_THREADS=1
-      - BLIS_NUM_THREADS=1
-      - VECLIB_MAXIMUM_THREADS=1
-      - NUMEXPR_NUM_THREADS=1
-      # Force VTK to use OSMesa offscreen window
-      - VTK_DEFAULT_OPENGL_WINDOW=vtkOSOpenGLRenderWindow
-      # Force Mesa software rendering (no /dev/dri)
-      - LIBGL_ALWAYS_SOFTWARE=1
-      - MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
-      - GALLIUM_DRIVER=llvmpipe
-      # Extra: reduce any EGL/DRM probing noise and help diagnostics
-      - MESA_DEBUG=1
-      - LIBGL_DEBUG=verbose
-
+      <<: *mfem_env
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: graphics,utility,compute
+      __EGL_VENDOR_LIBRARY_DIRS: /usr/share/glvnd/egl_vendor.d
+      __EGL_VENDOR_LIBRARY_FILENAMES: /usr/share/glvnd/egl_vendor.d/10_nvidia.json
+      EGL_PLATFORM: surfaceless
     volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw       # X11 (for paraview and the like)
-      - $XAUTHORITY:/tmp/.Xauthority:ro        # X auth (for paraview and the like)
-      - $XEMFEM_PATH:/work:rw,delegated
-    devices:
-      - /dev/dri:/dev/dri                    # optional: hardware accel
+    - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    - ${XAUTHORITY}:/tmp/.Xauthority:ro
+    - ${XEMFEM_PATH}:/work:rw,delegated
+    - /run/opengl-driver/share/glvnd/egl_vendor.d/10_nvidia.json:/usr/share/glvnd/egl_vendor.d/10_nvidia.json:ro
+    - /run/opengl-driver/lib:/run/opengl-driver/lib:ro
+    - /nix/store:/nix/store:ro # This is because the drivers point to the store
+    - /etc/egl:/etc/egl:ro
+    
 
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: cdi
+              device_ids: ["nvidia.com/gpu=all"]
+              capabilities: ["gpu"]
+
+  mfem-shell-gpu:
+    <<: [*mfem_base, *mfem_gpu_common]
+    container_name: mfem_shell_gpu
+    labels:
+      keep: "true"
+    command: bash
+    profiles: ["shell", "gpu", "classic"]
+    gpus: all
+    environment:
+      <<: *mfem_env
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: graphics,utility,compute
+
+  mfem-shell:
+    <<: *mfem_base
+    container_name: mfem_shell
+    labels:
+      keep: "true"
+    command: bash
+    profiles: ["shell", "no-gpu"]
+
+  # ---------- Jupyter variants ----------
+  mfem-jupyter-nixos:
+    <<: [*mfem_base, *mfem_gpu_common]
+    container_name: mfem_jupyter_nixos
+    ports:
+      - "8888:8888"
+    command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --NotebookApp.token=''
+    profiles: ["jupyter", "gpu", "nixos"]
+    environment:
+      <<: *mfem_env
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: graphics,utility,compute
+      __EGL_VENDOR_LIBRARY_DIRS: /usr/share/glvnd/egl_vendor.d
+    volumes:
+    - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    - ${XAUTHORITY}:/tmp/.Xauthority:ro
+    - ${XEMFEM_PATH}:/work:rw,delegated
+    - /run/opengl-driver/share/glvnd/egl_vendor.d/10_nvidia.json:/usr/share/glvnd/egl_vendor.d/10_nvidia.json:ro
+    - /run/opengl-driver/lib:/run/opengl-driver/lib:ro
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: cdi
+              device_ids: ["nvidia.com/gpu=all"]
+              capabilities: ["gpu"]
+
+  mfem-jupyter-gpu:
+    <<: [*mfem_base, *mfem_gpu_common]
+    container_name: mfem_jupyter_gpu
+    ports:
+      - "8888:8888"
+    command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --NotebookApp.token=''
+    profiles: ["jupyter", "gpu", "classic"]
+    gpus: all
+    environment:
+      <<: *mfem_env
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: graphics,utility,compute
 
   mfem-jupyter:
-    build:
-      context: .
-      network: host
-    user: "${DOCKER_UID}:${GID}"
+    <<: [*mfem_base, *mfem_no_gpu_soft_vtk]
     container_name: mfem_jupyter
     ports:
       - "8888:8888"
     command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --NotebookApp.token=''
-    environment:
-      - DISPLAY=${DISPLAY}
-      - XAUTHORITY=/tmp/.Xauthority
-      - XDG_RUNTIME_DIR=/tmp            # silence SDL/Wayland runtime dir error
-      - QT_X11_NO_MITSHM=1
-      # MPI Specific - These should eventually be removable (currently something sets OpenMP threads - likely due to compiling everything with OpenMP)
-      - OMP_NUM_THREADS=1
-      - OPENBLAS_NUM_THREADS=1
-      - MKL_NUM_THREADS=1
-      - BLIS_NUM_THREADS=1
-      - VECLIB_MAXIMUM_THREADS=1
-      - NUMEXPR_NUM_THREADS=1
-      # Force VTK to use OSMesa offscreen window
-      - VTK_DEFAULT_OPENGL_WINDOW=vtkOSOpenGLRenderWindow
-      # Force Mesa software rendering (no /dev/dri)
-      - LIBGL_ALWAYS_SOFTWARE=1
-      - MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
-      - GALLIUM_DRIVER=llvmpipe
-      # Extra: reduce any EGL/DRM probing noise and help diagnostics
-      - MESA_DEBUG=1
-      - LIBGL_DEBUG=verbose
-    volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw       # X11 (for paraview and the like)
-      - $XAUTHORITY:/tmp/.Xauthority:ro        # X auth (for paraview and the like)
-      - $XEMFEM_PATH:/work:rw,delegated
-    devices:
-      - /dev/dri:/dev/dri                  # optional: hardware accel
-
+    profiles: ["jupyter", "no-gpu"]

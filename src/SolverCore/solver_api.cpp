@@ -24,6 +24,7 @@ using namespace mfem;
 std::string PrecomputeAMRMesh(const Config &cfg,
                               int precision)
 {
+    // TODO Config saving as this is voltage dependent, might be worthwhile to maximize delta V in an optimization
     int rank = 0;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     std::chrono::steady_clock::time_point t_start;
@@ -633,7 +634,6 @@ std::string run_one(const Config &cfg,
     MPI_Barrier(MPI_COMM_WORLD);
     if (!cfg.debug.dry_run)
     {
-        std::cout << "CFG Test1" << cfg_ptr->boundaries["BC_FieldShapingRings1"].value << std::endl;
         SimulationResult result = run_simulation(cfg_ptr, model_path, skip_amr);
         if (!result.success)
         {

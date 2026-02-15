@@ -212,7 +212,7 @@ void sweep_recursive_cfg(const Config &base_cfg,
         if (!run_dir_name.empty())
         {
             RunRecord rec;
-            rec.run_dir_name = run_dir_name;
+            rec.run_dir_name = run_path;
             rec.params = active_params;
             records.push_back(std::move(rec));
         }

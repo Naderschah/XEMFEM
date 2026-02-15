@@ -28,7 +28,7 @@ mesh:
     Opt_Optimize: true
   AMR:
     enable: true
-    max_iter: 1
+    max_iter: 10
     local_error_goal: 1e-4
     total_error_goal: 0.0
     total_error_fraction: 0.0
@@ -60,68 +60,31 @@ compute:
     enabled: false
     num: -1
     affinity: scatter
-optimize:
-  enabled: false
-  print_results: true
-  objective: self_weighting
-  max_evals: 1
-  max_iters: 1
-  rel_tol_f: 0.001
-  rel_tol_x: 0.001
-  adaptive: true
-  r_min: 0.0
-  r_max: 0.664
-  z_min: -1.5025
-  z_max: 0.004
-  trace_params:
-    provider: MPITracer
-    method: RK4
-    c_step: 20
-    geom_tol: 1e-6
-    max_traversals: 100
-    redistribution_every: 1
-  civ_params:
-    method: RandomSample
-    num_seed_elements: 200
-    nr: 25
-    nz: 75
-    max_levels: 2
-    block_size: 64
-  fieldSpread_params:
-    TopBottomDist: 0.14
-    BottomPercentile: 0.5
-    UpperPercentile: 0.95
-  variables:
-  - name: BottomScreenVoltage
-    path: boundaries.BC_BottomScreeningElectrode.value
-    kind: continuous
-    lower: -3000.0
-    upper: 3000.0
-    initial: 0.0
-  - name: TopScreenVoltage
-    path: boundaries.BC_TopScreeningElectrode.value
-    kind: continuous
-    lower: -3000.0
-    upper: 3000.0
-    initial: 0.0
-  - name: FirstFieldCageVoltage
-    path: boundaries.BC_FieldShapingRings0.value
-    kind: continuous
-    lower: -2000.0
-    upper: 0.0
-    initial: -950.0
-#sweeps:
-#- name: Preset
-#  kind: fixed
-#  configs:
-#  - label: GateIsGround
-#    set:
-#      boundaries.BC_GateElectrode.value: 0.0
-#      boundaries.BC_AnodeElectrode.value: 1000
-#  - label: AnodeIsGround
-#    set:
-#      boundaries.BC_GateElectrode.value: 1000
-#      boundaries.BC_AnodeElectrode.value: 0.0
+sweeps:
+- name: Preset
+  kind: fixed
+  configs:
+  - label: PMTsOn_RestGround
+    set:
+      boundaries.BC_TopScreeningElectrode.value: 0.0
+      boundaries.BC_AnodeElectrode.value: 0.0
+      boundaries.BC_GateElectrode.value: 0.0
+      boundaries.BC_CathodeElectrode.value: 0.0
+      boundaries.BC_BottomScreeningElectrode.value: 0.0
+  - label: AnodeIsBiased
+    set:
+      boundaries.BC_TopScreeningElectrode.value: 0.0
+      boundaries.BC_AnodeElectrode.value: 600.0
+      boundaries.BC_GateElectrode.value: 0.0
+      boundaries.BC_CathodeElectrode.value: 0.0
+      boundaries.BC_BottomScreeningElectrode.value: 0.0
+  - label: GateIsBiased
+    set:
+      boundaries.BC_TopScreeningElectrode.value: 0.0
+      boundaries.BC_AnodeElectrode.value: 0
+      boundaries.BC_GateElectrode.value: -600.0
+      boundaries.BC_CathodeElectrode.value: 0.0
+      boundaries.BC_BottomScreeningElectrode.value: 0.0
 solver:
   generate_E: false
   axisymmetric: true
@@ -154,11 +117,7 @@ boundaries:
   PTFE_Wall_Charge:
     bdr_id: 147
     type: neumann
-    depth_dependent: true
-    z_bot: -1.5015999999999998
-    z_top: -0.0008
-    value_bot: -1.0e-07
-    value_top: -5.0e-07
+    value: 0
   BC_r0:
     bdr_id: 149
     type: neumann
@@ -166,27 +125,27 @@ boundaries:
   BC_TopScreeningElectrode:
     bdr_id: 6
     type: dirichlet
-    value: -1500
+    value: 0
   BC_AnodeElectrode:
     bdr_id: 5
     type: dirichlet
-    value: 6500
+    value: 600
   BC_GateElectrode:
     bdr_id: 7
     type: dirichlet
-    value: -1000
+    value: -600
   BC_CathodeElectrode:
     bdr_id: 8
     type: dirichlet
-    value: -30000
+    value: 0
   BC_BottomScreeningElectrode:
     bdr_id: 80
     type: dirichlet
-    value: -1500
+    value: 0
   BC_AllPMTs:
     bdr_id: 4
     type: dirichlet
-    value: -1300
+    value: -1500
   BC_Bell:
     bdr_id: 146
     type: dirichlet

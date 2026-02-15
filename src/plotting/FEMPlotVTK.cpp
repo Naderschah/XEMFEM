@@ -70,6 +70,7 @@
 #include <vtkPointData.h>
 #include <vtkProperty.h>
 #include <vtkRenderWindow.h>
+#include <vtkOpenGLRenderWindow.h> 
 #include <vtkRenderer.h>
 #include <vtkRungeKutta4.h>
 #include <vtkScalarBarActor.h>
@@ -85,9 +86,7 @@
 #include <vtkGenericCell.h>
 
 #include <vtkLogger.h>
-#include <vtkOpenGLRenderWindow.h>
 #include <vtkRendererCollection.h>
-#include <vtkOpenGLRenderWindow.h>
 
 namespace FEMPlot
 {
@@ -2619,7 +2618,8 @@ int make_plots(int argc, char** argv)
     return 0;
 }
 
-int _make_plots(std::filesystem::path pvd, bool debug){
+
+static int __make_plots(std::filesystem::path pvd, bool debug){
   std::string path = pvd.string();
   auto input = FEMPlot::PreparePlotInput(path.c_str());
 
@@ -2634,3 +2634,109 @@ int _make_plots(std::filesystem::path pvd, bool debug){
   );
   return 0;
 }
+
+
+
+#include <filesystem>
+#include <iostream>
+#include <string>
+#include <cstdlib>
+
+#include <vtkSmartPointer.h>
+#include <vtkNew.h>
+
+#include <vtkEGLRenderWindow.h>
+#include <vtkRenderer.h>
+#include <vtkWindowToImageFilter.h>
+#include <vtkPNGWriter.h>
+
+#include <vtkPlaneSource.h>
+#include <vtkPolyDataMapper.h>
+#include <vtkActor.h>
+#include <vtkProperty.h>
+#include <vtkCamera.h>
+
+static void force_egl(int deviceIndex, bool verbose)
+{
+  // Make VTK prefer EGL and pick a device explicitly.
+  setenv("VTK_DEFAULT_OPENGL_WINDOW", "vtkEGLRenderWindow", 1);
+  std::string idx = std::to_string(deviceIndex);
+  setenv("VTK_DEFAULT_EGL_DEVICE_INDEX", idx.c_str(), 1);
+
+  if (verbose) {
+    setenv("EGL_LOG_LEVEL", "debug", 1);
+    setenv("MESA_DEBUG", "1", 1);
+  }
+}
+
+static int write_test_png_egl(const std::filesystem::path& out_png, bool debug)
+{
+  std::filesystem::create_directories(out_png.parent_path());
+
+  const int W = 512, H = 512;
+
+  // --- simple scene: red quad on gray background ---
+  vtkNew<vtkPlaneSource> plane;
+  plane->SetOrigin(-1.0, -1.0, 0.0);
+  plane->SetPoint1( 1.0, -1.0, 0.0);
+  plane->SetPoint2(-1.0,  1.0, 0.0);
+  plane->Update();
+
+  vtkNew<vtkPolyDataMapper> mapper;
+  mapper->SetInputConnection(plane->GetOutputPort());
+
+  vtkNew<vtkActor> actor;
+  actor->SetMapper(mapper);
+  actor->GetProperty()->SetColor(1.0, 0.0, 0.0); // red
+  actor->GetProperty()->SetAmbient(1.0);
+  actor->GetProperty()->SetDiffuse(0.0);
+
+  vtkNew<vtkRenderer> ren;
+  ren->AddActor(actor);
+  ren->SetBackground(0.2, 0.2, 0.2);
+  ren->ResetCamera();
+  ren->GetActiveCamera()->ParallelProjectionOn();
+  ren->GetActiveCamera()->SetParallelScale(1.1);
+
+  // --- HARD-CODED EGL render window ---
+  vtkSmartPointer<vtkEGLRenderWindow> win = vtkSmartPointer<vtkEGLRenderWindow>::New();
+  win->SetOffScreenRendering(1);
+  win->SetSize(W, H);
+  win->AddRenderer(ren);
+
+  // Render once before capture
+  win->Render();
+
+  vtkNew<vtkWindowToImageFilter> w2i;
+  w2i->SetInput(win);
+  w2i->SetInputBufferTypeToRGBA();
+  w2i->ReadFrontBufferOff(); // read back buffer after Render()
+  w2i->ShouldRerenderOn();
+  w2i->Update();
+
+  vtkNew<vtkPNGWriter> writer;
+  writer->SetFileName(out_png.string().c_str());
+  writer->SetInputConnection(w2i->GetOutputPort());
+  writer->Write();
+
+  return std::filesystem::exists(out_png) ? 0 : 1;
+}
+
+// Entrypoint
+int _make_plots(std::filesystem::path /*pvd*/, bool debug)
+{
+  const std::filesystem::path out =
+      "/work/sim_results/run_0001/Simulation/plots/test.png";
+
+  // Adjust if you know the correct device index; start with 0.
+  force_egl(/*deviceIndex=*/0, /*verbose=*/debug);
+
+  int rc = write_test_png_egl(out, debug);
+  if (rc == 0) {
+    std::cerr << "[VTK] wrote " << out << "\n";
+  } else {
+    std::cerr << "[VTK] failed to write " << out << "\n";
+  }
+  return rc;
+}
+

@@ -8,42 +8,89 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # --- Core build / system tools ---
+    # ============================================================
+    # VTK build recommended (keep these present)
+    # ============================================================
+    build-essential \
+    cmake \
+    # (recommended by VTK; optional but keep for parity with guidance)
+    cmake-curses-gui \
+    mesa-common-dev \
+    mesa-utils \
+    freeglut3-dev \
+    ninja-build \
+    ffmpeg \
+    \
+    # ============================================================
+    # Core build / system tools
+    # ============================================================
     build-essential cmake git wget ca-certificates curl ninja-build \
     pkg-config unzip locales gfortran gdb vim-common libyaml-cpp-dev \
     \
-    # ----- QT buttons for paraview ------
+    # ============================================================
+    # QT buttons for paraview
+    # ============================================================
     adwaita-icon-theme libqt5svg5 qt5-image-formats-plugins \
-    # --- Python toolchain ---
+    \
+    # ============================================================
+    # Python toolchain
+    # ============================================================
     python3 python3-dev python3-pip python3-venv python3-wheel \
     swig \
     \
-    # --- MPI + parallel math stacks ---
+    # ============================================================
+    # MPI + parallel math stacks
+    # ============================================================
     openmpi-bin libopenmpi-dev libmetis-dev \
     libparmetis-dev libsuperlu-dist-dev \
     \
-    # --- BLAS/LAPACK (keep one optimized stack; OpenBLAS is fine) ---
+    # ============================================================
+    # BLAS/LAPACK
+    # ============================================================
     libopenblas-dev libblas-dev liblapack-dev \
     \
-    # --- Linear algebra / scientific libs ---
+    # ============================================================
+    # Linear algebra / scientific libs
+    # ============================================================
     libblas-dev liblapack-dev libopenblas-dev libatlas-base-dev \
     libmetis-dev libsuperlu-dev zlib1g-dev \
     \
-    # --- Graphics & visualization stack ---
+    # ============================================================
+    # Graphics & visualization stack
+    # ============================================================
     gmsh libgmsh-dev paraview netgen \
-    # ---- HDF5 used for interpolator output -----
+    \
+    # ============================================================
+    # HDF5 used for interpolator output
+    # ============================================================
     libhdf5-dev \
     \
-    # --- X11 + OpenGL runtime libraries (needed by gmsh, paraview, netgen) ---
+    # ============================================================
+    # X11 + OpenGL runtime libraries (needed by gmsh, paraview, netgen)
+    # ============================================================
     libx11-dev libxrender1 libxext6 libsm6 libxft2 \
     libgl1-mesa-dev libglu1-mesa-dev libglew-dev libfreetype-dev \
     mesa-utils mesa-common-dev freeglut3-dev \
     libfontconfig1-dev libpng-dev libsdl2-dev libglm-dev \
     x11-apps \
-    # --- Mesa rendering for no GPU
-    libosmesa6 libosmesa6-dev \
-    libgl1-mesa-dri \
+    \
+    # ============================================================
+    # Headless / offscreen VTK setup
+    # ============================================================
+    # ---- GPU rendering (EGL) ----
+    libegl1-mesa-dev libgbm-dev \
+    libexpat1-dev libxcb1-dev libxcb-glx0-dev libxcb-dri3-dev libxshmfence-dev \
+    libdrm-dev libxrandr-dev libx11-xcb-dev libxkbcommon-dev libglvnd-dev \
+    # VTK runtime libs
+    libegl1 libgl1 libgles2 \
+    \
+    # ---- CPU rendering (OSMesa) ----
+    # libosmesa6 libosmesa6-dev \
+    # libgl1-mesa-dri \
+    \
+    # ============================================================
     # Debugging MPI with xterm
+    # ============================================================
     xterm \
     && ln -sf $(which python3) /usr/local/bin/python \
     && locale-gen en_US.UTF-8 \
@@ -79,43 +126,46 @@ RUN mkdir -p $HOME/vtk \
  && mkdir -p $HOME/vtk/build $HOME/vtk/install \
  && cd $HOME/vtk/build \
  && cmake ../source -GNinja \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_INSTALL_PREFIX=$HOME/vtk/install \
-    -DVTK_BUILD_TESTING=OFF \
-    -DVTK_BUILD_EXAMPLES=OFF \
-    -DVTK_BUILD_ALL_MODULES=OFF \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX=$HOME/vtk/install \
+  -DBUILD_SHARED_LIBS=ON \
+  -DVTK_BUILD_TESTING=OFF \
+  -DVTK_BUILD_EXAMPLES=OFF \
+  -DVTK_ENABLE_WRAPPING=OFF \
+  -DVTK_BUILD_ALL_MODULES=OFF \
+  \
+  -DVTK_RENDERING_BACKEND=OpenGL2 \
+  -DVTK_USE_X=OFF \
+  -DVTK_OPENGL_HAS_EGL=ON \
+  -DVTK_DEFAULT_RENDER_WINDOW_OFFSCREEN=ON \
+  -DVTK_DEFAULT_RENDER_WINDOW_HEADLESS=ON \
+  \
+  -DVTK_MODULE_ENABLE_VTK_CommonCore=YES \
+  -DVTK_MODULE_ENABLE_VTK_CommonDataModel=YES \
+  -DVTK_MODULE_ENABLE_VTK_CommonExecutionModel=YES \
+  -DVTK_MODULE_ENABLE_VTK_CommonMath=YES \
+  -DVTK_MODULE_ENABLE_VTK_CommonTransforms=YES \
+  \
+  -DVTK_MODULE_ENABLE_VTK_FiltersCore=YES \
+  -DVTK_MODULE_ENABLE_VTK_FiltersGeneral=YES \
+  -DVTK_MODULE_ENABLE_VTK_FiltersGeometry=YES \
+  -DVTK_MODULE_ENABLE_VTK_FiltersSources=YES \
+  -DVTK_MODULE_ENABLE_VTK_FiltersFlowPaths=YES \
+  \
+  -DVTK_MODULE_ENABLE_VTK_IOXML=YES \
+  -DVTK_MODULE_ENABLE_VTK_IOImage=YES \
+  \
+  -DVTK_MODULE_ENABLE_VTK_RenderingCore=YES \
+  -DVTK_MODULE_ENABLE_VTK_RenderingOpenGL2=YES \
+  -DVTK_MODULE_ENABLE_VTK_RenderingFreeType=YES \
+  -DVTK_MODULE_ENABLE_VTK_RenderingAnnotation=YES \
+  -DVTK_MODULE_ENABLE_VTK_RenderingContext2D=YES \
+  -DVTK_MODULE_ENABLE_VTK_RenderingContextOpenGL2=YES \
+  -DVTK_MODULE_ENABLE_VTK_InteractionStyle=YES \
+  \
+  -DVTK_MODULE_ENABLE_VTK_ChartsCore=YES \
+  -DVTK_MODULE_ENABLE_VTK_ViewsContext2D=YES \
     \
-    # Core / data model
-    -DVTK_MODULE_ENABLE_VTK_CommonCore=YES \
-    -DVTK_MODULE_ENABLE_VTK_CommonDataModel=YES \
-    \
-    # IO for .vtu / .pvtu / PNG
-    -DVTK_MODULE_ENABLE_VTK_IOXML=YES \
-    -DVTK_MODULE_ENABLE_VTK_IOImage=YES \
-    \
-    # Filters we use (streamlines, geometry, etc.)
-    -DVTK_MODULE_ENABLE_VTK_FiltersCore=YES \
-    -DVTK_MODULE_ENABLE_VTK_FiltersGeometry=YES \
-    -DVTK_MODULE_ENABLE_VTK_FiltersGeneral=YES \
-    -DVTK_MODULE_ENABLE_VTK_FiltersSources=YES \
-    -DVTK_MODULE_ENABLE_VTK_FiltersFlowPaths=YES \
-    \
-    # Rendering + annotation + charts for scalar bars, cube axes
-    -DVTK_MODULE_ENABLE_VTK_RenderingCore=YES \
-    -DVTK_MODULE_ENABLE_VTK_RenderingOpenGL2=YES \
-    -DVTK_MODULE_ENABLE_VTK_RenderingFreeType=YES \
-    -DVTK_MODULE_ENABLE_VTK_RenderingContext2D=YES \
-    -DVTK_MODULE_ENABLE_VTK_RenderingContextOpenGL2=YES \
-    -DVTK_MODULE_ENABLE_VTK_RenderingAnnotation=YES \
-    -DVTK_MODULE_ENABLE_VTK_ChartsCore=YES \
-    -DVTK_MODULE_ENABLE_VTK_InteractionStyle=YES \
-    \
-    # Headless / offscreen setup
-    -DVTK_MODULE_ENABLE_VTK_RenderingOSMesa=YES \
-    -DVTK_RENDERING_BACKEND=OpenGL2 \
-    -DVTK_OPENGL_HAS_OSMESA=ON \
-    -DVTK_USE_X=OFF \
-    -DVTK_DEFAULT_RENDER_WINDOW_OFFSCREEN=ON \
  && ninja \
  && ninja install
 
