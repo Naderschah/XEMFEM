@@ -48,14 +48,15 @@ def yaml_load(path: Path) -> dict:
 cfg = yaml_load(config_path)
 
 # Load voltages
-to_use = cfg.get("mesh", {}).get("voltages", None)
+to_use = cfg.get("mesh", {}).get("voltages")
 if to_use is None:
     print("Please Provide which Voltages to load in the config file under mesh.voltage.\nGiven a string it will import get_bc from <string>_*.py")
     sys.exit(1)
 
 write_field_shaping_voltages = cfg.get("mesh", {}).get("append_fieldShaping_Voltages_toConfig", True)
-
+print(os.listdir("./voltages") )
 fname = [i for i in os.listdir("./voltages") if (i.endswith(".py") and (to_use in i))]
+fname = [os.path.join('./voltages', i) for i in fname]
 get_bc = None
 for f in fname:
     try:
@@ -66,6 +67,7 @@ for f in fname:
         get_bc = module.get_bc
         break
     except Exception as e:
+        print("Importing get_bc error:\n", e)
         pass
 if get_bc is None:
     raise RuntimeError("Could not find Boundary condition function get_bc in any matched file\nIf there is a syntax error in it there will be no warning")
