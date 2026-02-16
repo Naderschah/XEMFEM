@@ -276,14 +276,7 @@ def main():
     if params["debugCoarse"]:
         NETGEN_2D_Params.SetFineness(smeshBuilder.VeryCoarse)
     else:
-        preset = None
-        if params["preset"] == "VeryFine": preset = smeshBuilder.VeryFine
-        elif params["preset"] == "Fine": preset = smeshBuilder.Fine
-        elif params["preset"] == "Moderate": preset = smeshBuilder.Moderate
-        elif params["preset"] == "Coarse": preset = smeshBuilder.Coarse
-        elif params["preset"] == "VeryCoarse": preset = smeshBuilder.VeryCoarse
-        else: raise Exception("Netgen Preset " + params["preset"] + " not recognized")
-        NETGEN_2D_Params.SetFineness(preset)  
+        NETGEN_2D_Params.SetFineness(smeshBuilder.Custom)  
         # --- General sizing ---
         # Min and max edge lengths
         NETGEN_2D_Params.SetMaxSize(params['maxSize']) # 1/100 of our largest part
