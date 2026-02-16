@@ -1,30 +1,4 @@
 import math
-
-def get_bc():
-    grounded = {"type": "dirichlet", "value": 0}
-    fixed_boundaries = {
-        "PTFE_Wall_Charge": {"type": "neumann", "depth_dependent": True, 
-                                # For now taken from https://xe1t-wiki.lngs.infn.it/doku.php?id=xenon:xenonnt:ftoschi:electric_field_matching_xenonnt&s[]=wall&s[]=charge
-                                "z_bot": -0.0008 - 1.5008, "z_top": -0.0008, "value_bot": -0.1e-6, "value_top": -0.5e-6},
-        "BC_r0":                        {"type": "neumann", "value": 0},
-        "BC_TopScreeningElectrode":    {"type": "dirichlet", "value": -1500},
-        "BC_AnodeElectrode":           {"type": "dirichlet", "value": 6500},
-        "BC_GateElectrode":            {"type": "dirichlet", "value": -1000},
-
-        # Intended TOP-ring voltage (will be rebound to actual top ring name in phys_map)
-        "BC_TopFieldShaping":          {"type": "dirichlet", "value": -950.},
-
-        "BC_CathodeElectrode":         {"type": "dirichlet", "value": -30000},
-        "BC_BottomScreeningElectrode": {"type": "dirichlet", "value": -1500},
-
-        "BC_AllPMTs":                  {"type": "dirichlet", "value": -1300},
-        "BC_Bell":                     grounded,
-        "BC_CopperRing":               grounded,
-        "BC_Cryostat":                 grounded,
-    }
-    return fixed_boundaries
-
-
 #### -------------------------- Geometry Specifics --------------------------
 liquid_level = 0.004
 ### ----------------------  Helper
@@ -936,7 +910,7 @@ def GateWires(in_dict):
     VerticalPosition = 0
     Radius = 0.000216
     HorizontalPitch = 0.005
-    RadialPosition = HorizontalPitch / 4
+    RadialPosition = 3*HorizontalPitch / 4
     Number = 133
 
     part_dict = {
@@ -987,7 +961,7 @@ def GateElectrode(in_dict):
     in_dict["GateElectrode"] = part_dict
     return in_dict
 
-def CathodeWires(in_dict):
+"""def CathodeWires(in_dict):
     VerticalPosition = -1.5028
 
     Radius = 0.0003
@@ -1000,6 +974,31 @@ def CathodeWires(in_dict):
         'Radius': Radius,
         'HorizontalPitch': HorizontalPitch,
         'RadialPosition': RadialPosition + HorizontalPitch,
+        'Number': Number,
+    }
+
+    in_dict['CathodeWires'] = part_dict
+    return in_dict"""
+def CathodeWires(in_dict):
+    VerticalCenter = -1.5028
+
+    Radius = 0.0003
+    HorizontalPitch = -0.0075
+    RadialCenter = 0.6675 - 3/4 * HorizontalPitch
+    Number = 89
+
+    W = 2 * Radius
+    H = 2 * Radius
+
+    part_dict = {
+        # for make_box(): bottom-left corner
+        'RadialPosition': (RadialCenter + HorizontalPitch) - W/2,
+        'VerticalPosition': VerticalCenter - H/2,
+
+        'Width': W,
+        'Height': H,
+
+        'HorizontalPitch': HorizontalPitch,
         'Number': Number,
     }
 
