@@ -11,7 +11,7 @@ mesh:
     debugCoarse: false
     preset: VeryFine
     maxSize: 0.015008
-    minSize: 1e-6
+    minSize: 1.0e-6
     growthRate: 0.1
     UseSurfaceCurvature: 1
     NBSegmentsPerEdge: 4

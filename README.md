@@ -103,7 +103,7 @@ mesh:
     # Maximum Element size allowed (don't make this too large)
     maxSize: 0.015008
     # Minimum allowed element size (0 = it will pick 1e-3m), smallest feature is 2.16e-5 (Wires)
-    minSize: 1e-6
+    minSize: 1.0e-6
     # How quickly elements may change size in adjacency space
     growthRate: 0.1
     # Use Surface Curvature as element size driver (ie CAD driven)
