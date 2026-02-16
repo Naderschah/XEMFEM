@@ -646,8 +646,10 @@ void run_metrics_only(const Config &cfg)
                       << result.error_message << "\n";
             std::exit(1);
         }
+        Config local_cfg = cfg;          // copy
+        local_cfg.save_path = run_dir; 
 
-        OptimizationMetrics m = compute_metrics(cfg, result);
+        OptimizationMetrics m = compute_metrics(local_cfg, result);
         std::cout << "[METRICS] CIV = " << m.CIV << "\n";
         std::cout << "[METRICS] FieldSpread = " << m.FieldSpread << "\n";
     }

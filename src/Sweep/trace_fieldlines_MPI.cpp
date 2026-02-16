@@ -587,7 +587,6 @@ void TraceDistributed(
         active.Tag(tag_has_last)[(int)li]  = 0;
         active.Tag(tag_last_elem)[(int)li] = -1;
     }
-    std::cout << "Active Particles " << active.GetNParticles() << std::endl;
 
     // ----- Field evaluator -----
     FieldEvaluator evaluator(mesh, phi, finder, sdim);
@@ -604,7 +603,6 @@ void TraceDistributed(
     // else if (...) { integrator = std::make_unique<RK4Integrator>(); }
 
     integrator->Initialize(active);   // let integrator add any required fields
-    std::cout << "Post Initialize" << std::endl;
 
     // ----- Termination storage -----
     std::vector<TraceSummaryPOD> finished_local;
