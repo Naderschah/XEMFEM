@@ -184,11 +184,13 @@ static void parse_sweeps(Config &cfg, const YAML::Node &root)
         sw.kind = parse_sweep_kind(kind_str);
 
         // Path is required only for discrete/range
+        if ((sw.kind == SweepEntry::Kind::Discrete) || (sw.kind == SweepEntry::Kind::Range))
+        {
         sw.path = node["path"].as<std::string>(std::string{});
         if ((sw.kind == SweepEntry::Kind::Discrete || sw.kind == SweepEntry::Kind::Range) && sw.path.empty()) {
             std::cerr << "Warning: sweeps[" << i << "] missing 'path'; skipping.\n";
             continue;
-        }
+        }}
 
         // -------- Discrete --------
         if (sw.kind == SweepEntry::Kind::Discrete) {
