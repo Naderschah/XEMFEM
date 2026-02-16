@@ -22,14 +22,10 @@ x-mfem-base: &mfem_base
     - /tmp/.X11-unix:/tmp/.X11-unix:rw
     - ${XAUTHORITY}:/tmp/.Xauthority:ro
     - ${XEMFEM_PATH}:/work:rw,delegated
-    - /run/opengl-driver/share/glvnd/egl_vendor.d/10_nvidia.json:/usr/share/glvnd/egl_vendor.d/10_nvidia.json:ro
-    - /run/opengl-driver/lib:/run/opengl-driver/lib:ro
-    - /nix/store:/nix/store:ro # This is because the drivers point to the store
-
 
 x-mfem-gpu-common: &mfem_gpu_common
-  #devices:
-  #  - /dev/dri:/dev/dri:rwm
+  devices:
+    - /dev/dri:/dev/dri:rwm
   group_add:
     - ${VIDEO_GID}
     - ${RENDER_GID}
@@ -78,6 +74,16 @@ services:
               device_ids: ["nvidia.com/gpu=all"]
               capabilities: ["gpu"]
 
+  mfem-shell-drm:
+    <<: [*mfem_base, *mfem_gpu_common]
+    container_name: mfem_shell_drm
+    labels:
+      keep: "true"
+    command: bash
+    profiles: ["shell", "gpu", "drm"]
+    environment:
+      <<: *mfem_env
+
   mfem-shell-gpu:
     <<: [*mfem_base, *mfem_gpu_common]
     container_name: mfem_shell_gpu
@@ -88,8 +94,6 @@ services:
     gpus: all
     environment:
       <<: *mfem_env
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: graphics,utility,compute
 
   mfem-shell:
     <<: *mfem_base
