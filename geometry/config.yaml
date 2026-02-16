@@ -50,7 +50,7 @@ delete_files_present: true
 debug:
   debug: true
   timing: true
-  StopAfterSketh: true
+  StopAfterSketh: false
   dry_run: false
   printBoundaryConditions: false
   printHypreWarnings: false
