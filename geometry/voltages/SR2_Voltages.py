@@ -1,4 +1,3 @@
-import math
 # https://xe1t-wiki.lngs.infn.it/doku.php?id=xenon:xenonnt:analysis:available_data_for_sr2#dates
 def get_bc():
     grounded = {"type": "dirichlet", "value": 0}

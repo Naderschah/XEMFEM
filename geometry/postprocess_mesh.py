@@ -55,8 +55,7 @@ if to_use is None:
 
 write_field_shaping_voltages = cfg.get("mesh", {}).get("append_fieldShaping_Voltages_toConfig", True)
 
-fname = [i for i in os.listdir(".") if (i.endswith(".py") and (to_use in i))]
-fname = [i for i in fname if 'geom' not in i.lower()]
+fname = [i for i in os.listdir("./voltages") if (i.endswith(".py") and (to_use in i))]
 get_bc = None
 for f in fname:
     try:

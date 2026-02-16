@@ -23,9 +23,8 @@ import glob
 geom = config["mesh"]["geometry"]
 
 fname = glob.glob(
-    os.path.join(base_path, f"*{geom}*.py")
+    os.path.join(base_path, f"geometries/*{geom}*.py")
 )
-fname = [i for i in fname if 'volt' not in i.lower()]
 
 if len(fname) == 1:
     module_name = Path(fname[0]).stem # Strip .py

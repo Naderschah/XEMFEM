@@ -1,4 +1,3 @@
-import math
 # SR0 config From Francescos thesis
 def get_bc():
     grounded = {"type": "dirichlet", "value": 0}
