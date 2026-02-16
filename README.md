@@ -102,8 +102,8 @@ mesh:
     preset: VeryFine
     # Maximum Element size allowed (don't make this too large)
     maxSize: 0.015008
-    # Minimum allowed element size 
-    minSize: 0
+    # Minimum allowed element size (0 = it will pick 1e-3m), smallest feature is 2.16e-5 (Wires)
+    minSize: 1e-6
     # How quickly elements may change size in adjacency space
     growthRate: 0.1
     # Use Surface Curvature as element size driver (ie CAD driven)
@@ -424,6 +424,9 @@ Alternatively, the pvdu file found under Simulation in the results path can be o
 SALOME:
 - Version 9.9.0
 - Anything above this version should work, below does not due to the post partition tagging logic.
+
+Note that sometimes the determinism of Salome in partitioning gets lost causing renaming indeces to mess up, just rerun the script and it will work.
+This is always true in the graphical session on the second partition as the internal state doesnt properly reset. 
 
 #### Electrostatics 
 MFEM: 
