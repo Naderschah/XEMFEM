@@ -98,8 +98,6 @@ mesh:
   NetgenParams:
     # For quick meshing (significantly reduced number of nodes)
     debugCoarse: false
-    # Preset to go off, most if not all settings will be overwritten by below
-    preset: VeryFine
     # Maximum Element size allowed (don't make this too large)
     maxSize: 0.015008
     # Minimum allowed element size (0 = it will pick 1e-3m), smallest feature is 2.16e-5 (Wires)
@@ -276,12 +274,14 @@ optimize:
     # Which tracing provider is to be used 
     # VTK is from a plotting library (resistant to poor meshes)
     # XEMFEM is custom tracing implementation, sensitive to poor meshes but much quicker
-    provider: VTK
+    provider: MPITracer
     # Which stepping method to use, VTK support RK4 and Euler-Cauchy 
     # XEMFEM supports Euler-Cauchy, RK4, RK45 (Dormand-Prince 5), and RK54 (Cash-Karp), all pair methods do the standard error based step inc/dec logic
+    # MPITracer supprts Euler-Cauchy, RK4
+    # Important: Only MPITracer is to be used, VTK only in case of problems, and XEMFEM will likely fail (as i kind of messed up MPI support it is to be removed)
     method: "RK4"
     # step_size = c_step * smallest mesh triangle length
-    c_step: 1e-4
+    c_step: 0.5
     # Geometric tolerance 
     geom_tol: 1e-6
     # Particle may traverse drift region max_traversals times (max steps is computed from this and c_step)
