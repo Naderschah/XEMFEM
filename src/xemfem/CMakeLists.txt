@@ -18,7 +18,7 @@ target_include_directories(XEMFEM PRIVATE
 
 target_link_libraries(XEMFEM PRIVATE
   SolverCore
-  plotting
+  #plotting
   sweep_objects
   interpolator
   neldermead_headers

@@ -41,8 +41,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # ============================================================
     # MPI + parallel math stacks
     # ============================================================
-    openmpi-bin libopenmpi-dev libmetis-dev \
-    libparmetis-dev libsuperlu-dist-dev \
+    build-essential cmake pkg-config git \
+    gfortran \
+    mpi-default-bin mpi-default-dev \
+    libblas-dev liblapack-dev \
+    libscalapack-mpi-dev \
+    libmumps-dev \
+    libmetis-dev libparmetis-dev \
+    \
+    # ============================================================
+    # MUMPS
+    # ============================================================
+    libscalapack-openmpi-dev libscalapack-openmpi2.1 libscalapack-mpi-dev \
+    libmumps-dev \
     \
     # ============================================================
     # BLAS/LAPACK
@@ -114,69 +125,72 @@ RUN group_name=$(getent group $GROUP_ID | cut -d: -f1) \
        fi \
     && useradd -m -s /bin/bash -u $USER_ID -g $GROUP_ID felix
 
+# MFEM CMake looks in the wrong path for libscalapack
+RUN ln -sf /usr/lib/x86_64-linux-gnu/libscalapack-openmpi.so.2.1.0 /usr/lib/libscalapack-openmpi.so.2.1.0 && ldconfig
+
 # Switch to felix
 USER felix
 WORKDIR /home/felix
 
 # ====== VTK Toolchain for plotting and paraview -- very heavy to compile ==========
-ARG VTK_VERSION=v9.5.0
-RUN mkdir -p $HOME/vtk \
- && git clone --branch ${VTK_VERSION} --depth 1 --shallow-submodules \
-        https://gitlab.kitware.com/vtk/vtk.git $HOME/vtk/source \
- && mkdir -p $HOME/vtk/build $HOME/vtk/install \
- && cd $HOME/vtk/build \
- && cmake ../source -GNinja \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_INSTALL_PREFIX=$HOME/vtk/install \
-  -DBUILD_SHARED_LIBS=ON \
-  -DVTK_BUILD_TESTING=OFF \
-  -DVTK_BUILD_EXAMPLES=OFF \
-  -DVTK_ENABLE_WRAPPING=OFF \
-  -DVTK_BUILD_ALL_MODULES=OFF \
-  \
-  -DVTK_RENDERING_BACKEND=OpenGL2 \
-  -DVTK_USE_X=OFF \
-  -DVTK_OPENGL_HAS_EGL=ON \
-  -DVTK_DEFAULT_RENDER_WINDOW_OFFSCREEN=ON \
-  -DVTK_DEFAULT_RENDER_WINDOW_HEADLESS=ON \
-  \
-  -DVTK_MODULE_ENABLE_VTK_CommonCore=YES \
-  -DVTK_MODULE_ENABLE_VTK_CommonDataModel=YES \
-  -DVTK_MODULE_ENABLE_VTK_CommonExecutionModel=YES \
-  -DVTK_MODULE_ENABLE_VTK_CommonMath=YES \
-  -DVTK_MODULE_ENABLE_VTK_CommonTransforms=YES \
-  \
-  -DVTK_MODULE_ENABLE_VTK_FiltersCore=YES \
-  -DVTK_MODULE_ENABLE_VTK_FiltersGeneral=YES \
-  -DVTK_MODULE_ENABLE_VTK_FiltersGeometry=YES \
-  -DVTK_MODULE_ENABLE_VTK_FiltersSources=YES \
-  -DVTK_MODULE_ENABLE_VTK_FiltersFlowPaths=YES \
-  \
-  -DVTK_MODULE_ENABLE_VTK_IOXML=YES \
-  -DVTK_MODULE_ENABLE_VTK_IOImage=YES \
-  \
-  -DVTK_MODULE_ENABLE_VTK_RenderingCore=YES \
-  -DVTK_MODULE_ENABLE_VTK_RenderingOpenGL2=YES \
-  -DVTK_MODULE_ENABLE_VTK_RenderingFreeType=YES \
-  -DVTK_MODULE_ENABLE_VTK_RenderingAnnotation=YES \
-  -DVTK_MODULE_ENABLE_VTK_RenderingContext2D=YES \
-  -DVTK_MODULE_ENABLE_VTK_RenderingContextOpenGL2=YES \
-  -DVTK_MODULE_ENABLE_VTK_InteractionStyle=YES \
-  \
-  -DVTK_MODULE_ENABLE_VTK_ChartsCore=YES \
-  -DVTK_MODULE_ENABLE_VTK_ViewsContext2D=YES \
-    \
- && ninja \
- && ninja install
+#ARG VTK_VERSION=v9.5.0
+#RUN mkdir -p $HOME/vtk \
+# && git clone --branch ${VTK_VERSION} --depth 1 --shallow-submodules \
+#        https://gitlab.kitware.com/vtk/vtk.git $HOME/vtk/source \
+# && mkdir -p $HOME/vtk/build $HOME/vtk/install \
+# && cd $HOME/vtk/build \
+# && cmake ../source -GNinja \
+#  -DCMAKE_BUILD_TYPE=Release \
+#  -DCMAKE_INSTALL_PREFIX=$HOME/vtk/install \
+#  -DBUILD_SHARED_LIBS=ON \
+#  -DVTK_BUILD_TESTING=OFF \
+#  -DVTK_BUILD_EXAMPLES=OFF \
+#  -DVTK_ENABLE_WRAPPING=OFF \
+#  -DVTK_BUILD_ALL_MODULES=OFF \
+#  \
+#  -DVTK_RENDERING_BACKEND=OpenGL2 \
+#  -DVTK_USE_X=OFF \
+#  -DVTK_OPENGL_HAS_EGL=ON \
+#  -DVTK_DEFAULT_RENDER_WINDOW_OFFSCREEN=ON \
+#  -DVTK_DEFAULT_RENDER_WINDOW_HEADLESS=ON \
+#  \
+#  -DVTK_MODULE_ENABLE_VTK_CommonCore=YES \
+#  -DVTK_MODULE_ENABLE_VTK_CommonDataModel=YES \
+#  -DVTK_MODULE_ENABLE_VTK_CommonExecutionModel=YES \
+#  -DVTK_MODULE_ENABLE_VTK_CommonMath=YES \
+#  -DVTK_MODULE_ENABLE_VTK_CommonTransforms=YES \
+#  \
+#  -DVTK_MODULE_ENABLE_VTK_FiltersCore=YES \
+#  -DVTK_MODULE_ENABLE_VTK_FiltersGeneral=YES \
+#  -DVTK_MODULE_ENABLE_VTK_FiltersGeometry=YES \
+#  -DVTK_MODULE_ENABLE_VTK_FiltersSources=YES \
+#  -DVTK_MODULE_ENABLE_VTK_FiltersFlowPaths=YES \
+#  \
+#  -DVTK_MODULE_ENABLE_VTK_IOXML=YES \
+#  -DVTK_MODULE_ENABLE_VTK_IOImage=YES \
+#  \
+#  -DVTK_MODULE_ENABLE_VTK_RenderingCore=YES \
+#  -DVTK_MODULE_ENABLE_VTK_RenderingOpenGL2=YES \
+#  -DVTK_MODULE_ENABLE_VTK_RenderingFreeType=YES \
+#  -DVTK_MODULE_ENABLE_VTK_RenderingAnnotation=YES \
+#  -DVTK_MODULE_ENABLE_VTK_RenderingContext2D=YES \
+#  -DVTK_MODULE_ENABLE_VTK_RenderingContextOpenGL2=YES \
+#  -DVTK_MODULE_ENABLE_VTK_InteractionStyle=YES \
+#  \
+#  -DVTK_MODULE_ENABLE_VTK_ChartsCore=YES \
+#  -DVTK_MODULE_ENABLE_VTK_ViewsContext2D=YES \
+#    \
+# && ninja \
+# && ninja install
 
-ENV VTK_DIR="/home/felix/vtk/install/lib/cmake/vtk-9.5"
-ENV CMAKE_PREFIX_PATH="/home/felix/vtk/install:${CMAKE_PREFIX_PATH}"
-ENV LD_LIBRARY_PATH="/home/felix/vtk/install/lib:${LD_LIBRARY_PATH}"
-
-# I do not understand why but the cmake files are lower AND upper case
-RUN ln -s $VTK_DIR/VTK-targets.cmake $VTK_DIR/vtk-targets.cmake
-RUN ln -s $VTK_DIR/VTK-vtk-module-properties.cmake $VTK_DIR/vtk-vtk-module-properties.cmake
-RUN ln -s $VTK_DIR/VTK-vtk-module-find-packages.cmake $VTK_DIR/vtk-vtk-module-find-packages.cmake
+#ENV VTK_DIR="/home/felix/vtk/install/lib/cmake/vtk-9.5"
+#ENV CMAKE_PREFIX_PATH="/home/felix/vtk/install:${CMAKE_PREFIX_PATH}"
+#ENV LD_LIBRARY_PATH="/home/felix/vtk/install/lib:${LD_LIBRARY_PATH}"
+#
+## I do not understand why but the cmake files are lower AND upper case
+#RUN ln -s $VTK_DIR/VTK-targets.cmake $VTK_DIR/vtk-targets.cmake
+#RUN ln -s $VTK_DIR/VTK-vtk-module-properties.cmake $VTK_DIR/vtk-vtk-module-properties.cmake
+#RUN ln -s $VTK_DIR/VTK-vtk-module-find-packages.cmake $VTK_DIR/vtk-vtk-module-find-packages.cmake
 
 # ===== hypre build with OpenMP =====
 ENV HYPRE_TAG=v2.33.0
@@ -237,8 +251,6 @@ RUN curl -L https://github.com/gslib/gslib/archive/${GSLIB_TAG}.tar.gz \
     test -f ${GSLIB_PREFIX}/include/gslib/config.h && \
     test -f ${GSLIB_PREFIX}/lib/libgs.a
 
-
-
 # ===== MFEM C++ build (now with MPI + OpenMP + ParMETIS + SuperLU_DIST) =====
 # FInd SuperLU libararies and turn on 
 ENV MFEM_TAG=v4.9
@@ -257,6 +269,7 @@ RUN git clone --depth 1 --branch ${MFEM_TAG} https://github.com/mfem/mfem.git /h
       -DMFEM_USE_PETSC=OFF \
       -DMFEM_USE_GZSTREAM=ON \
       -DMFEM_USE_SUNDIALS=OFF \
+      -DMFEM_USE_MUMPS=ON \
       -DCMAKE_INSTALL_PREFIX=/home/felix/mfem-install && \
     cmake --build . --target install -j"$(nproc)"
 

@@ -17,7 +17,7 @@ add_subdirectory(config)
 
 # Modules / executables
 add_subdirectory(SolverCore)
-add_subdirectory(plotting)
+#add_subdirectory(plotting)
 add_subdirectory(interpolator)
 add_subdirectory(Sweep)
 add_subdirectory(xemfem) 

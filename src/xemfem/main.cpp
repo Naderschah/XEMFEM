@@ -68,11 +68,10 @@ static int run_sim(Config init_cfg, std::string config_str) {
         std::size_t run_counter = 0;
         std::vector<std::pair<std::string, std::string>> active_params;
         std::vector<RunRecord> records;
-
         // Single run uses the same run_one + RunRecord machinery as a 1-point sweep
         auto root = YAML::Load(config_str);
         std::string run_dir_name = run_one(init_cfg, root, active_params, run_counter, false);
-        if (!run_dir_name.empty())
+        if (!run_dir_name.empty())  
         {
             RunRecord rec;
             rec.run_dir_name = run_dir_name;
@@ -96,7 +95,8 @@ static int run_metrics(Config init_cfg) {
 static int run_plot(Config init_cfg) {
     int rank = 0;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    if (rank == 0){ make_plot_api(init_cfg); }
+    //if (rank == 0){ make_plot_api(init_cfg); }
+    std::cout << "Plotting Currently Broken and removed from runtime in favor of compiletime" << std::endl;
     return 0;
 }
 
