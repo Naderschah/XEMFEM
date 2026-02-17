@@ -18,34 +18,37 @@ FIXME  Lots of dead code here
 #include <functional>
 #include <string>
 
-#include <vtkSmartPointer.h>
-#include <vtkUnstructuredGrid.h>
-#include <vtkPoints.h>
-#include <vtkCellArray.h>
-#include <vtkDoubleArray.h>
-#include <vtkPointData.h>
-#include <vtkPolyData.h>
+#if HAVE_VTK
+    #include <vtkSmartPointer.h>
+    #include <vtkUnstructuredGrid.h>
+    #include <vtkPoints.h>
+    #include <vtkCellArray.h>
+    #include <vtkDoubleArray.h>
+    #include <vtkPointData.h>
+    #include <vtkPolyData.h>
 
-#include <vtkLine.h>
-#include <vtkTriangle.h>
-#include <vtkQuad.h>
-#include <vtkTetra.h>
-#include <vtkHexahedron.h>
-#include <vtkWedge.h>
-#include <vtkPyramid.h>
-#include <vtkCellData.h>
-#include <vtkStreamTracer.h>
-#include <vtkAbstractInterpolatedVelocityField.h>
+    #include <vtkLine.h>
+    #include <vtkTriangle.h>
+    #include <vtkQuad.h>
+    #include <vtkTetra.h>
+    #include <vtkHexahedron.h>
+    #include <vtkWedge.h>
+    #include <vtkPyramid.h>
+    #include <vtkCellData.h>
+    #include <vtkStreamTracer.h>
+    #include <vtkAbstractInterpolatedVelocityField.h>
 
-#include <vtkStaticCellLocator.h>
-#include <vtkStreamTracer.h>
-#include <vtkRungeKutta4.h>
-#include <vtkRungeKutta2.h>
+    #include <vtkStaticCellLocator.h>
+    #include <vtkStreamTracer.h>
+    #include <vtkRungeKutta4.h>
+    #include <vtkRungeKutta2.h>
 
-#include <vtkExtractGeometry.h>
-#include <vtkBox.h>
+    #include <vtkExtractGeometry.h>
+    #include <vtkBox.h>
+    
+    #include "mfem/mesh/vtk.hpp"
+#endif
 
-#include "mfem/mesh/vtk.hpp"
 
 // Trace  A single electron through the TPC
 ElectronTraceResult TraceSingleElectronLine(
@@ -74,10 +77,11 @@ ElectronTraceResult TraceSingleElectronLine(
 #include "trace_fieldlines.h" // for CivSeeds, ElectronTraceResult, Config, ElectronTraceParams, etc.
 
 // Forward declarations for VTK types (to avoid pulling VTK headers here).
-class vtkUnstructuredGrid;
-class vtkStaticCellLocator;
-template <typename T> class vtkSmartPointer;
-
+#if HAVE_VTK
+    class vtkUnstructuredGrid;
+    class vtkStaticCellLocator;
+    template <typename T> class vtkSmartPointer;
+#endif
 // ----------------------------
 // Cached BOOST context
 // ----------------------------
@@ -94,19 +98,22 @@ struct BoostTraceContext
 // ----------------------------
 // Cached VTK context
 // ----------------------------
-struct VTKTraceContext
-{
-    vtkSmartPointer<vtkUnstructuredGrid> grid;
-    vtkSmartPointer<vtkStaticCellLocator> locator;
-    double h_ref = 1.0;
+#if HAVE_VTK
+    struct VTKTraceContext
+    {
+        vtkSmartPointer<vtkUnstructuredGrid> grid;
+        vtkSmartPointer<vtkStaticCellLocator> locator;
 
-    void Build(mfem::ParMesh &pmesh,
-               const mfem::ParGridFunction &E_gf,
-               bool axisymmetric,
-               bool debug);
+        double h_ref = 1.0;
 
-    bool Ready() const;
-};
+        void Build(mfem::ParMesh &pmesh,
+                const mfem::ParGridFunction &E_gf,
+                bool axisymmetric,
+                bool debug);
+
+        bool Ready() const;
+    };
+#endif
 
 // ----------------------------
 // Unified tracer wrapper
@@ -139,7 +146,9 @@ struct ElectronFieldLineTracer
 
     // Cached contexts:
     std::optional<BoostTraceContext> boost;
-    std::optional<VTKTraceContext>   vtk;
+    #if HAVE_VTK
+        std::optional<VTKTraceContext>   vtk;
+    #endif
     std::optional<MPITraceContext>   mpitracer;
 
     // Hot-path callable:
@@ -163,7 +172,9 @@ struct ElectronFieldLineTracer
 
 private:
     void BuildBOOST_(bool debug);
-    void BuildVTK_(bool axisymmetric, bool debug);
+    #if HAVE_VTK 
+        void BuildVTK_(bool axisymmetric, bool debug);
+    #endif
     void BuildMPITracer_(bool debug);
     void SelectProvider_(const std::string &provider, bool axisymmetric);
 };

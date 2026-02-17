@@ -95,36 +95,51 @@ add_library(sweep_objects OBJECT
   CIV.cpp
   common_tracing/tracing_objects.cpp
 )
-#set(VTK_DIR "$ENV{HOME}/vtk/install/lib/cmake/vtk-9.5" CACHE PATH "Path to VTK config")
+set(VTK_DIR "$ENV{HOME}/vtk/install/lib/cmake/vtk-9.5" CACHE PATH "Path to VTK config")
 
-#find_package(VTK REQUIRED COMPONENTS
-#    CommonCore
-#    CommonColor
-#    CommonDataModel
-#    IOXML
-#    IOImage
-#    FiltersCore
-#    FiltersGeneral
-#    FiltersGeometry
-#    FiltersExtraction
-#    FiltersSources
-#    FiltersFlowPaths
-#    RenderingCore
-#    RenderingOpenGL2
-#    RenderingFreeType
-#    RenderingContext2D
-#    RenderingContextOpenGL2
-#    RenderingAnnotation
-#    ChartsCore
-#    InteractionStyle
-#    FiltersPoints
-#    RenderingGridAxes
-#    FiltersExtraction
-#)
+find_package(VTK QUIET COMPONENTS
+    CommonCore
+    CommonColor
+    CommonDataModel
+    IOXML
+    IOImage
+    FiltersCore
+    FiltersGeneral
+    FiltersGeometry
+    FiltersExtraction
+    FiltersSources
+    FiltersFlowPaths
+    RenderingCore
+    RenderingOpenGL2
+    RenderingFreeType
+    RenderingContext2D
+    RenderingContextOpenGL2
+    RenderingAnnotation
+    ChartsCore
+    InteractionStyle
+    FiltersPoints
+    RenderingGridAxes
+    FiltersExtraction
+)
 
-#if (NOT VTK_FOUND)
-#    message(FATAL_ERROR "PLOT: Unable to find the VTK build folder.")
-#endif()
+if (VTK_FOUND)
+  message(STATUS "PLOT: VTK found (${VTK_VERSION}) — enabling VTK support")
+
+  target_sources(sweep_objects PRIVATE plot_vtk.cpp)
+  target_link_libraries(sweep_objects PRIVATE ${VTK_LIBRARIES})
+
+  vtk_module_autoinit(
+    TARGETS sweep_objects
+    MODULES ${VTK_LIBRARIES}
+  )
+
+  target_compile_definitions(sweep_objects PRIVATE HAVE_VTK=1)
+else()
+  message(STATUS "PLOT: VTK not found — building without VTK support")
+
+  target_sources(sweep_objects PRIVATE plot_stub.cpp)
+  target_compile_definitions(sweep_objects PRIVATE HAVE_VTK=0)
+endif()
 
 
 target_include_directories(sweep_objects PRIVATE

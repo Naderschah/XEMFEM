@@ -16,4 +16,14 @@ else
     touch "$XAUTHORITY"
 fi
 
+BUILDKIT_PROGRESS=auto
+# parse args
+for arg in "$@"; do
+  case "$arg" in
+    --debug)
+      BUILDKIT_PROGRESS=plain
+      ;;
+  esac
+done
+export BUILDKIT_PROGRESS
 docker compose -f ./docker/docker-compose.yml run --rm --build --service-ports mfem-shell

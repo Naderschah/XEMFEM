@@ -595,6 +595,7 @@ static void parse_solver_params(Config &cfg, const YAML::Node &root)
     if (!s) return;
 
     // Required/optional scalars with defaults
+    cfg.solver.solver       = s["solver"].as<std::string>(cfg.solver.solver);
     cfg.solver.atol         = s["atol"].as<double>(cfg.solver.atol);
     cfg.solver.rtol         = s["rtol"].as<double>(cfg.solver.rtol);
     cfg.solver.maxiter      = s["maxiter"].as<int>(cfg.solver.maxiter);

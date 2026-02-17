@@ -473,10 +473,10 @@ static void PrintExitConditionSummary(const Config                          &cfg
     // Only rank 0 prints. Other ranks return safely even if out_results is empty.
     MPI_Comm comm = MPI_COMM_WORLD;
     int rank = 0, size = 1;
-#ifdef MFEM_USE_MPI
-    MPI_Comm_rank(comm, &rank);
-    MPI_Comm_size(comm, &size);
-#endif
+    #ifdef MFEM_USE_MPI
+        MPI_Comm_rank(comm, &rank);
+        MPI_Comm_size(comm, &size);
+    #endif
 
     // Local counts/volumes (ranks with empty out_results contribute 0)
     unsigned long long lc_hit_lgi     = 0;
@@ -557,29 +557,29 @@ static void PrintExitConditionSummary(const Config                          &cfg
     double gV_none        = lV_none;
     double gV_hit_axis    = lV_hit_axis;
 
-#ifdef MFEM_USE_MPI
-    if (size > 1)
-    {
-        MPI_Reduce(&lc_hit_lgi,     &gc_hit_lgi,     1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, comm);
-        MPI_Reduce(&lc_hit_cathode, &gc_hit_cathode, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, comm);
-        MPI_Reduce(&lc_hit_wall,    &gc_hit_wall,    1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, comm);
-        MPI_Reduce(&lc_left_volume, &gc_left_volume, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, comm);
-        MPI_Reduce(&lc_max_steps,   &gc_max_steps,   1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, comm);
-        MPI_Reduce(&lc_deg_dt,      &gc_deg_dt,      1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, comm);
-        MPI_Reduce(&lc_none,        &gc_none,        1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, comm);
-        MPI_Reduce(&lc_hit_axis,    &gc_hit_axis,    1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, comm);
+    #ifdef MFEM_USE_MPI
+        if (size > 1)
+        {
+            MPI_Reduce(&lc_hit_lgi,     &gc_hit_lgi,     1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, comm);
+            MPI_Reduce(&lc_hit_cathode, &gc_hit_cathode, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, comm);
+            MPI_Reduce(&lc_hit_wall,    &gc_hit_wall,    1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, comm);
+            MPI_Reduce(&lc_left_volume, &gc_left_volume, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, comm);
+            MPI_Reduce(&lc_max_steps,   &gc_max_steps,   1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, comm);
+            MPI_Reduce(&lc_deg_dt,      &gc_deg_dt,      1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, comm);
+            MPI_Reduce(&lc_none,        &gc_none,        1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, comm);
+            MPI_Reduce(&lc_hit_axis,    &gc_hit_axis,    1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, comm);
 
-        MPI_Reduce(&lV_total,       &gV_total,       1, MPI_DOUBLE, MPI_SUM, 0, comm);
-        MPI_Reduce(&lV_hit_lgi,     &gV_hit_lgi,     1, MPI_DOUBLE, MPI_SUM, 0, comm);
-        MPI_Reduce(&lV_hit_cathode, &gV_hit_cathode, 1, MPI_DOUBLE, MPI_SUM, 0, comm);
-        MPI_Reduce(&lV_hit_wall,    &gV_hit_wall,    1, MPI_DOUBLE, MPI_SUM, 0, comm);
-        MPI_Reduce(&lV_left_volume, &gV_left_volume, 1, MPI_DOUBLE, MPI_SUM, 0, comm);
-        MPI_Reduce(&lV_max_steps,   &gV_max_steps,   1, MPI_DOUBLE, MPI_SUM, 0, comm);
-        MPI_Reduce(&lV_deg_dt,      &gV_deg_dt,      1, MPI_DOUBLE, MPI_SUM, 0, comm);
-        MPI_Reduce(&lV_none,        &gV_none,        1, MPI_DOUBLE, MPI_SUM, 0, comm);
-        MPI_Reduce(&lV_hit_axis,    &gV_hit_axis,    1, MPI_DOUBLE, MPI_SUM, 0, comm);
-    }
-#endif
+            MPI_Reduce(&lV_total,       &gV_total,       1, MPI_DOUBLE, MPI_SUM, 0, comm);
+            MPI_Reduce(&lV_hit_lgi,     &gV_hit_lgi,     1, MPI_DOUBLE, MPI_SUM, 0, comm);
+            MPI_Reduce(&lV_hit_cathode, &gV_hit_cathode, 1, MPI_DOUBLE, MPI_SUM, 0, comm);
+            MPI_Reduce(&lV_hit_wall,    &gV_hit_wall,    1, MPI_DOUBLE, MPI_SUM, 0, comm);
+            MPI_Reduce(&lV_left_volume, &gV_left_volume, 1, MPI_DOUBLE, MPI_SUM, 0, comm);
+            MPI_Reduce(&lV_max_steps,   &gV_max_steps,   1, MPI_DOUBLE, MPI_SUM, 0, comm);
+            MPI_Reduce(&lV_deg_dt,      &gV_deg_dt,      1, MPI_DOUBLE, MPI_SUM, 0, comm);
+            MPI_Reduce(&lV_none,        &gV_none,        1, MPI_DOUBLE, MPI_SUM, 0, comm);
+            MPI_Reduce(&lV_hit_axis,    &gV_hit_axis,    1, MPI_DOUBLE, MPI_SUM, 0, comm);
+        }
+    #endif
 
     if (rank != 0) { return; }
 
@@ -841,453 +841,454 @@ static void TraceElectronFieldLinesInnerPreparedBOOST(
 
 // ------------------------ VTK Tracing ----------------------------------------
 // TODO Did I remove the callback?
-static constexpr int VTK_REASON_LEFT_TPC_DOMAIN = 20001;
-struct TerminateOutsideContext
-{
-    TpcGeometry geom;
-    explicit TerminateOutsideContext(const ElectronTraceParams &tp) : geom(tp) {}
-};
-
-// Terminate when the supplied point is no longer inside the domain.
-// IMPORTANT: This checks the point already in the streamline polyline.
-static bool TerminateIfOutsideDomain(void *clientdata,
-                                    vtkPoints *pts,
-                                    vtkDataArray*,
-                                    int idx)
-{
-    auto *ctx = static_cast<TerminateOutsideContext*>(clientdata);
-
-    double p[3] = {0,0,0};
-    pts->GetPoint(idx, p);
-
-    const bool inside = ctx->geom.Inside(p[0], p[1]);
-
-    if (idx <= 2) // don’t spam
+#if HAVE_VTK
+    static constexpr int VTK_REASON_LEFT_TPC_DOMAIN = 20001;
+    struct TerminateOutsideContext
     {
-        std::cerr << "[CB] idx=" << idx
-                  << " p=(" << p[0] << "," << p[1] << "," << p[2] << ")"
-                  << " inside=" << inside << "\n";
-    }
+        TpcGeometry geom;
+        explicit TerminateOutsideContext(const ElectronTraceParams &tp) : geom(tp) {}
+    };
 
-    return !inside;
-}
-
-static vtkIdType InsertVTKCellFromMFEMElement(
-    vtkUnstructuredGrid* ug,
-    const mfem::Mesh& mesh,
-    int el_id)
-{
-    const mfem::Element* el = mesh.GetElement(el_id);
-    const int nv = el->GetNVertices();
-    const int* v = el->GetVertices();
-
-    // VTK expects vtkIdType connectivity
-    std::vector<vtkIdType> conn(nv);
-    for (int i = 0; i < nv; ++i) conn[i] = static_cast<vtkIdType>(v[i]);
-
-    switch (el->GetGeometryType())
+    // Terminate when the supplied point is no longer inside the domain.
+    // IMPORTANT: This checks the point already in the streamline polyline.
+    static bool TerminateIfOutsideDomain(void *clientdata,
+                                        vtkPoints *pts,
+                                        vtkDataArray*,
+                                        int idx)
     {
-        case mfem::Geometry::SEGMENT:
-            if (nv != 2) return -1;
-            ug->InsertNextCell(VTK_LINE, 2, conn.data());
-            break;
-
-        case mfem::Geometry::TRIANGLE:
-            if (nv != 3) return -1;
-            ug->InsertNextCell(VTK_TRIANGLE, 3, conn.data());
-            break;
-
-        case mfem::Geometry::SQUARE:
-            if (nv != 4) return -1;
-            ug->InsertNextCell(VTK_QUAD, 4, conn.data());
-            break;
-
-        case mfem::Geometry::TETRAHEDRON:
-            if (nv != 4) return -1;
-            ug->InsertNextCell(VTK_TETRA, 4, conn.data());
-            break;
-
-        case mfem::Geometry::CUBE:
-            if (nv != 8) return -1;
-            ug->InsertNextCell(VTK_HEXAHEDRON, 8, conn.data());
-            break;
-
-        case mfem::Geometry::PRISM:
-            // MFEM "PRISM" is a wedge (6 verts)
-            if (nv != 6) return -1;
-            ug->InsertNextCell(VTK_WEDGE, 6, conn.data());
-            break;
-
-        case mfem::Geometry::PYRAMID:
-            if (nv != 5) return -1;
-            ug->InsertNextCell(VTK_PYRAMID, 5, conn.data());
-            break;
-
-        default:
-            // Add more mappings as needed (e.g. mfem::Geometry::...)
-            return -1;
-    }
-
-    return ug->GetNumberOfCells() - 1;
-}
-
-static vtkSmartPointer<vtkUnstructuredGrid>
-BuildVTKGridFromMFEM(mfem::Mesh &mesh,
-                     const mfem::GridFunction &E_gf,
-                     bool axisymmetric)
-{
-    const int dim = mesh.SpaceDimension();
-    MFEM_VERIFY(dim == 2 || dim == 3, "Only 2D/3D supported.");
-
-    // ---------------------------------------------------------------------
-    // 0) Points = MFEM vertices (linear grid)
-    // ---------------------------------------------------------------------
-    auto pts = vtkSmartPointer<vtkPoints>::New();
-    pts->SetNumberOfPoints(mesh.GetNV());
-
-    for (int vi = 0; vi < mesh.GetNV(); ++vi)
-    {
-        const double *X = mesh.GetVertex(vi);
-        double p[3] = {0.0, 0.0, 0.0};
-
-        if (dim == 3)
-        {
-            p[0] = X[0]; p[1] = X[1]; p[2] = X[2];
-        }
-        else
-        {
-            p[0] = X[0];
-            p[1] = X[1];
-            p[2] = 0.0;
-        }
-
-        pts->SetPoint(vi, p);
-    }
-
-    auto ug = vtkSmartPointer<vtkUnstructuredGrid>::New();
-    ug->SetPoints(pts);
-    ug->Allocate(mesh.GetNE());
-
-    // ---------------------------------------------------------------------
-    // 1) Cells (MFEM -> VTK ordering using mfem/vtk.hpp)
-    // ---------------------------------------------------------------------
-    for (int el_id = 0; el_id < mesh.GetNE(); ++el_id)
-    {
-        const mfem::Element *el = mesh.GetElement(el_id);
-        const mfem::Geometry::Type geom = el->GetGeometryType();
-
-        const int vtk_cell_type = mfem::VTKGeometry::Map[geom];
-        MFEM_VERIFY(vtk_cell_type > 0, "Unsupported geometry for VTK linear map.");
-
-        const int nv = el->GetNVertices();
-        const int *v = el->GetVertices();
-
-        std::vector<vtkIdType> conn(nv);
-
-        const int *perm = mfem::VTKGeometry::VertexPermutation[geom];
-        if (perm)
-        {
-            for (int i = 0; i < nv; ++i) { conn[i] = static_cast<vtkIdType>(v[perm[i]]); }
-        }
-        else if (geom == mfem::Geometry::PRISM)
-        {
-            for (int i = 0; i < nv; ++i) { conn[i] = static_cast<vtkIdType>(v[mfem::VTKGeometry::PrismMap[i]]); }
-        }
-        else
-        {
-            for (int i = 0; i < nv; ++i) { conn[i] = static_cast<vtkIdType>(v[i]); }
-        }
-
-        ug->InsertNextCell(vtk_cell_type, nv, conn.data());
-    }
-
-    // ---------------------------------------------------------------------
-    // 2) Point-data vector array "E" (3 comps) sampled at vertices
-    //    Fast adjacency lookup using Mesh::GetVertexToElementTable()
-    // ---------------------------------------------------------------------
-    auto E = vtkSmartPointer<vtkDoubleArray>::New();
-    E->SetName("E");
-    E->SetNumberOfComponents(3);
-    E->SetNumberOfTuples(mesh.GetNV());
-
-    std::unique_ptr<mfem::Table> v2e(mesh.GetVertexToElementTable());
-    MFEM_VERIFY(v2e, "GetVertexToElementTable returned null.");
-
-    mfem::Vector eval(dim);
-
-    for (int vi = 0; vi < mesh.GetNV(); ++vi)
-    {
-        const int n_adj = v2e->RowSize(vi);
-        MFEM_VERIFY(n_adj > 0, "Vertex has no adjacent elements.");
-
-        const int adj_el = v2e->GetRow(vi)[0];
-
-        mfem::ElementTransformation *T = mesh.GetElementTransformation(adj_el);
-
-        const mfem::Geometry::Type base_geom = mesh.GetElementBaseGeometry(adj_el);
-        const mfem::Element *el = mesh.GetElement(adj_el);
-
-        int local_vid = -1;
-        {
-            const int *vv = el->GetVertices();
-            for (int k = 0; k < el->GetNVertices(); ++k)
-            {
-                if (vv[k] == vi) { local_vid = k; break; }
-            }
-        }
-        MFEM_VERIFY(local_vid >= 0, "Internal error locating local vertex id.");
-
-        const mfem::IntegrationRule *ir = mfem::Geometries.GetVertices(base_geom);
-        MFEM_VERIFY(ir, "Geometries.GetVertices returned null.");
-        MFEM_VERIFY(local_vid < ir->GetNPoints(), "local_vid out of range for reference vertices.");
-
-        const mfem::IntegrationPoint &ip = ir->IntPoint(local_vid);
-        T->SetIntPoint(&ip);
-
-        E_gf.GetVectorValue(*T, ip, eval);
-
-        double tuple[3] = { eval[0], eval[1], (dim == 3) ? eval[2] : 0.0 };
-        E->SetTuple(vi, tuple);
-    }
-
-    ug->GetPointData()->AddArray(E);
-    ug->GetPointData()->SetActiveVectors("E");
-
-    return ug;
-}
-
-
-struct VTKTraceConfig
-{
-    bool follow_negative_E = true;
-
-    double max_propagation = 1.0;
-    double initial_step    = 1e-3;
-    double min_step        = 1e-6;
-    double max_step        = 1e-2;
-    vtkIdType max_steps    = 20000;
-
-    bool record_tracks     = true; // <-- your requested option
-};
-
-// Helper: build VTK seed polydata from your seeds, dropping seeds outside cells.
-static vtkSmartPointer<vtkPolyData> BuildSeedPolyData(
-    vtkDataSet* dataset,
-    const std::vector<mfem::Vector>& seed_pos,
-    vtkStaticCellLocator* locator,
-    std::vector<int>& kept_seed_ids,
-    bool axisymmetric)
-{
-    auto seedPts  = vtkSmartPointer<vtkPoints>::New();
-    auto seedVert = vtkSmartPointer<vtkCellArray>::New();
-
-    kept_seed_ids.clear();
-    kept_seed_ids.reserve(seed_pos.size());
-
-    for (int i = 0; i < (int)seed_pos.size(); ++i)
-    {
-        const mfem::Vector& s = seed_pos[i];
+        auto *ctx = static_cast<TerminateOutsideContext*>(clientdata);
 
         double p[3] = {0,0,0};
+        pts->GetPoint(idx, p);
 
-        if (s.Size() == 3)
+        const bool inside = ctx->geom.Inside(p[0], p[1]);
+
+        if (idx <= 2) // don’t spam
         {
-            p[0] = s[0]; p[1] = s[1]; p[2] = s[2];
+            std::cerr << "[CB] idx=" << idx
+                    << " p=(" << p[0] << "," << p[1] << "," << p[2] << ")"
+                    << " inside=" << inside << "\n";
         }
-        else
+
+        return !inside;
+    }
+
+    static vtkIdType InsertVTKCellFromMFEMElement(
+        vtkUnstructuredGrid* ug,
+        const mfem::Mesh& mesh,
+        int el_id)
+    {
+        const mfem::Element* el = mesh.GetElement(el_id);
+        const int nv = el->GetNVertices();
+        const int* v = el->GetVertices();
+
+        // VTK expects vtkIdType connectivity
+        std::vector<vtkIdType> conn(nv);
+        for (int i = 0; i < nv; ++i) conn[i] = static_cast<vtkIdType>(v[i]);
+
+        switch (el->GetGeometryType())
         {
-            // same embedding rule as mesh conversion
-            if (axisymmetric)
+            case mfem::Geometry::SEGMENT:
+                if (nv != 2) return -1;
+                ug->InsertNextCell(VTK_LINE, 2, conn.data());
+                break;
+
+            case mfem::Geometry::TRIANGLE:
+                if (nv != 3) return -1;
+                ug->InsertNextCell(VTK_TRIANGLE, 3, conn.data());
+                break;
+
+            case mfem::Geometry::SQUARE:
+                if (nv != 4) return -1;
+                ug->InsertNextCell(VTK_QUAD, 4, conn.data());
+                break;
+
+            case mfem::Geometry::TETRAHEDRON:
+                if (nv != 4) return -1;
+                ug->InsertNextCell(VTK_TETRA, 4, conn.data());
+                break;
+
+            case mfem::Geometry::CUBE:
+                if (nv != 8) return -1;
+                ug->InsertNextCell(VTK_HEXAHEDRON, 8, conn.data());
+                break;
+
+            case mfem::Geometry::PRISM:
+                // MFEM "PRISM" is a wedge (6 verts)
+                if (nv != 6) return -1;
+                ug->InsertNextCell(VTK_WEDGE, 6, conn.data());
+                break;
+
+            case mfem::Geometry::PYRAMID:
+                if (nv != 5) return -1;
+                ug->InsertNextCell(VTK_PYRAMID, 5, conn.data());
+                break;
+
+            default:
+                // Add more mappings as needed (e.g. mfem::Geometry::...)
+                return -1;
+        }
+
+        return ug->GetNumberOfCells() - 1;
+    }
+
+    static vtkSmartPointer<vtkUnstructuredGrid>
+    BuildVTKGridFromMFEM(mfem::Mesh &mesh,
+                        const mfem::GridFunction &E_gf,
+                        bool axisymmetric)
+    {
+        const int dim = mesh.SpaceDimension();
+        MFEM_VERIFY(dim == 2 || dim == 3, "Only 2D/3D supported.");
+
+        // ---------------------------------------------------------------------
+        // 0) Points = MFEM vertices (linear grid)
+        // ---------------------------------------------------------------------
+        auto pts = vtkSmartPointer<vtkPoints>::New();
+        pts->SetNumberOfPoints(mesh.GetNV());
+
+        for (int vi = 0; vi < mesh.GetNV(); ++vi)
+        {
+            const double *X = mesh.GetVertex(vi);
+            double p[3] = {0.0, 0.0, 0.0};
+
+            if (dim == 3)
             {
-                p[0] = s[0]; // r
-                p[1] = s[1]; // z
-                p[2] = 0.0;
+                p[0] = X[0]; p[1] = X[1]; p[2] = X[2];
             }
             else
             {
-                p[0] = s[0];
-                p[1] = s[1];
+                p[0] = X[0];
+                p[1] = X[1];
                 p[2] = 0.0;
             }
+
+            pts->SetPoint(vi, p);
         }
 
-        vtkIdType cellId = locator->FindCell(p);
-        if (cellId < 0) continue;
+        auto ug = vtkSmartPointer<vtkUnstructuredGrid>::New();
+        ug->SetPoints(pts);
+        ug->Allocate(mesh.GetNE());
 
-        vtkIdType id = seedPts->InsertNextPoint(p);
-        seedVert->InsertNextCell(1);
-        seedVert->InsertCellPoint(id);
-
-        kept_seed_ids.push_back(i);
-    }
-
-    auto seedPoly = vtkSmartPointer<vtkPolyData>::New();
-    seedPoly->SetPoints(seedPts);
-    seedPoly->SetVerts(seedVert);
-    return seedPoly;
-}
-// -----------------------------------------------------------------------------
-// VTK PREPARED: does NOT build ug/locator. Uses cached ug+locator.
-// -----------------------------------------------------------------------------
-static void TraceElectronFieldLinesVTKPrepared(
-    vtkUnstructuredGrid* ug,                     // cached
-    vtkStaticCellLocator* locator,               // cached
-    const Seeds &seeds,
-    std::vector<ElectronTraceResult>& out_results,
-    const VTKTraceConfig& tcfg,
-    bool axisymmetric,
-    const Config &cfg)
-{
-    MFEM_VERIFY(ug != nullptr, "VTKPrepared: ug is null");
-    MFEM_VERIFY(locator != nullptr, "VTKPrepared: locator is null");
-
-    // Validate vector field
-    vtkDataArray* eArr = ug->GetPointData()->GetArray("E");
-    MFEM_VERIFY(eArr && eArr->GetNumberOfComponents() == 3,
-                "VTK dataset missing point-vector array 'E' (3 comps).");
-
-    // Seeds: build polydata each call (can be cached too if seeds don't change)
-    std::vector<int> kept_seed_ids;
-    auto seedPoly = BuildSeedPolyData(
-        ug,
-        seeds.positions,
-        locator,
-        kept_seed_ids,
-        axisymmetric);
-
-    const std::size_t n_requested = seeds.positions.size();
-    const std::size_t n_kept      = kept_seed_ids.size();
-
-    if (n_kept != n_requested)
-    {
-        throw std::logic_error("VTK: Not all requested seeds accepted, particle seeding is invalid");
-    }
-
-    out_results.assign(n_requested, ElectronTraceResult{});
-
-    // Integrator choice from cfg.tracing_params.method
-    vtkSmartPointer<vtkInitialValueProblemSolver> method;
-    if (cfg.tracing_params.method == "RK4")
-        method = vtkSmartPointer<vtkRungeKutta4>::New();
-    else if (cfg.tracing_params.method == "Euler-Cauchy")
-        method = vtkSmartPointer<vtkRungeKutta2>::New();
-    else
-        method = vtkSmartPointer<vtkRungeKutta4>::New();
-
-    auto tracer = vtkSmartPointer<vtkStreamTracer>::New();
-    tracer->SetIntegrator(method);
-
-    tracer->SetInputData(ug);
-    tracer->SetSourceData(seedPoly);
-
-    tracer->SetComputeVorticity(false);
-    tracer->SetIntegrationDirectionToBackward();
-
-    tracer->SetMaximumPropagation(tcfg.max_propagation);
-    tracer->SetInitialIntegrationStep(tcfg.initial_step);
-    tracer->SetMinimumIntegrationStep(tcfg.min_step);
-    tracer->SetMaximumIntegrationStep(tcfg.max_step);
-    tracer->SetMaximumNumberOfSteps(tcfg.max_steps);
-
-    tracer->SetInputArrayToProcess(
-        0, 0, 0,
-        vtkDataObject::FIELD_ASSOCIATION_POINTS,
-        "E");
-
-    tracer->Update();
-
-    vtkPolyData* out = tracer->GetOutput();
-    if (!out || out->GetNumberOfCells() == 0 || out->GetNumberOfPoints() == 0)
-    {
-        // no streamlines produced
-        return;
-    }
-
-    const vtkIdType nLines = out->GetNumberOfCells();
-    const vtkIdType nSeeds = static_cast<vtkIdType>(kept_seed_ids.size());
-    const vtkIdType nUse   = std::min(nLines, nSeeds);
-
-    for (vtkIdType li = 0; li < nUse; ++li)
-    {
-        const int seed_idx = kept_seed_ids[static_cast<int>(li)];
-
-        vtkCell* cell = out->GetCell(li);
-        if (!cell) continue;
-
-        vtkIdList* ids = cell->GetPointIds();
-        if (!ids || ids->GetNumberOfIds() == 0) continue;
-
-        if (tcfg.record_tracks)
+        // ---------------------------------------------------------------------
+        // 1) Cells (MFEM -> VTK ordering using mfem/vtk.hpp)
+        // ---------------------------------------------------------------------
+        for (int el_id = 0; el_id < mesh.GetNE(); ++el_id)
         {
-            auto &pts = out_results[seed_idx].points;
-            pts.clear();
-            pts.reserve(static_cast<std::size_t>(ids->GetNumberOfIds()));
+            const mfem::Element *el = mesh.GetElement(el_id);
+            const mfem::Geometry::Type geom = el->GetGeometryType();
 
-            for (vtkIdType k = 0; k < ids->GetNumberOfIds(); ++k)
+            const int vtk_cell_type = mfem::VTKGeometry::Map[geom];
+            MFEM_VERIFY(vtk_cell_type > 0, "Unsupported geometry for VTK linear map.");
+
+            const int nv = el->GetNVertices();
+            const int *v = el->GetVertices();
+
+            std::vector<vtkIdType> conn(nv);
+
+            const int *perm = mfem::VTKGeometry::VertexPermutation[geom];
+            if (perm)
             {
+                for (int i = 0; i < nv; ++i) { conn[i] = static_cast<vtkIdType>(v[perm[i]]); }
+            }
+            else if (geom == mfem::Geometry::PRISM)
+            {
+                for (int i = 0; i < nv; ++i) { conn[i] = static_cast<vtkIdType>(v[mfem::VTKGeometry::PrismMap[i]]); }
+            }
+            else
+            {
+                for (int i = 0; i < nv; ++i) { conn[i] = static_cast<vtkIdType>(v[i]); }
+            }
+
+            ug->InsertNextCell(vtk_cell_type, nv, conn.data());
+        }
+
+        // ---------------------------------------------------------------------
+        // 2) Point-data vector array "E" (3 comps) sampled at vertices
+        //    Fast adjacency lookup using Mesh::GetVertexToElementTable()
+        // ---------------------------------------------------------------------
+        auto E = vtkSmartPointer<vtkDoubleArray>::New();
+        E->SetName("E");
+        E->SetNumberOfComponents(3);
+        E->SetNumberOfTuples(mesh.GetNV());
+
+        std::unique_ptr<mfem::Table> v2e(mesh.GetVertexToElementTable());
+        MFEM_VERIFY(v2e, "GetVertexToElementTable returned null.");
+
+        mfem::Vector eval(dim);
+
+        for (int vi = 0; vi < mesh.GetNV(); ++vi)
+        {
+            const int n_adj = v2e->RowSize(vi);
+            MFEM_VERIFY(n_adj > 0, "Vertex has no adjacent elements.");
+
+            const int adj_el = v2e->GetRow(vi)[0];
+
+            mfem::ElementTransformation *T = mesh.GetElementTransformation(adj_el);
+
+            const mfem::Geometry::Type base_geom = mesh.GetElementBaseGeometry(adj_el);
+            const mfem::Element *el = mesh.GetElement(adj_el);
+
+            int local_vid = -1;
+            {
+                const int *vv = el->GetVertices();
+                for (int k = 0; k < el->GetNVertices(); ++k)
+                {
+                    if (vv[k] == vi) { local_vid = k; break; }
+                }
+            }
+            MFEM_VERIFY(local_vid >= 0, "Internal error locating local vertex id.");
+
+            const mfem::IntegrationRule *ir = mfem::Geometries.GetVertices(base_geom);
+            MFEM_VERIFY(ir, "Geometries.GetVertices returned null.");
+            MFEM_VERIFY(local_vid < ir->GetNPoints(), "local_vid out of range for reference vertices.");
+
+            const mfem::IntegrationPoint &ip = ir->IntPoint(local_vid);
+            T->SetIntPoint(&ip);
+
+            E_gf.GetVectorValue(*T, ip, eval);
+
+            double tuple[3] = { eval[0], eval[1], (dim == 3) ? eval[2] : 0.0 };
+            E->SetTuple(vi, tuple);
+        }
+
+        ug->GetPointData()->AddArray(E);
+        ug->GetPointData()->SetActiveVectors("E");
+
+        return ug;
+    }
+
+
+    struct VTKTraceConfig
+    {
+        bool follow_negative_E = true;
+
+        double max_propagation = 1.0;
+        double initial_step    = 1e-3;
+        double min_step        = 1e-6;
+        double max_step        = 1e-2;
+        vtkIdType max_steps    = 20000;
+
+        bool record_tracks     = true; // <-- your requested option
+    };
+
+    // Helper: build VTK seed polydata from your seeds, dropping seeds outside cells.
+    static vtkSmartPointer<vtkPolyData> BuildSeedPolyData(
+        vtkDataSet* dataset,
+        const std::vector<mfem::Vector>& seed_pos,
+        vtkStaticCellLocator* locator,
+        std::vector<int>& kept_seed_ids,
+        bool axisymmetric)
+    {
+        auto seedPts  = vtkSmartPointer<vtkPoints>::New();
+        auto seedVert = vtkSmartPointer<vtkCellArray>::New();
+
+        kept_seed_ids.clear();
+        kept_seed_ids.reserve(seed_pos.size());
+
+        for (int i = 0; i < (int)seed_pos.size(); ++i)
+        {
+            const mfem::Vector& s = seed_pos[i];
+
+            double p[3] = {0,0,0};
+
+            if (s.Size() == 3)
+            {
+                p[0] = s[0]; p[1] = s[1]; p[2] = s[2];
+            }
+            else
+            {
+                // same embedding rule as mesh conversion
+                if (axisymmetric)
+                {
+                    p[0] = s[0]; // r
+                    p[1] = s[1]; // z
+                    p[2] = 0.0;
+                }
+                else
+                {
+                    p[0] = s[0];
+                    p[1] = s[1];
+                    p[2] = 0.0;
+                }
+            }
+
+            vtkIdType cellId = locator->FindCell(p);
+            if (cellId < 0) continue;
+
+            vtkIdType id = seedPts->InsertNextPoint(p);
+            seedVert->InsertNextCell(1);
+            seedVert->InsertCellPoint(id);
+
+            kept_seed_ids.push_back(i);
+        }
+
+        auto seedPoly = vtkSmartPointer<vtkPolyData>::New();
+        seedPoly->SetPoints(seedPts);
+        seedPoly->SetVerts(seedVert);
+        return seedPoly;
+    }
+    // -----------------------------------------------------------------------------
+    // VTK PREPARED: does NOT build ug/locator. Uses cached ug+locator.
+    // -----------------------------------------------------------------------------
+    static void TraceElectronFieldLinesVTKPrepared(
+        vtkUnstructuredGrid* ug,                     // cached
+        vtkStaticCellLocator* locator,               // cached
+        const Seeds &seeds,
+        std::vector<ElectronTraceResult>& out_results,
+        const VTKTraceConfig& tcfg,
+        bool axisymmetric,
+        const Config &cfg)
+    {
+        MFEM_VERIFY(ug != nullptr, "VTKPrepared: ug is null");
+        MFEM_VERIFY(locator != nullptr, "VTKPrepared: locator is null");
+
+        // Validate vector field
+        vtkDataArray* eArr = ug->GetPointData()->GetArray("E");
+        MFEM_VERIFY(eArr && eArr->GetNumberOfComponents() == 3,
+                    "VTK dataset missing point-vector array 'E' (3 comps).");
+
+        // Seeds: build polydata each call (can be cached too if seeds don't change)
+        std::vector<int> kept_seed_ids;
+        auto seedPoly = BuildSeedPolyData(
+            ug,
+            seeds.positions,
+            locator,
+            kept_seed_ids,
+            axisymmetric);
+
+        const std::size_t n_requested = seeds.positions.size();
+        const std::size_t n_kept      = kept_seed_ids.size();
+
+        if (n_kept != n_requested)
+        {
+            throw std::logic_error("VTK: Not all requested seeds accepted, particle seeding is invalid");
+        }
+
+        out_results.assign(n_requested, ElectronTraceResult{});
+
+        // Integrator choice from cfg.tracing_params.method
+        vtkSmartPointer<vtkInitialValueProblemSolver> method;
+        if (cfg.tracing_params.method == "RK4")
+            method = vtkSmartPointer<vtkRungeKutta4>::New();
+        else if (cfg.tracing_params.method == "Euler-Cauchy")
+            method = vtkSmartPointer<vtkRungeKutta2>::New();
+        else
+            method = vtkSmartPointer<vtkRungeKutta4>::New();
+
+        auto tracer = vtkSmartPointer<vtkStreamTracer>::New();
+        tracer->SetIntegrator(method);
+
+        tracer->SetInputData(ug);
+        tracer->SetSourceData(seedPoly);
+
+        tracer->SetComputeVorticity(false);
+        tracer->SetIntegrationDirectionToBackward();
+
+        tracer->SetMaximumPropagation(tcfg.max_propagation);
+        tracer->SetInitialIntegrationStep(tcfg.initial_step);
+        tracer->SetMinimumIntegrationStep(tcfg.min_step);
+        tracer->SetMaximumIntegrationStep(tcfg.max_step);
+        tracer->SetMaximumNumberOfSteps(tcfg.max_steps);
+
+        tracer->SetInputArrayToProcess(
+            0, 0, 0,
+            vtkDataObject::FIELD_ASSOCIATION_POINTS,
+            "E");
+
+        tracer->Update();
+
+        vtkPolyData* out = tracer->GetOutput();
+        if (!out || out->GetNumberOfCells() == 0 || out->GetNumberOfPoints() == 0)
+        {
+            // no streamlines produced
+            return;
+        }
+
+        const vtkIdType nLines = out->GetNumberOfCells();
+        const vtkIdType nSeeds = static_cast<vtkIdType>(kept_seed_ids.size());
+        const vtkIdType nUse   = std::min(nLines, nSeeds);
+
+        for (vtkIdType li = 0; li < nUse; ++li)
+        {
+            const int seed_idx = kept_seed_ids[static_cast<int>(li)];
+
+            vtkCell* cell = out->GetCell(li);
+            if (!cell) continue;
+
+            vtkIdList* ids = cell->GetPointIds();
+            if (!ids || ids->GetNumberOfIds() == 0) continue;
+
+            if (tcfg.record_tracks)
+            {
+                auto &pts = out_results[seed_idx].points;
+                pts.clear();
+                pts.reserve(static_cast<std::size_t>(ids->GetNumberOfIds()));
+
+                for (vtkIdType k = 0; k < ids->GetNumberOfIds(); ++k)
+                {
+                    double pk[3];
+                    out->GetPoint(ids->GetId(k), pk);
+
+                    mfem::Vector v(3);
+                    v[0] = pk[0];
+                    v[1] = pk[1];
+                    v[2] = pk[2];
+                    pts.push_back(std::move(v));
+                }
+            }
+            else
+            {
+                // Store only last point
+                vtkIdType lastPid = ids->GetId(ids->GetNumberOfIds() - 1);
                 double pk[3];
-                out->GetPoint(ids->GetId(k), pk);
+                out->GetPoint(lastPid, pk);
 
                 mfem::Vector v(3);
                 v[0] = pk[0];
                 v[1] = pk[1];
                 v[2] = pk[2];
-                pts.push_back(std::move(v));
+
+                out_results[seed_idx].points.clear();
+                out_results[seed_idx].points.push_back(std::move(v));
+                out_results[seed_idx].points.shrink_to_fit();
             }
         }
-        else
+
+        // Exit classification from last point (same as your original)
+        TpcGeometry geom(cfg.tracing_params);
+        for (vtkIdType li = 0; li < nUse; ++li)
         {
-            // Store only last point
-            vtkIdType lastPid = ids->GetId(ids->GetNumberOfIds() - 1);
-            double pk[3];
-            out->GetPoint(lastPid, pk);
+            const int seed_idx = kept_seed_ids[static_cast<int>(li)];
+            auto &res = out_results[seed_idx];
 
-            mfem::Vector v(3);
-            v[0] = pk[0];
-            v[1] = pk[1];
-            v[2] = pk[2];
+            if (res.points.empty())
+            {
+                res.exit_code = ElectronExitCode::None;
+                continue;
+            }
 
-            out_results[seed_idx].points.clear();
-            out_results[seed_idx].points.push_back(std::move(v));
-            out_results[seed_idx].points.shrink_to_fit();
+            const mfem::Vector &last = res.points.back();
+            res.exit_code = geom.ClassifyBoundary(last[0], last[1], cfg.tracing_params.geom_tol);
         }
     }
-
-    // Exit classification from last point (same as your original)
-    TpcGeometry geom(cfg.tracing_params);
-    for (vtkIdType li = 0; li < nUse; ++li)
+    static void TraceElectronFieldLinesVTK(
+        mfem::ParMesh& pmesh,
+        const mfem::GridFunction& E_gf_serial,
+        const Seeds &seeds,
+        std::vector<ElectronTraceResult>& out_results,
+        const VTKTraceConfig& tcfg,
+        bool axisymmetric,
+        Config cfg)
     {
-        const int seed_idx = kept_seed_ids[static_cast<int>(li)];
-        auto &res = out_results[seed_idx];
+        auto ug = BuildVTKGridFromMFEM(pmesh, E_gf_serial, axisymmetric);
 
-        if (res.points.empty())
-        {
-            res.exit_code = ElectronExitCode::None;
-            continue;
-        }
+        auto locator = vtkSmartPointer<vtkStaticCellLocator>::New();
+        locator->SetDataSet(ug);
+        locator->BuildLocator();
 
-        const mfem::Vector &last = res.points.back();
-        res.exit_code = geom.ClassifyBoundary(last[0], last[1], cfg.tracing_params.geom_tol);
+        TraceElectronFieldLinesVTKPrepared(ug, locator, seeds, out_results, tcfg, axisymmetric, cfg);
     }
-}
-static void TraceElectronFieldLinesVTK(
-    mfem::ParMesh& pmesh,
-    const mfem::GridFunction& E_gf_serial,
-    const Seeds &seeds,
-    std::vector<ElectronTraceResult>& out_results,
-    const VTKTraceConfig& tcfg,
-    bool axisymmetric,
-    Config cfg)
-{
-    auto ug = BuildVTKGridFromMFEM(pmesh, E_gf_serial, axisymmetric);
-
-    auto locator = vtkSmartPointer<vtkStaticCellLocator>::New();
-    locator->SetDataSet(ug);
-    locator->BuildLocator();
-
-    TraceElectronFieldLinesVTKPrepared(ug, locator, seeds, out_results, tcfg, axisymmetric, cfg);
-}
-
+#endif
 // --------------------------- Tracing Object holders
 // 2) Context build: identical mesh prep + FindPointsGSLIB setup as BOOST
 void MPITraceContext::Build(mfem::ParMesh &mesh, bool debug)
@@ -1333,21 +1334,22 @@ void BoostTraceContext::Build(mfem::ParMesh &mesh, bool debug)
     pos.SetSize(sdim);
     Eout.SetSize(sdim);
 }
-void VTKTraceContext::Build(mfem::ParMesh &mesh,
-                        const mfem::ParGridFunction &E_gf_serial,
-                        bool axisymmetric,
-                        bool debug)
-{
-    h_ref = ComputeGlobalMinEdgeLength(mesh, debug);
+#if HAVE_VTK
+    void VTKTraceContext::Build(mfem::ParMesh &mesh,
+                            const mfem::ParGridFunction &E_gf_serial,
+                            bool axisymmetric,
+                            bool debug)
+    {
+        h_ref = ComputeGlobalMinEdgeLength(mesh, debug);
 
-    grid = BuildVTKGridFromMFEM(mesh, E_gf_serial, axisymmetric);
+        grid = BuildVTKGridFromMFEM(mesh, E_gf_serial, axisymmetric);
 
-    locator = vtkSmartPointer<vtkStaticCellLocator>::New();
-    locator->SetDataSet(grid);
-    locator->BuildLocator();
-}
-bool VTKTraceContext::Ready() const { return (grid != nullptr && locator != nullptr); }
-
+        locator = vtkSmartPointer<vtkStaticCellLocator>::New();
+        locator->SetDataSet(grid);
+        locator->BuildLocator();
+    }
+    bool VTKTraceContext::Ready() const { return (grid != nullptr && locator != nullptr); }
+#endif
 // ElectronFieldLineTracer methods 
 void ElectronFieldLineTracer::Reset()
 {
@@ -1359,7 +1361,9 @@ void ElectronFieldLineTracer::Reset()
     E_gf = nullptr;
 
     boost.reset();
-    vtk.reset();
+    #if HAVE_VTK
+        vtk.reset();
+    #endif
     trace_fn = nullptr;
 
     mpitracer.reset();
@@ -1427,15 +1431,19 @@ void ElectronFieldLineTracer::Setup(const SimulationResult &result,
         }
     }
     else if (params.provider == "VTK")
-    {
-        int comm_size = 1;
-        MPI_Comm_size(pmesh->GetComm(), &comm_size);
-        if (comm_size > 1)
-        {
-            throw std::logic_error("VTK tracing does not support multiple MPI ranks.");
-        }
-        BuildVTK_(axisymmetric, cfg.debug.debug);
-        SelectProvider_(params.provider, axisymmetric);
+    {   
+        #if HAVE_VTK
+            int comm_size = 1;
+            MPI_Comm_size(pmesh->GetComm(), &comm_size);
+            if (comm_size > 1)
+            {
+                throw std::logic_error("VTK tracing does not support multiple MPI ranks.");
+            }
+            BuildVTK_(axisymmetric, cfg.debug.debug);
+            SelectProvider_(params.provider, axisymmetric);
+        #else 
+            throw std::runtime_error("Not compiled with VTK Support");
+        #endif
     }
     else
     {
@@ -1464,11 +1472,13 @@ void ElectronFieldLineTracer::BuildBOOST_(bool debug)
     boost.emplace();
     boost->Build(*pmesh, debug);
 }
-void ElectronFieldLineTracer::BuildVTK_(bool axisymmetric, bool debug)
-{
-    vtk.emplace();
-    vtk->Build(*pmesh, *E_gf, axisymmetric, debug);
-}
+#if HAVE_VTK
+    void ElectronFieldLineTracer::BuildVTK_(bool axisymmetric, bool debug)
+    {
+        vtk.emplace();
+        vtk->Build(*pmesh, *E_gf, axisymmetric, debug);
+    }
+#endif
 void ElectronFieldLineTracer::BuildMPITracer_(bool debug)
 {
     if (!pmesh || !E_gf)
@@ -1542,27 +1552,30 @@ void ElectronFieldLineTracer::SelectProvider_(const std::string &provider, bool 
     }
     else if (provider == "VTK")
     {
-        if (!vtk || !vtk->Ready()) { throw std::logic_error("SelectProvider_: VTK context not ready."); }
+        #if HAVE_VTK
+            if (!vtk || !vtk->Ready()) { throw std::logic_error("SelectProvider_: VTK context not ready."); }
 
-        trace_fn = [this](const Seeds &seeds,
-                            std::vector<ElectronTraceResult> &out_results,
-                            bool axisymmetric,
-                            bool save_paths,
-                            const double * /*z_max_overrides*/)
-        {
-            VTKTraceConfig tcfg;
-            tcfg.follow_negative_E = true;
+            trace_fn = [this](const Seeds &seeds,
+                                std::vector<ElectronTraceResult> &out_results,
+                                bool axisymmetric,
+                                bool save_paths,
+                                const double * /*z_max_overrides*/)
+            {
+                VTKTraceConfig tcfg;
+                tcfg.follow_negative_E = true;
 
-            tcfg.max_propagation   = params.max_traversals;
-            tcfg.initial_step      = params.c_step * vtk->h_ref;
-            tcfg.min_step          = 0.1 * tcfg.initial_step;
-            tcfg.max_step          = 10.0 * tcfg.initial_step;
-            tcfg.max_steps         = static_cast<vtkIdType>(params.max_traversals / (0.001 * tcfg.initial_step));
-            tcfg.record_tracks     = save_paths;
+                tcfg.max_propagation   = params.max_traversals;
+                tcfg.initial_step      = params.c_step * vtk->h_ref;
+                tcfg.min_step          = 0.1 * tcfg.initial_step;
+                tcfg.max_step          = 10.0 * tcfg.initial_step;
+                tcfg.max_steps         = static_cast<vtkIdType>(params.max_traversals / (0.001 * tcfg.initial_step));
+                tcfg.record_tracks     = save_paths;
 
-            TraceElectronFieldLinesVTKPrepared(vtk->grid, vtk->locator,
-                                            seeds, out_results, tcfg, axisymmetric, cfg);
-        };
+                TraceElectronFieldLinesVTKPrepared(vtk->grid, vtk->locator,
+                                                seeds, out_results, tcfg, axisymmetric, cfg);
+            };
+        #endif 
+        throw std::runtime_error("VTK Not compiled");
 
     }
     else { throw std::invalid_argument("SelectProvider_: unknown provider '" + provider + "'."); }

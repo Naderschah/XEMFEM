@@ -3,15 +3,14 @@ geometry_id: SR3XENONnT
 mesh:
   path: /work/geometry/mesh/mesh22.msh
   geometry: SR3
-  voltages: SR3
+  voltages: SR0
   liquid_level: 0.004
   autoappend: true
   append_fieldShaping_Voltages_toConfig: false
   NetgenParams:
     debugCoarse: false
-    preset: VeryFine
     maxSize: 0.015008
-    minSize: 1.0e-6
+    minSize: 1.0e-06
     growthRate: 0.1
     UseSurfaceCurvature: 1
     NBSegmentsPerEdge: 4
@@ -27,7 +26,7 @@ mesh:
     Opt_SecondOrder: 0
     Opt_Optimize: true
   AMR:
-    enable: true
+    enable: false
     max_iter: 10
     local_error_goal: 1e-4
     total_error_goal: 0.0
@@ -54,55 +53,18 @@ debug:
   dry_run: false
   printBoundaryConditions: false
   printHypreWarnings: false
-  dumpdata: true
+  dumpdata: false
 compute:
   threads:
     enabled: false
-    num: -1
-    affinity: scatter
-sweeps:
-- name: Preset
-  kind: fixed
-  configs:
-  - label: PMTsOn_RestGround
-    set:
-      boundaries.BC_TopScreeningElectrode.value: 0.0
-      boundaries.BC_AnodeElectrode.value: 0.0
-      boundaries.BC_GateElectrode.value: 0.0
-      boundaries.BC_CathodeElectrode.value: 0.0
-      boundaries.BC_BottomScreeningElectrode.value: 0.0
-  - label: AnodeIsBiased
-    set:
-      boundaries.BC_TopScreeningElectrode.value: 0.0
-      boundaries.BC_AnodeElectrode.value: 600.0
-      boundaries.BC_GateElectrode.value: 0.0
-      boundaries.BC_CathodeElectrode.value: 0.0
-      boundaries.BC_BottomScreeningElectrode.value: 0.0
-  - label: GateIsBiased
-    set:
-      boundaries.BC_TopScreeningElectrode.value: 0.0
-      boundaries.BC_AnodeElectrode.value: 0
-      boundaries.BC_GateElectrode.value: -600.0
-      boundaries.BC_CathodeElectrode.value: 0.0
-      boundaries.BC_BottomScreeningElectrode.value: 0.0
 solver:
+  solver: MUMPS
   generate_E: false
   axisymmetric: true
-  order: 3
+  order: 2
   assembly_mode: partial
-  atol: 1e-14
-  rtol: 1e-30
   maxiter: 100000
   printlevel: 0
-plotting:
-  show_mesh: false
-  mesh_edge_width: 0.1
-  img_width: 2160
-  img_height: 3840
-interpolate:
-  Nx: 3024
-  Ny: 10240
-  H1_project: true
 materials:
   GXe:
     attr_id: 1
@@ -125,27 +87,27 @@ boundaries:
   BC_TopScreeningElectrode:
     bdr_id: 6
     type: dirichlet
-    value: 0
+    value: -900
   BC_AnodeElectrode:
     bdr_id: 5
     type: dirichlet
-    value: 600
+    value: 4950
   BC_GateElectrode:
     bdr_id: 7
     type: dirichlet
-    value: -600
+    value: 300
   BC_CathodeElectrode:
     bdr_id: 8
     type: dirichlet
-    value: 0
+    value: -2750
   BC_BottomScreeningElectrode:
     bdr_id: 80
     type: dirichlet
-    value: 0
+    value: -1300
   BC_AllPMTs:
     bdr_id: 4
     type: dirichlet
-    value: -1500
+    value: -1300
   BC_Bell:
     bdr_id: 146
     type: dirichlet
@@ -161,7 +123,7 @@ boundaries:
   BC_FieldShapingRings0:
     bdr_id: 79
     type: dirichlet
-    value: 0
+    value: 650.0
   BC_FieldShapingRings1:
     bdr_id: 78
     type: dirichlet

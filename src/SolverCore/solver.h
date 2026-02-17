@@ -3,6 +3,7 @@
 #include <iosfwd> 
 #include <string>
 #include "mfem.hpp"
+#include "mfem/linalg/mumps.hpp"
 #include "boundary_conditions.h"
 #include "Config.h"
 using namespace mfem;

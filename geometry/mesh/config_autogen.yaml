@@ -17,7 +17,7 @@ boundaries:
   BC_AnodeElectrode:
     bdr_id: 5
     type: dirichlet
-    value: 6500
+    value: 4950
   BC_Bell:
     bdr_id: 146
     type: dirichlet
@@ -25,11 +25,11 @@ boundaries:
   BC_BottomScreeningElectrode:
     bdr_id: 80
     type: dirichlet
-    value: -1500
+    value: -1300
   BC_CathodeElectrode:
     bdr_id: 8
     type: dirichlet
-    value: -30000
+    value: -2750
   BC_CopperRing:
     bdr_id: 145
     type: dirichlet
@@ -41,15 +41,15 @@ boundaries:
   BC_FieldShapingRings0:
     bdr_id: 79
     type: dirichlet
-    value: -950.0
+    value: 650
   BC_GateElectrode:
     bdr_id: 7
     type: dirichlet
-    value: -1000
+    value: 300
   BC_TopScreeningElectrode:
     bdr_id: 6
     type: dirichlet
-    value: -1500
+    value: -900
   BC_r0:
     bdr_id: 149
     type: neumann
@@ -57,11 +57,7 @@ boundaries:
   PTFE_Wall_Charge:
     bdr_id: 147
     type: neumann
-    depth_dependent: true
-    z_bot: -1.5015999999999998
-    z_top: -0.0008
-    value_bot: -1e-07
-    value_top: -5e-07
+    value: 0
   BC_FieldShapingRings1:
     bdr_id: 78
     type: dirichlet

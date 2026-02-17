@@ -123,23 +123,7 @@ std::unique_ptr<mfem::ParGridFunction> SolvePoisson(ParFiniteElementSpace &pfes,
   b = std::make_unique<ParLinearForm>(&pfes);
   *V = 0.0;
 
-  // build the proper preconditioner later, after A exists
-  make_prec = [=](OperatorHandle &Ah) -> std::unique_ptr<Solver>
-  {
-    auto *Ap = Ah.As<HypreParMatrix>();
-    auto prec = std::make_unique<HypreBoomerAMG>(*Ap);
-
-    // Make hypre actually print something (level > 0)
-    prec->SetPrintLevel(cfg->solver.printlevel);
-
-    // Get underlying hypre solver object and set its print file
-    {
-      HYPRE_Solver hsolver = (HYPRE_Solver)(*prec);
-      HYPRE_BoomerAMGSetPrintFileName(hsolver, log_path.c_str());
-    }
-
-    return prec;
-  };
+  
 
   // Apply BC Markers
   ApplyDirichletValues(*V, BCs.dirichlet_attr, cfg);
@@ -157,33 +141,58 @@ std::unique_ptr<mfem::ParGridFunction> SolvePoisson(ParFiniteElementSpace &pfes,
   pfes.GetEssentialTrueDofs(BCs.dirichlet_attr, ess_tdof);
 
   a->FormLinearSystem(ess_tdof, *V, *b, A, X, B);  
+  auto *Ap = A.As<mfem::HypreParMatrix>();
 
-  auto P = make_prec(A);
-  // It will error on setup, for ADS/AMS this happens in l1 row norm producing singular coarse-grid matrices causing the errors
-  // but this is handled fine in those cases, so I am hoping it is here as well TODO Really should figure out the origin of this 
-  // Future debug note: This only started happening when I compiled hypre inside the Dockerfile, up until that point this didnt 
-  // happen, but OpenMP didnt work either (ie always 1 thread never more)  
-  if (auto *hypre_prec = dynamic_cast<mfem::HypreSolver*>(P.get()))
-  {   
-    if (cfg->debug.printHypreWarnings) hypre_prec->SetErrorMode(mfem::HypreSolver::WARN_HYPRE_ERRORS);
-    else hypre_prec->SetErrorMode(mfem::HypreSolver::IGNORE_HYPRE_ERRORS);
+  if (cfg->solver.solver == "MUMPS")
+  {
+    // TODO Add warning if no dirichlet is supplied the Sym Type is SYMMETRIC_INDEFINITE
+    if (cfg->debug.debug) std::cout << "[DEBUG] Using MUMPS solver" << std::endl;
+    mfem::MUMPSSolver mumps(Ap->GetComm());
+    mumps.SetPrintLevel(cfg->solver.printlevel); // must be before SetOperator
+    mumps.SetReorderingReuse(true); // TODO Cmd line flag
+    mumps.SetReorderingStrategy(mfem::MUMPSSolver::AUTOMATIC); // TODO Cmd line flag
+    mumps.SetMatrixSymType(
+        mfem::MUMPSSolver::MatType::SYMMETRIC_POSITIVE_DEFINITE);
+    mumps.SetOperator(*Ap);  // factorization
+    mumps.Mult(B, X);        // solve
+    mumps.SetPrintLevel(cfg->solver.printlevel);
+  }
+  else if (cfg->solver.solver == "CG")
+  {
+    if (cfg->debug.debug) std::cout << "[DEBUG] Using CG solver" << std::endl;
+    // Build AMG preconditioner directly
+    auto P = std::make_unique<mfem::HypreBoomerAMG>(*Ap);
+    P->SetPrintLevel(cfg->solver.printlevel);
+
+    {
+        HYPRE_Solver hsolver = (HYPRE_Solver)(*P);
+        HYPRE_BoomerAMGSetPrintFileName(hsolver, log_path.c_str());
+    }
+
+    if (auto *hypre_prec = dynamic_cast<mfem::HypreSolver*>(P.get()))
+    {
+        hypre_prec->SetErrorMode(
+            cfg->debug.printHypreWarnings
+                ? mfem::HypreSolver::WARN_HYPRE_ERRORS
+                : mfem::HypreSolver::IGNORE_HYPRE_ERRORS);
+    }
+
+    mfem::CGSolver cg(comm);
+    cg.SetOperator(*A.Ptr());
+    cg.SetPreconditioner(*P);
+    cg.SetRelTol(cfg->solver.rtol);
+    cg.SetAbsTol(cfg->solver.atol);
+    cg.SetMaxIter(cfg->solver.maxiter);
+    cg.SetPrintLevel(cfg->solver.printlevel);
+
+    std::ofstream it_log(log_path);
+    ResidualFileMonitor monitor(it_log);
+    cg.SetMonitor(monitor);
+
+    cg.Mult(B, X);
   }
 
-  CGSolver cg(comm);
-  cg.SetOperator(*A.Ptr());     
-  cg.SetPreconditioner(*P);
-  cg.SetRelTol(cfg->solver.rtol);
-  cg.SetAbsTol(cfg->solver.atol);
-  cg.SetMaxIter(cfg->solver.maxiter);
-  cg.SetPrintLevel(cfg->solver.printlevel);
-  // Print to file TODO need to homogenixze my saving customs
-  // already  have a save path but need to pass a per run save path
-  std::ofstream it_log(log_path);
-  ResidualFileMonitor monitor(it_log);
-  cg.SetMonitor(monitor);
-
-  cg.Mult(B, X);
-
+  // As before:
   a->RecoverFEMSolution(X, *b, *V);
 
 

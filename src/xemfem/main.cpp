@@ -7,7 +7,9 @@
 #include "optimization.h"
 #include "sweeps.h"
 #include "parallelization.h"
-#include "plotting_api.h"
+#ifdef HAVE_VTK
+    #include "plotting_api.h"
+#endif
 #include "interpolator.h"
 #include "path_handler.h"
 

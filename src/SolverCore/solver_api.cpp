@@ -101,8 +101,15 @@ SimulationResult run_simulation(std::shared_ptr<Config> cfg,
   for (int it = 0; it < max_iter; ++it)
   {
     // Solve Poisson
+    std::chrono::steady_clock::time_point t_start;
+    if (cfg->debug.timing) t_start = std::chrono::steady_clock::now();
     V = SolvePoisson(*pfes, BCs, cfg, solver_log_overwrite);
-
+    if (cfg->debug.timing)
+    {
+        auto t_end = std::chrono::steady_clock::now();
+        auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count();
+        std::cout << "[Timing]: Solve Poisson timing (" << dt << " ms)" << std::endl;
+    }
     // Break if no AMR
     if (!cfg->mesh.amr.enable || skip_amr) { break; }
 
@@ -618,6 +625,8 @@ std::string run_one(const Config &cfg,
                     std::size_t run_index,
                     bool skip_amr)
 {
+    std::chrono::steady_clock::time_point t_start;
+    if (cfg.debug.timing) t_start = std::chrono::steady_clock::now();
     int rank = 0;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     int world_size = 0;
@@ -634,7 +643,14 @@ std::string run_one(const Config &cfg,
     MPI_Barrier(MPI_COMM_WORLD);
     if (!cfg.debug.dry_run)
     {
+        if (cfg.debug.timing) t_start = std::chrono::steady_clock::now();
         SimulationResult result = run_simulation(cfg_ptr, model_path, skip_amr);
+        if (cfg.debug.timing)
+        {
+            auto t_end = std::chrono::steady_clock::now();
+            auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count();
+            std::cout << "[Timing]: Single Simulation timing (" << dt << " ms)" << std::endl;
+        }
         if (!result.success)
         {
             std::cerr << "Simulation failed for " << run_name
@@ -649,6 +665,12 @@ std::string run_one(const Config &cfg,
         for (const auto& [name, b] : cfg_copy.boundaries) {
             std::cout << name << ": " << b.value << '\n';
         }
+    }
+    if (cfg.debug.timing)
+    {
+        auto t_end = std::chrono::steady_clock::now();
+        auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count();
+        std::cout << "[Timing]: run_one timing (" << dt << " ms)" << std::endl;
     }
     return run_name;
 }

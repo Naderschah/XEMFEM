@@ -280,10 +280,17 @@ struct SolverSettings {
     bool axisymmetric = false;
     int order = 3;
     std::string assembly_mode = "partial";
+    
+    std::string solver = "MUMPS";
+    
+    // MUMPS Settings
+    // When we get to 3D need to tune out of core memory relaxation etcs
 
+    // CG Settings
     double atol = 1.0;
     double rtol = 0.0;
     int    maxiter = 100000;
+    
     int    printlevel = 1;
 };
 // Field Line tracing parameters 
