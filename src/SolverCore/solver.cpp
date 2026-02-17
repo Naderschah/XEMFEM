@@ -153,8 +153,16 @@ std::unique_ptr<mfem::ParGridFunction> SolvePoisson(ParFiniteElementSpace &pfes,
     mumps.SetReorderingStrategy(mfem::MUMPSSolver::AUTOMATIC); // TODO Cmd line flag
     mumps.SetMatrixSymType(
         mfem::MUMPSSolver::MatType::SYMMETRIC_POSITIVE_DEFINITE);
+    std::chrono::steady_clock::time_point t_start;
+    if (cfg->debug.timing) t_start = std::chrono::steady_clock::now();
     mumps.SetOperator(*Ap);  // factorization
     mumps.Mult(B, X);        // solve
+    if (cfg->debug.timing)
+    {
+        auto t_end = std::chrono::steady_clock::now();
+        auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count();
+        std::cout << "[Timing]: MUMPS Factorization + Solve (" << dt << " ms)" << std::endl;
+    }
     mumps.SetPrintLevel(cfg->solver.printlevel);
   }
   else if (cfg->solver.solver == "CG")
@@ -188,8 +196,7 @@ std::unique_ptr<mfem::ParGridFunction> SolvePoisson(ParFiniteElementSpace &pfes,
     std::ofstream it_log(log_path);
     ResidualFileMonitor monitor(it_log);
     cg.SetMonitor(monitor);
-
-    cg.Mult(B, X);
+    cg.Mult(B, X);;
   }
 
   // As before:

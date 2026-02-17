@@ -101,15 +101,7 @@ SimulationResult run_simulation(std::shared_ptr<Config> cfg,
   for (int it = 0; it < max_iter; ++it)
   {
     // Solve Poisson
-    std::chrono::steady_clock::time_point t_start;
-    if (cfg->debug.timing) t_start = std::chrono::steady_clock::now();
     V = SolvePoisson(*pfes, BCs, cfg, solver_log_overwrite);
-    if (cfg->debug.timing)
-    {
-        auto t_end = std::chrono::steady_clock::now();
-        auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count();
-        std::cout << "[Timing]: Solve Poisson timing (" << dt << " ms)" << std::endl;
-    }
     // Break if no AMR
     if (!cfg->mesh.amr.enable || skip_amr) { break; }
 
