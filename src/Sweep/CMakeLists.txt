@@ -134,6 +134,8 @@ if (VTK_FOUND)
   )
 
   target_compile_definitions(sweep_objects PRIVATE HAVE_VTK=1)
+else()
+  target_compile_definitions(sweep_objects PRIVATE HAVE_VTK=0)
 endif()
 
 
