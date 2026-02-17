@@ -134,11 +134,6 @@ if (VTK_FOUND)
   )
 
   target_compile_definitions(sweep_objects PRIVATE HAVE_VTK=1)
-else()
-  message(STATUS "PLOT: VTK not found — building without VTK support")
-
-  target_sources(sweep_objects PRIVATE plot_stub.cpp)
-  target_compile_definitions(sweep_objects PRIVATE HAVE_VTK=0)
 endif()
 
 
