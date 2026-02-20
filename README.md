@@ -87,6 +87,10 @@ mesh:
   # Specifies wheter a TPC geometry is built or not (disables things like ptfe wall BC marking for charge buildup)
   is_tpc: true 
   geometry: parallel
+  # Liquid level to build for
+  liquid_level: 0.004
+  # Shrinkage factor to build for
+  shrinkage_factor: 0.986
   # Which geometry to generate in meshing (uses <geometry>*.py for finding the file)
   geometry: SR3
   # Which set of voltages to use, also defined in the same file (mesh_postprocessor uses this)

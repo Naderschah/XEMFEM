@@ -7,7 +7,7 @@ set -euo pipefail
 # -----------------------------
 
 MODE="tui"
-TUI_SCRIPT="$DEFAULT_TUI_SCRIPT"
+DEFAULT_TUI_SCRIPT="/work/geometry/build_geometry.py"
 BASE_PATH_ENV=""   # will map to BASE_PATH inside container
 
 while [[ $# -gt 0 ]]; do
