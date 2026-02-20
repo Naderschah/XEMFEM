@@ -1,47 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-
-# -----------------------------
-# Argument parsing
-# -----------------------------
-
-MODE="tui"
-DEFAULT_TUI_SCRIPT="/work/geometry/build_geometry.py"
-BASE_PATH_ENV=""   # will map to BASE_PATH inside container
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    gui)
-      MODE="gui"
-      shift
-      ;;
-    tui)
-      MODE="tui"
-      shift
-      ;;
-    --config_path)
-      if [[ -z "${2:-}" ]]; then
-        echo "ERROR: --config_path requires a value"
-        exit 1
-      fi
-      BASE_PATH_ENV="$2"
-      shift 2
-      ;;
-    *.py)
-      MODE="tui"
-      TUI_SCRIPT="$1"
-      shift
-      ;;
-    *)
-      echo "ERROR: Unknown argument '$1'"
-      echo "Usage:"
-      echo "  ./run_salome.sh [gui|tui] [--config_path PATH] [script.py]"
-      exit 1
-      ;;
-  esac
-done
-
 IMAGE="trophime/salome:9.9.0-focal"
 DEFAULT_TUI_SCRIPT="/work/geometry/build_geometry.py"
 
@@ -62,34 +21,38 @@ HOST_XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"
 # -----------------------------
 # Argument parsing
 # -----------------------------
-
 MODE="tui"
 TUI_SCRIPT="$DEFAULT_TUI_SCRIPT"
+BASE_PATH_ENV=""
 
-if [[ $# -ge 1 ]]; then
+while [[ $# -gt 0 ]]; do
   case "$1" in
     gui)
       MODE="gui"
+      shift
       ;;
     tui)
       MODE="tui"
+      shift
+      ;;
+    --config_path)
+      [[ -n "${2:-}" ]] || { echo "ERROR: --config_path requires a value"; exit 1; }
+      BASE_PATH_ENV="$2"
+      shift 2
       ;;
     *.py)
       MODE="tui"
       TUI_SCRIPT="$1"
+      shift
       ;;
     *)
       echo "ERROR: Unknown argument '$1'"
       echo "Usage:"
-      echo "  ./run_salome.sh"
-      echo "  ./run_salome.sh tui"
-      echo "  ./run_salome.sh gui"
-      echo "  ./run_salome.sh /path/to/script.py"
+      echo "  ./make_mesh.sh [gui|tui] [--config_path PATH] [script.py]"
       exit 1
       ;;
   esac
-fi
-
+done
 # -----------------------------
 # Docker arguments
 # -----------------------------
