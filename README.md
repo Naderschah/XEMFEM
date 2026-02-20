@@ -82,6 +82,11 @@ geometry_id: SomeName
 mesh:
   # No need to modify this the mesh postprocessor writes the correct path
   path: "/work/geometry/mesh/mesh22.msh"
+  # In case a different base path is desired for sourcing geom and voltages (both must live in the same directory in this case)
+  geom_volt_path_overwrite: /work/geometry/COMSOLValidation/parallel_plate_capacitor/
+  # Specifies wheter a TPC geometry is built or not (disables things like ptfe wall BC marking for charge buildup)
+  is_tpc: true 
+  geometry: parallel
   # Which geometry to generate in meshing (uses <geometry>*.py for finding the file)
   geometry: SR3
   # Which set of voltages to use, also defined in the same file (mesh_postprocessor uses this)

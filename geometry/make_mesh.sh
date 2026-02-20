@@ -1,6 +1,47 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+
+# -----------------------------
+# Argument parsing
+# -----------------------------
+
+MODE="tui"
+TUI_SCRIPT="$DEFAULT_TUI_SCRIPT"
+BASE_PATH_ENV=""   # will map to BASE_PATH inside container
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    gui)
+      MODE="gui"
+      shift
+      ;;
+    tui)
+      MODE="tui"
+      shift
+      ;;
+    --config_path)
+      if [[ -z "${2:-}" ]]; then
+        echo "ERROR: --config_path requires a value"
+        exit 1
+      fi
+      BASE_PATH_ENV="$2"
+      shift 2
+      ;;
+    *.py)
+      MODE="tui"
+      TUI_SCRIPT="$1"
+      shift
+      ;;
+    *)
+      echo "ERROR: Unknown argument '$1'"
+      echo "Usage:"
+      echo "  ./run_salome.sh [gui|tui] [--config_path PATH] [script.py]"
+      exit 1
+      ;;
+  esac
+done
+
 IMAGE="trophime/salome:9.9.0-focal"
 DEFAULT_TUI_SCRIPT="/work/geometry/build_geometry.py"
 
@@ -60,8 +101,14 @@ DOCKER_ARGS=(
   --ipc=host
   --net=host
   -v "$PROJECT_ROOT:/work"
-  -w /work/geometry        # <-- ENTRYPOINT / WORKDIR FIX
+  -w /work/geometry 
 )
+
+if [[ -n "$BASE_PATH_ENV" ]]; then
+  DOCKER_ARGS+=(
+    -e "BASE_PATH=$BASE_PATH_ENV"
+  )
+fi
 
 # GPU support
 if [[ "$USE_NVIDIA" -eq 1 ]]; then
