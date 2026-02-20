@@ -1,0 +1,51 @@
+schema_version: 1
+geometry_id: SR3XENONnT
+mesh:
+  path: /work/geometry/COMSOLValidation/parallel_plate_capacitor/mesh/mesh22.msh
+  geom_volt_path_overwrite: /work/geometry/COMSOLValidation/parallel_plate_capacitor/
+  is_tpc: false
+  geometry: parallel
+  voltages: parallel
+  liquid_level: 0.004
+  shrinkage_factor: 1
+  manual_naming_only: true # TODO DOcument
+  autoappend: true
+  append_fieldShaping_Voltages_toConfig: false
+  NetgenParams:
+    debugCoarse: false
+    maxSize: 0.015008
+    minSize: 1.0e-06
+    growthRate: 0.1
+    UseSurfaceCurvature: 1
+    NBSegmentsPerEdge: 4
+    NBSegmentsPerRadius: 3
+    UseChordalError: 0
+    ChordalErrorValue: 1
+    AQ_ElemSizeWeight: 0.5
+    AQ_UseDelauney: 1
+    AQ_CheckOverlapping: 1
+    AQ_CheckChartBoundary: 1
+    AQ_FuseEdges: 1
+    Opt_QuadAllowed: false
+    Opt_SecondOrder: 0
+    Opt_Optimize: true
+  AMR:
+    enable: false
+save_path: /work/parallel_plate_capacitor_results
+delete_files_present: true
+debug:
+  debug: true
+  timing: true
+  StopAfterSketh: false
+  dry_run: false
+  printBoundaryConditions: false
+  printHypreWarnings: false
+  dumpdata: false
+solver:
+  solver: MUMPS
+  generate_E: false
+  axisymmetric: true
+  order: 2
+  assembly_mode: partial
+  maxiter: 100000
+  printlevel: 0

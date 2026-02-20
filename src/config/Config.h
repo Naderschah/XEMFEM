@@ -127,7 +127,7 @@ struct MPISettings {
 };
 
 struct ThreadsSettings {
-    bool enabled = true;
+    bool enabled = false;
     bool num_auto = true;       // true if "auto" was given TODO is this used
     int  num = 0;               // 0 means "auto" when num_auto=true
     std::string affinity = "compact"; // "compact" | "scatter" | "none"

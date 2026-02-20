@@ -24,6 +24,7 @@ geom = config["mesh"]["geometry"]
 geom_override = config["mesh"].get("geom_volt_path_overwrite")
 is_tpc = config["mesh"].get("is_tpc", True)
 mesh_path = config["mesh"]['path']
+manual_only = config["mesh"].get("manual_naming_only")
 mesh_path = os.path.normpath(
     os.path.expandvars(os.path.expanduser(mesh_path))
 )
@@ -101,12 +102,14 @@ def main():
     pre_partition_faces = flatten_dict(ptfe_face_map) + flatten_dict(electrode_face_map) + flatten_dict(xenon_face_map)
     pre_partition = {i.name(): [get_area(i, Cryostat_doc), *center_of_weight(Cryostat_doc,i)] for i in pre_partition_faces if i is not None}
     post_partition = {partition.result().subResult(i).name(): [get_area(partition.result().subResult(i), Cryostat_doc), *center_of_weight(Cryostat_doc,partition.result().subResult(i))] for i in range(partition.result().numberOfSubs())}
-    names_in_partition, renamed_cnt = match_and_rename_partition_faces(partition, pre_partition, post_partition)
-
+    if not manual_only:
+        names_in_partition, renamed_cnt = match_and_rename_partition_faces(partition, pre_partition, post_partition)
+    else:
+        names_in_partition, renamed_cnt = [], 0
     # Make a residuals list TODO Dont recompute
     post_partition_sub = {partition.result().subResult(i).name():[get_area(partition.result().subResult(i), Cryostat_doc), *center_of_weight(Cryostat_doc,partition.result().subResult(i))] for i in range(partition.result().numberOfSubs()) if ('Partition' in partition.result().subResult(i).name())}
     # Select LXe and GXe by area
-    if xenon_face_map["GXe0"] and xenon_face_map["LXe0"]:
+    if xenon_face_map["GXe0"] and xenon_face_map["LXe0"] and len(post_partition_sub.keys()) > 0 and not manual_only:
         LXeGXeNames, _  = rename_two_largest_partition_faces(partition, post_partition_sub)
         names_in_partition += LXeGXeNames
         print("Named LXe and GXe by Volume")
