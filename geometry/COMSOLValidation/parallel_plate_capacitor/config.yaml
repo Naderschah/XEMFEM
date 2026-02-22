@@ -4,11 +4,11 @@ mesh:
   path: /work/geometry/COMSOLValidation/parallel_plate_capacitor/mesh/mesh22.msh
   geom_volt_path_overwrite: /work/geometry/COMSOLValidation/parallel_plate_capacitor/
   is_tpc: false
-  geometry: eccentric
-  voltages: eccentric
+  geometry: parallel
+  voltages: parallel
   liquid_level: 0.004
   shrinkage_factor: 1
-  manual_naming_only: true # TODO DOcument
+  manual_naming_only: true
   autoappend: true
   append_fieldShaping_Voltages_toConfig: false
   NetgenParams:
@@ -31,7 +31,7 @@ mesh:
     Opt_Optimize: true
   AMR:
     enable: false
-save_path: /work/parallel_plate_capacitor_results
+save_path: /work/sim_results/parallel_plate_capacitor_results
 delete_files_present: true
 debug:
   debug: true
@@ -44,8 +44,24 @@ debug:
 solver:
   solver: MUMPS
   generate_E: false
-  axisymmetric: true
+  axisymmetric: false
   order: 2
   assembly_mode: partial
   maxiter: 100000
   printlevel: 0
+materials:
+  GXe:
+    epsilon_r: 1.0
+    attr_id: 1
+  LXe:
+    epsilon_r: 1.95
+    attr_id: 2
+boundaries:
+  BC_BottomPlate:
+    bdr_id: 3
+    type: dirichlet
+    value: 0.0
+  BC_TopPlate:
+    bdr_id: 4
+    type: dirichlet
+    value: 100.0

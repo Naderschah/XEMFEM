@@ -43,7 +43,7 @@ if geom_override:
     )
 else:
     geom_path = os.path.join(base_path, "geometries")
-
+print("globbing: ", os.path.join(geom_path, f"*{geom}*.py"))
 fname = glob.glob(
     os.path.join(geom_path, f"*{geom}*.py")
 )

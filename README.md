@@ -86,6 +86,8 @@ mesh:
   geom_volt_path_overwrite: /work/geometry/COMSOLValidation/parallel_plate_capacitor/
   # Specifies wheter a TPC geometry is built or not (disables things like ptfe wall BC marking for charge buildup)
   is_tpc: true 
+  # An overwrite should the post partition naming tools not work properly for a certain geometry
+  manual_naming_only: false
   geometry: parallel
   # Liquid level to build for
   liquid_level: 0.004

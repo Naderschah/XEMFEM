@@ -36,8 +36,8 @@ def build_sketch_dicts(shrinkage_factor):
     'Height':dielectric_height,
   }
   manual_mapping = {
-        1-1: "BottomPlate_part",
-        2-1: "TopPlate_part",
+        1-1: "BottomPlate",
+        2-1: "TopPlate",
         3-1: "GXe_part",
         4-1: "LXe_part",
     }

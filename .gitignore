@@ -4,6 +4,7 @@
 *.gf
 *.med
 ./geometry/mesh/
+*/mesh/*
 # Ignore all builds anywhere in the tree
 **/build/
 **/build*/
