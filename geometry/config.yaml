@@ -2,7 +2,7 @@ schema_version: 1
 geometry_id: SR3XENONnT
 mesh:
   path: /work/geometry/mesh/mesh22.msh
-  geometry: SR3
+  geometry: debug
   voltages: SR0
   liquid_level: 0.004
   autoappend: true
@@ -49,7 +49,7 @@ delete_files_present: true
 debug:
   debug: true
   timing: true
-  StopAfterSketh: false
+  StopAfterSketh: true
   dry_run: false
   printBoundaryConditions: false
   printHypreWarnings: false
