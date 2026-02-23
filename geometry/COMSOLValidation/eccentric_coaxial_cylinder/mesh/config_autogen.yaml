@@ -1,0 +1,13 @@
+materials:
+  GXe:
+    attr_id: 1
+  LXe:
+    attr_id: 2
+
+boundaries:
+  BC_InnerCylinder:
+    bdr_id: 4
+    type: dirichlet
+  BC_OuterCylinder:
+    bdr_id: 3
+    type: dirichlet

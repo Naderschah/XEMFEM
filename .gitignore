@@ -26,4 +26,5 @@ plots
 *.pyc
 mount/
 geometry/createGeometryFromCAD/out
-XENT-TPC*
+geometry/createGeometryFromCAD/CAD_*
+geometry/createGeometryFromCAD/DXF_*
