@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-import os, json, math
+import os, json, math, glob
 import ezdxf
 from ezdxf import edgesmith, edgeminer
 from ezdxf.math import Vec3
 
-DXF_PATH  = "/work/geometry/createGeometryFromCAD/DXF_slices_parts/slice_015.00deg/XENT_TPC_A_Warm.Part__Feature001.Part__Feature001..dxf"
-DUMP_PATH = "/work/geometry/createGeometryFromCAD/DXF_slices_parts/slice_015.00deg/XENT_TPC_A_Warm.Part__Feature001.Part__Feature001.json"
-GAP_TOL   = 1e-6
+# Point this at the directory that contains multiple slice_* subdirectories
+ROOT_DIR = "/work/geometry/createGeometryFromCAD/DXF_slices_parts"
+DXF_GLOB = "**/*.dxf"   # recursive
+GAP_TOL  = 1e-6
 
 
 def _vxy(p, nd=12):
@@ -70,17 +71,6 @@ def order_and_orient_closed_loop(loop_edges, gap_tol=1e-6):
         raise RuntimeError("Ordered chain did not close.")
     return ordered
 
-def _find_one_loop(edges, gap_tol=GAP_TOL):
-    deposit = edgeminer.Deposit(edges, gap_tol=gap_tol)
-    loops = list(edgeminer.find_all_loops(deposit))
-    if not loops:
-        loop = edgeminer.find_loop(deposit)
-        if loop is None:
-            raise RuntimeError("No closed loop found.")
-        return loop
-    loops.sort(key=len, reverse=True)
-    return loops[0]
-
 def _dist2_xy(a, b):
     return (a.x - b.x) ** 2 + (a.y - b.y) ** 2
 
@@ -101,18 +91,7 @@ def _reverse_bspline_payload_inplace(payload_dict):
     if mults:
         payload_dict["mults"] = list(reversed(mults))
 
-def dxf_loop_to_component_pts(msp):
-    # expand INSERTs
-    entities = []
-    for e in msp:
-        if e.dxftype() == "INSERT":
-            entities.extend(list(e.virtual_entities()))
-        else:
-            entities.append(e)
-
-    edges = list(edgesmith.edges_from_entities_2d(entities))
-    chain = order_and_orient_closed_loop(_find_one_loop(edges), gap_tol=GAP_TOL)
-
+def _chain_to_component(chain):
     pts = []
     for ed in chain:
         payload = getattr(ed, "payload", None)
@@ -157,12 +136,10 @@ def dxf_loop_to_component_pts(msp):
                 "flags": flags,
             }
 
-            # orient spline payload to match ed.start -> ed.end
             sp0 = Vec3(poles[0][0], poles[0][1], 0.0)
             sp1 = Vec3(poles[-1][0], poles[-1][1], 0.0)
             e0 = Vec3(ed.start.x, ed.start.y, 0.0)
             e1 = Vec3(ed.end.x, ed.end.y, 0.0)
-
             if (_dist2_xy(sp0, e1) + _dist2_xy(sp1, e0)) < (_dist2_xy(sp0, e0) + _dist2_xy(sp1, e1)):
                 _reverse_bspline_payload_inplace(payload_dict)
 
@@ -173,19 +150,73 @@ def dxf_loop_to_component_pts(msp):
 
     return {"pts": pts}
 
+def dxf_loops_to_components(msp, gap_tol=GAP_TOL):
+    entities = []
+    for e in msp:
+        if e.dxftype() == "INSERT":
+            entities.extend(list(e.virtual_entities()))
+        else:
+            entities.append(e)
+
+    edges = list(edgesmith.edges_from_entities_2d(entities))
+    deposit = edgeminer.Deposit(edges, gap_tol=gap_tol)
+    loops = list(edgeminer.find_all_loops(deposit))
+    if not loops:
+        loop = edgeminer.find_loop(deposit)
+        if loop is None:
+            return []
+        loops = [loop]
+
+    components = []
+    for loop_edges in loops:
+        chain = order_and_orient_closed_loop(loop_edges, gap_tol=gap_tol)
+        components.append(_chain_to_component(chain))
+    return components
+
+def _indexed_dump_paths(base_json_path, count):
+    base_json_path = os.path.abspath(base_json_path)
+    root, ext = os.path.splitext(base_json_path)
+    if ext.lower() != ".json":
+        ext = ".json"
+    if count <= 1:
+        return [root + ext]
+    return [f"{root}_{i}{ext}" for i in range(count)]
+
+def _dxf_to_base_json_path(dxf_path):
+    dxf_path = os.path.abspath(dxf_path)
+    d = os.path.dirname(dxf_path)
+    stem = os.path.splitext(os.path.basename(dxf_path))[0]
+    return os.path.join(d, stem + ".json")
+
+def process_one_file(dxf_path):
+    doc = ezdxf.readfile(dxf_path)
+    msp = doc.modelspace()
+    components = dxf_loops_to_components(msp, gap_tol=GAP_TOL)
+
+    base_json = _dxf_to_base_json_path(dxf_path)
+    os.makedirs(os.path.dirname(base_json), exist_ok=True)
+
+    if not components:
+        print(f"[SKIP] no loops: {dxf_path}")
+        return
+
+    paths = _indexed_dump_paths(base_json, len(components))
+    for comp, path in zip(components, paths):
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(comp, f, indent=2, ensure_ascii=False)
+        print(path)
 
 def main():
-    doc = ezdxf.readfile(DXF_PATH)
-    msp = doc.modelspace()
-    component = dxf_loop_to_component_pts(msp)
+    pattern = os.path.join(os.path.abspath(ROOT_DIR), DXF_GLOB)
+    dxf_paths = sorted(glob.glob(pattern, recursive=True))
+    if not dxf_paths:
+        raise SystemExit(f"No DXF files found under: {ROOT_DIR}")
 
-    dump_path = os.path.abspath(DUMP_PATH)
-    os.makedirs(os.path.dirname(dump_path), exist_ok=True)
-    with open(dump_path, "w", encoding="utf-8") as f:
-        json.dump(component, f, indent=2, ensure_ascii=False)
-
-    print(dump_path)
-
+    for p in dxf_paths:
+        try:
+            process_one_file(p)
+        except Exception as e:
+            print(f"[ERROR] {p}: {e}")
 
 if __name__ == "__main__":
     main()
