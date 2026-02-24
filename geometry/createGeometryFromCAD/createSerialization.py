@@ -143,7 +143,7 @@ def _chain_to_component(chain):
             if (_dist2_xy(sp0, e1) + _dist2_xy(sp1, e0)) < (_dist2_xy(sp0, e0) + _dist2_xy(sp1, e1)):
                 _reverse_bspline_payload_inplace(payload_dict)
 
-            pts.append(["bspline", x1, y1, payload_dict])
+            pts.append(["spline", x1, y1, payload_dict])
 
         else:
             raise NotImplementedError(f"Unsupported payload type: {t}")
