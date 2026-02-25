@@ -1,0 +1,30 @@
+paths:
+  in_dir: "/path/to/in"
+  out_dir: "/path/to/out"
+  extras_dir: "/path/to/manual_additions"
+
+# Overrides
+override_periodicity:
+  # always applied prior, preferably these matches are not included in all_files when group computation comes about
+  # Still have to find 
+  - match: "^CELL_A_.*"          # regex against target name (without .json)
+    use_source: "min_extremum"   # "min_extremum" | "max_extremum"
+    set:
+      axis: "y"                  # "x" or "y"
+      pitch: 12.5                # signed; if null, use minimum period computed
+      number: 7                  # repetitions not including original;
+
+# 2) Replace geometry (pts) from another file/path when name matches.
+#    This is separate from pitch/number overwrite.
+replace_these:
+  - match: "^CELL_A_.*"
+    source: # type is always file 
+      path: "/path/to/geometry_fixups/CELL_A_template.json"
+
+# 3) Manual additions that must be written to out_dir regardless of grouping
+#    Either copy files verbatim or emit inline JSON.
+manual_additions:
+  copy:
+    - from: "/path/to/extra_parts/EXTRA_001.json"
+      to_name: "EXTRA_001"       # written as out_dir/EXTRA_001.json
+    - from_glob: "/path/to/extra_parts/*.json"  # optional if you want many
