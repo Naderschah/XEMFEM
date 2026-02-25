@@ -1,6 +1,6 @@
 import os, json, glob
 
-def build_sketch_dicts(_unused=None, angle_dir = "/work/geometry/createGeometryFromCAD/DXF_slices_parts/slice_015.00deg"):
+def build_sketch_dicts(_unused=None, angle_dir = "/work/geometry/createGeometryFromCAD/DXF_slices_parts/slice_022.50deg"):
     """
     Debug-only helper.
 
@@ -18,15 +18,15 @@ def build_sketch_dicts(_unused=None, angle_dir = "/work/geometry/createGeometryF
     """
 
     merged = {}
-
+    components = ["*json"]
     # Load all JSON files in this angle directory
     for json_path in sorted(glob.glob(os.path.join(angle_dir, "*.json"))):
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-            if not isinstance(data, dict):
-                continue
-            for k, v in data.items():
-                merged[k] = v
+        if not isinstance(data, dict):
+            continue
+        key = os.path.splitext(os.path.basename(json_path))[0]
+        merged[key] = data
 
     if not merged:
         raise RuntimeError(f"No component JSON files found in {angle_dir}")
