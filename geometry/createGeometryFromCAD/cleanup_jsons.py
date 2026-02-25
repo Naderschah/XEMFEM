@@ -7,24 +7,141 @@ import os, json
 from collections import Counter
 from collections import defaultdict
 import shutil
+import yaml
+import sys
+def load_yaml_config(cfg_path):
+    """
+    Loads config.yaml and normalizes/validates the expected structure.
+
+    Features:
+      - Expands ~ and environment variables in all string values
+      - Resolves relative *paths* relative to the config file's directory
+      - Does NOT path-resolve regex strings (e.g. override_periodicity[].match)
+      - Ensures optional sections exist with sane defaults:
+          override_periodicity: []
+          replace_these: []
+          manual_additions: {}
+
+    Expected minimal config:
+      paths:
+        in_dir: "..."
+        out_dir: "..."
+    """
+    import os, yaml
+
+    cfg_path = os.path.abspath(os.path.expanduser(os.path.expandvars(cfg_path)))
+    if not os.path.isfile(cfg_path):
+        raise FileNotFoundError(f"Config file not found: {cfg_path}")
+
+    with open(cfg_path, "r", encoding="utf-8") as f:
+        try:
+            cfg = yaml.safe_load(f) or {}
+        except yaml.YAMLError as e:
+            raise ValueError(f"Invalid YAML in {cfg_path}: {e}") from e
+
+    if not isinstance(cfg, dict):
+        raise ValueError(f"Top-level YAML must be a mapping/object in {cfg_path}")
+
+    base_dir = os.path.dirname(cfg_path)
+
+    def _expand_string(s: str) -> str:
+        return os.path.expanduser(os.path.expandvars(s))
+
+    def _resolve_path(p: str) -> str:
+        p = _expand_string(p)
+        return p if os.path.isabs(p) else os.path.abspath(os.path.join(base_dir, p))
+
+    # Expand env/~ everywhere, but do NOT path-resolve arbitrary strings (regex!)
+    def _walk_expand(v):
+        if isinstance(v, str):
+            return _expand_string(v)
+        if isinstance(v, list):
+            return [_walk_expand(x) for x in v]
+        if isinstance(v, dict):
+            return {k: _walk_expand(val) for k, val in v.items()}
+        return v
+
+    cfg = _walk_expand(cfg)
+
+    # --- validation / defaults ---
+    paths = cfg.get("paths")
+    if not isinstance(paths, dict):
+        raise ValueError("config.yaml must contain 'paths:' as a mapping/object")
+
+    for k in ("in_dir", "out_dir"):
+        if k not in paths or not isinstance(paths[k], str) or not paths[k].strip():
+            raise ValueError(f"config.yaml paths.{k} must be a non-empty string")
+
+    # Resolve actual path fields relative to config directory
+    paths["in_dir"] = _resolve_path(paths["in_dir"])
+    paths["out_dir"] = _resolve_path(paths["out_dir"])
+
+    if "extras_dir" in paths and paths["extras_dir"] is not None:
+        if not isinstance(paths["extras_dir"], str):
+            raise ValueError("config.yaml paths.extras_dir must be a string (or omitted)")
+        paths["extras_dir"] = _resolve_path(paths["extras_dir"])
+
+    # Optional sections with defaults
+    cfg.setdefault("override_periodicity", [])
+    cfg.setdefault("replace_these", [])
+    cfg.setdefault("manual_additions", {})
+
+    if not isinstance(cfg["override_periodicity"], list):
+        raise ValueError("override_periodicity must be a list")
+    if not isinstance(cfg["replace_these"], list):
+        raise ValueError("replace_these must be a list")
+    if not isinstance(cfg["manual_additions"], dict):
+        raise ValueError("manual_additions must be a mapping/object")
+
+    # Resolve only known path fields inside sections (leave regex 'match' untouched)
+    for rule in cfg.get("replace_these", []) or []:
+        if not isinstance(rule, dict):
+            continue
+        src = rule.get("source")
+        if isinstance(src, dict) and isinstance(src.get("path"), str) and src["path"].strip():
+            src["path"] = _resolve_path(src["path"])
+
+    manual = cfg.get("manual_additions") or {}
+    if isinstance(manual, dict):
+        copy_rules = manual.get("copy") or []
+        if isinstance(copy_rules, list):
+            for rule in copy_rules:
+                if not isinstance(rule, dict):
+                    continue
+                if isinstance(rule.get("from"), str) and rule["from"].strip():
+                    rule["from"] = _resolve_path(rule["from"])
+                if isinstance(rule.get("from_glob"), str) and rule["from_glob"].strip():
+                    rule["from_glob"] = _resolve_path(rule["from_glob"])
+                if isinstance(rule.get("to_dir"), str) and rule["to_dir"].strip():
+                    rule["to_dir"] = _resolve_path(rule["to_dir"])
+
+    return cfg
 
 def load_and_prepare_jsons(path):
   """
   Takes the path to one slice directory
-
   returns all objects in a json and a few precomputed things
   """
   all_files = {}
-  for i in os.listdir(path):
-    all_files[".".join(i.split(".")[:-2])] = json.loads(os.path.join(path, i))
-  # Data for cheap comparisons
+
+  for fname in os.listdir(path):
+    if not fname.lower().endswith(".json"):
+      continue
+
+    # your naming rule: drop the last two extensions (e.g. NAME.abc.json -> NAME)
+    key = ".".join(fname.split(".")[:-2]) if len(fname.split(".")) >= 3 else os.path.splitext(fname)[0]
+    fpath = os.path.join(path, fname)
+
+    with open(fpath, "r", encoding="utf-8") as f:
+      all_files[key] = json.load(f)
+
   file_meta = {
-    i:{
-      'n_points': len(all_files[i]['pts'])
-      'min_x': min(pts_row[1] for pts_row in all_files[i]['pts'])
-      'min_y': min(pts_row[2] for pts_row in all_files[i]['pts'])
-    }
-    for i in all_files.keys()
+      name: {
+          "n_points": len(all_files[name]["pts"]),
+          "min_x": min(row[1] for row in all_files[name]["pts"]),
+          "min_y": min(row[2] for row in all_files[name]["pts"]),
+      }
+      for name in all_files.keys()
   }
   return all_files, file_meta
 
@@ -138,84 +255,141 @@ def find_periodic_groups(file_meta, candidates,
                                       tol_pos, tol_step, min_len),
   }
 
-def make_and_write_grouped(target, groupings, in_dir, out_dir):
-  """
-  Loads ONE original JSON (chosen from an extremum member of the best periodic group),
-  then writes a new JSON containing:
-    {
-      "pts": ...,
-      "HorizontalPitch" or "VerticalPitch": <signed displacement>,
-      "Number": <repetitions not including original>
-    }
-  """
+import os
+import json
+import re
+
+def _first_matching_rule(rules, target):
+  for rule in (rules or []):
+    pat = rule.get("match")
+    if not pat:
+      continue
+    if re.search(pat, target):
+      return rule
+  return None
+
+def _load_json_file(path):
+  with open(path, "r", encoding="utf-8") as f:
+    return json.load(f)
+
+def _resolve_override_for_target(target, groupings, override_rules):
+  pre = (groupings or {}).get("_pre_override")
+  if isinstance(pre, dict):
+    resolved = pre.get("resolved")
+    if isinstance(resolved, dict):
+      axis = resolved.get("axis")
+      pitch = resolved.get("pitch")
+      number = resolved.get("number")
+      if axis in ("x", "y") and pitch is not None and number is not None:
+        return {"axis": axis, "pitch": float(pitch), "number": int(number)}
+
+  rule = _first_matching_rule(override_rules, target)
+  if not rule:
+    return None
+
+  set_cfg = rule.get("set") or {}
+  axis = set_cfg.get("axis")
+  pitch = set_cfg.get("pitch")
+  number = set_cfg.get("number")
+
+  if axis not in ("x", "y") or number is None:
+    raise ValueError("override_periodicity rule missing axis/number for target=%s: %r" % (target, rule))
+
+  if pitch is None:
+    raise ValueError(
+      "override_periodicity for target=%s requires pitch here; "
+      "or run apply_override_periodicity_pre to resolve it." % target
+    )
+
+  return {"axis": axis, "pitch": float(pitch), "number": int(number)}
+
+def make_and_write_grouped(
+  target,
+  groupings,
+  in_dir,
+  out_dir,
+  tol=1e-6,
+  replace_rules=None,
+  override_rules=None,
+):
   os.makedirs(out_dir, exist_ok=True)
 
-  def load_json(name):
-    path = os.path.join(in_dir, f"{name}.json")
-    with open(path, "r", encoding="utf-8") as f:
-      return json.load(f)
+  def load_by_name(name):
+    return _load_json_file(os.path.join(in_dir, "%s.json" % name))
+
+  override = _resolve_override_for_target(target, groupings, override_rules or [])
 
   best_axis = None
   best_group = None
   best_len = 0
 
   for axis in ("x", "y"):
-    for g in groupings.get(axis, []):
+    for g in ((groupings or {}).get(axis) or []):
       L = len(g.get("members", []))
       if L > best_len:
         best_len = L
         best_axis = axis
         best_group = g
 
-  if best_group is None or best_len < 2:
-      raise ValueError(f"No usable periodic grouping for target={target}")
-
-  members = best_group["members"]
-
-  coord_key = "min_x" if best_axis == "x" else "min_y"
-  members_sorted = sorted(members, key=lambda m: m[coord_key])
-  base = members_sorted[0]
-  base_name = base["name"]
-
-  if len(members_sorted) >= 2:
-      pitch = members_sorted[1][coord_key] - members_sorted[0][coord_key]
+  if override is None:
+    if best_group is None or best_len < 2:
+      raise ValueError("No usable periodic grouping for target=%s" % target)
+    axis = best_axis
   else:
-      raise Exception("Logic Error: Only one group memeber")
+    axis = override["axis"]
 
-  number = len(members_sorted) - 1
+  base_name = target
+  if best_group is not None:
+    coord_key = "min_x" if axis == "x" else "min_y"
+    members = best_group.get("members", [])
+    if members:
+      members_sorted = sorted(members, key=lambda m: m.get(coord_key, 0.0))
+      base_name = members_sorted[0]["name"]
 
-  data = load_json(base_name)
+  base_data = load_by_name(base_name)
+
+  rep_rule = _first_matching_rule(replace_rules or [], target)
+  if rep_rule:
+    src = rep_rule.get("source") or {}
+    src_path = src.get("path")
+    if not src_path:
+      raise ValueError("replace_these rule for target=%s missing source.path: %r" % (target, rep_rule))
+    template = _load_json_file(src_path)
+    base_data["pts"] = template.get("pts", [])
+
+  pts = base_data.get("pts", [])
+
+  if override is not None:
+    pitch = float(override["pitch"])
+    number = int(override["number"])
+  else:
+    coord_key = "min_x" if axis == "x" else "min_y"
+    members = best_group["members"]
+    members_sorted = sorted(members, key=lambda m: m[coord_key])
+
+    if len(members_sorted) < 2:
+      raise ValueError("Grouping too small to compute pitch for target=%s" % target)
+
+    pitch = members_sorted[1][coord_key] - members_sorted[0][coord_key]
+    number = len(members_sorted) - 1
 
   out = {
-      "pts": data.get("pts", []),
-      ("HorizontalPitch" if best_axis == "x" else "VerticalPitch"): pitch,
-      "Number": number,
+    "pts": pts,
+    ("HorizontalPitch" if axis == "x" else "VerticalPitch"): pitch,
+    "Number": number,
   }
 
-  out_path = os.path.join(out_dir, f"{target}_grouped.json")
+  out_path = os.path.join(out_dir, "%s_grouped.json" % target)
   with open(out_path, "w", encoding="utf-8") as f:
     json.dump(out, f, ensure_ascii=False, indent=2)
 
-import re
-
 def apply_override_periodicity_pre(all_files, file_meta, override_rules, tol=1e-6):
-  """
-  Pre-pass that:
-    1) Finds targets matching override_periodicity regex rules
-    2) Resolves missing pitch (if pitch is None) from min-coordinate spacing along the chosen axis
-    3) Produces forced_groupings + forced_used_names so these objects do not participate in later grouping
-    4) Removes matched objects from all_files + file_meta (preferred so they won't be considered later)
-
-  Returns:
-    all_files, file_meta, forced_groupings, forced_used_names
-  """
   forced_groupings = {}
   forced_used = set()
 
   if not override_rules:
-    return all_files, file_meta, forced_groupings, forced_used
+      return all_files, file_meta, forced_groupings, forced_used
 
-  # Snapshot names once (we will pop from dicts)
   names = list(all_files.keys())
 
   for rule in override_rules:
@@ -224,67 +398,61 @@ def apply_override_periodicity_pre(all_files, file_meta, override_rules, tol=1e-
 
     use_source = rule.get("use_source", "min_extremum")
     set_cfg = rule.get("set", {})
-    axis = set_cfg.get("axis")  # "x" or "y"
+    axis = set_cfg.get("axis")
     if axis not in ("x", "y"):
-        raise ValueError(f"override_periodicity rule axis must be 'x' or 'y': {rule}")
+      raise ValueError(f"override_periodicity rule axis must be 'x' or 'y': {rule}")
 
     coord_key = "min_x" if axis == "x" else "min_y"
 
     matched = [n for n in names if rx.search(n)]
     if not matched:
+      raise Exception("Nothing matched reges %r for override_periodicity: %r" % (pattern, rule))
       continue
 
-    # Resolve pitch if not provided: minimal positive spacing between sorted min coords
+    # Resolve pitch if not provided
     pitch = set_cfg.get("pitch", None)
     if pitch is None:
       coords = sorted(file_meta[n][coord_key] for n in matched if n in file_meta)
       diffs = [coords[i + 1] - coords[i] for i in range(len(coords) - 1)]
       pos_diffs = [d for d in diffs if d > tol]
-      pitch_mag = min(pos_diffs) if pos_diffs else 0.0
-      pitch = pitch_mag
+      pitch = min(pos_diffs) if pos_diffs else 0.0
 
-    # Enforce direction based on extremum choice unless pitch is explicitly signed how you want.
-    # Convention used here:
-    #   min_extremum -> +|pitch|
-    #   max_extremum -> -|pitch|
     pitch = abs(pitch)
     if use_source == "max_extremum":
       pitch = -pitch
 
     number = set_cfg.get("number")
     if number is None:
-      raise ValueError(f"override_periodicity requires 'number' (repetitions): {rule}")
+      raise ValueError(f"override_periodicity requires 'number': {rule}")
 
-    # Create forced grouping entries and remove from all_files/file_meta
+    # --- pick ONE representative to emit ---
+    # Use min_extremum => smallest coord, max_extremum => largest coord
+    present = [n for n in matched if n in file_meta]
+    if not present:
+      continue
+
+    rep = min(present, key=lambda n: file_meta[n][coord_key]) \
+      if use_source == "min_extremum" \
+      else max(present, key=lambda n: file_meta[n][coord_key])
+
+    # Remove ALL matched from downstream, but only emit rep
     for n in matched:
-      if n not in all_files:
-        continue
+      if n in all_files:
+        forced_used.add(n)
+        all_files.pop(n, None)
+        file_meta.pop(n, None)
 
-      forced_used.add(n)
-
-      # Minimal "groupings" structure so downstream code can call make_and_write_grouped.
-      # make_and_write_grouped is expected to apply override_rules again; we also provide
-      # resolved values here as a convenience.
-      forced_groupings[n] = {
-          "x": [],
-          "y": [],
-          "_pre_override": {
-              "match": pattern,
-              "use_source": use_source,
-              "resolved": {
-                  "axis": axis,
-                  "pitch": pitch,
-                  "number": number,
-              },
-          },
-      }
-
-      # Prefer excluding these from later grouping computation
-      all_files.pop(n, None)
-      file_meta.pop(n, None)
+    forced_groupings[rep] = {
+        "x": [],
+        "y": [],
+        "_pre_override": {
+            "match": pattern,
+            "use_source": use_source,
+            "resolved": {"axis": axis, "pitch": pitch, "number": number},
+        },
+    }
 
   return all_files, file_meta, forced_groupings, forced_used
-
 import glob
 import os
 import shutil
@@ -337,7 +505,7 @@ def apply_manual_additions(manual_additions_cfg, out_dir):
 def main():
   tol = 1e-6
 
-  cfg_path = "config.yaml"  # wherever you keep it
+  cfg_path = "cleanup_config.yaml"  # wherever you keep it
   cfg = load_yaml_config(cfg_path)  # assumes exists
 
   in_dir = cfg["paths"]["in_dir"]
@@ -416,3 +584,7 @@ def main():
 
   # manual additions copied into out_dir regardless of grouping
   apply_manual_additions(cfg.get("manual_additions", {}), out_dir=out_dir)
+
+
+if __name__ == "__main__":
+  main()

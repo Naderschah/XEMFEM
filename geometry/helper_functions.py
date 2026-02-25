@@ -440,11 +440,11 @@ def make_shape(Sketch, component, name="<component>"):
 
         lines.append(l)
 
-    #for i in range(n):
-    #    Sketch.setCoincident(
-    #        lines[i].endPoint(),
-    #        lines[(i + 1) % n].startPoint()
-    #    )
+    for i in range(n):
+        Sketch.setCoincident(
+            lines[i].endPoint(),
+            lines[(i + 1) % n].startPoint()
+        )
 
     return lines
 
@@ -468,8 +468,13 @@ def repeat_object(Sketch, component, objects):
     x_offset = HorizontalPitch * count
     y_offset = VerticalPitch * count
 
-    x0 = component.get("RadialPosition", 0.0)
-    y0 = component.get("VerticalPosition", 0.0)
+    # --- pick a reference point ON the geometry ---
+    ref_obj = next(iter(objects))  # any line is fine
+
+    # SALOME Sketcher lines expose start/end points
+    p1 = ref_obj.startPoint()
+    x0, y0 = p1.x(), p1.y()
+    print(x0, y0)
 
     start_pt = Sketch.addPoint(x0, y0)
     end_pt = Sketch.addPoint(x0 + x_offset / count, y0 + y_offset / count)
@@ -603,8 +608,8 @@ def geom_sketcher(
         if has_fillet_params and lines:
             filleted = make_fillets(Sketch, component, lines)
             lines = list(lines) + list(filleted)
-
-        if has_repeat and lines:
+        # TODO Add flag
+        if has_repeat and lines and False:
             repeat_object(Sketch, component, lines)
 
     # Recurse into sub-sketches
@@ -635,6 +640,42 @@ def geom_sketcher(
 
     return Sketch
 
+def repeat_face_result_part_level(part_doc, face_result, component, eps=1e-15):
+    """
+    Part-level linear copy of an existing face result.
+    No name-based selections: uses the result object directly.
+    """
+    replications = int(component.get("Number", 0))
+    if replications <= 0:
+        return None, [face_result]
+
+    dx = float(component.get("HorizontalPitch", 0.0))
+    dy = float(component.get("VerticalPitch", 0.0))
+    if abs(dx) < eps and abs(dy) < eps:
+        return None, [face_result]
+
+    # OBJECT-BASED selection list (no model.selection, no names)
+    items = [face_result]  # <-- this is the critical change
+
+    ox = model.selection("EDGE", "PartSet/OX")
+    oy = model.selection("EDGE", "PartSet/OY")
+
+    # Nb is "number of copies" (excluding original)
+    nb = replications
+
+    # Avoid Nb=0: disable direction by step=0 and Nb=1
+    step1, nb1 = (dx, nb) if abs(dx) >= eps else (0.0, 1)
+    step2, nb2 = (dy, nb) if abs(dy) >= eps else (0.0, 1)
+
+    feat = model.addMultiTranslation(
+        part_doc,
+        items,
+        ox, step1, nb1,
+        oy, step2, nb2
+    )
+    model.do()
+
+    return feat, list(feat.results())
 
 def sketch_from_dict(
     sketch_dict,
@@ -665,13 +706,31 @@ def sketch_from_dict(
         )
         if makeface:
             model.do()
-            face = model.addFace(part_doc, [sk.result()])
-            face.setName(name)
-            for idx, face_i in enumerate(face.results()):
-                name_sub = name+str(idx)
-                face_map[name_sub] = face_i
-                face_i.setName(name_sub) 
-            sketch_map[name] = face
+            face_feat = model.addFace(part_doc, [sk.result()])
+            face_feat.setName(name)
+
+            # Store either original faces or repeated compounds
+            produced = []
+
+            for idx, face_i in enumerate(face_feat.results()):
+                name_sub = f"{name}{idx}"
+                face_i.setName(name_sub)
+
+                # Apply part-level repeat if requested
+                rep_feat, rep_results = repeat_face_result_part_level(part_doc, face_i, component)
+
+                if rep_feat is None:
+                    face_map[name_sub] = face_i
+                    produced.append(face_i)
+                else:
+                    # rep_feat is a compound feature; keep reference under a derived key
+                    rep_feat.setName(f"{name_sub}_linCopy")
+                    # You can store either the feature or all result shapes; pick what your pipeline expects
+                    face_map[f"{name_sub}_linCopy"] = rep_feat
+                    produced.extend(rep_results)
+
+            sketch_map[name] = face_feat  # or store produced/compound, depending on downstream
+
         else:
             sketch_map[name] = sk
 

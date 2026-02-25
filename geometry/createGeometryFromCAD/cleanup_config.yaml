@@ -1,30 +1,43 @@
 paths:
-  in_dir: "/path/to/in"
-  out_dir: "/path/to/out"
-  extras_dir: "/path/to/manual_additions"
+  in_dir: "/work/geometry/createGeometryFromCAD/DXF_slices_parts/slice_022.50deg/"
+  out_dir: "/work/geometry/createGeometryFromCAD/DXF_slices_cleaned/slice_022.50deg"
+  extras_dir: "/work/geometry/createGeometryFromCAD/manual_overwrites"
 
 # Overrides
 override_periodicity:
-  # always applied prior, preferably these matches are not included in all_files when group computation comes about
-  # Still have to find 
-  - match: "^CELL_A_.*"          # regex against target name (without .json)
-    use_source: "min_extremum"   # "min_extremum" | "max_extremum"
+  # PTFE Wall
+  - match: '^XENTTPCAWarmPart088Part088_(?:[7-9]|[1-4]\d|5[0-8])'
+    use_source: max_extremum
     set:
-      axis: "y"                  # "x" or "y"
-      pitch: 12.5                # signed; if null, use minimum period computed
-      number: 7                  # repetitions not including original;
+      axis: y
+      number: 64
+# Compontents To Do 15 deg:
+# Cathode + Insulation
+# Bell = TPCF 5484 + 54730 + 54720
+# TPCF 5521_00 and 5521_10 can also go 
+# Top Electrode Stack cleanup - screw inside 
+# TOP PTFE Wall component below gate missing
+# Bottom PTFE Wall may still be incomplete
+# PMTs and no PMTs variants + PTFE between PMTs
+# Remove outside TPC assembly XENTTPCHWarmFunnelAssy**
+# Remove TPCG 
+# Where is the cryostat? It was there a few days ago i think
 
-# 2) Replace geometry (pts) from another file/path when name matches.
-#    This is separate from pitch/number overwrite.
-replace_these:
-  - match: "^CELL_A_.*"
-    source: # type is always file 
-      path: "/path/to/geometry_fixups/CELL_A_template.json"
+# Generally filtering by the name list should be added
 
-# 3) Manual additions that must be written to out_dir regardless of grouping
-#    Either copy files verbatim or emit inline JSON.
-manual_additions:
-  copy:
-    - from: "/path/to/extra_parts/EXTRA_001.json"
-      to_name: "EXTRA_001"       # written as out_dir/EXTRA_001.json
-    - from_glob: "/path/to/extra_parts/*.json"  # optional if you want many
+
+## 2) Replace geometry (pts) from another file/path when name matches.
+##    This is separate from pitch/number overwrite.
+#replace_these:
+#  - match: "^CELL_A_.*"
+#    source: # type is always file 
+#      path: "/path/to/geometry_fixups/CELL_A_template.json"
+#
+## 3) Manual additions that must be written to out_dir regardless of grouping
+##    Either copy files verbatim or emit inline JSON.
+#manual_additions:
+#  copy:
+#    - from: "/path/to/extra_parts/EXTRA_001.json"
+#      to_name: "EXTRA_001"       # written as out_dir/EXTRA_001.json
+#    - from_glob: "/path/to/extra_parts/*.json"  # optional if you want many
+
