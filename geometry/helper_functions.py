@@ -279,7 +279,7 @@ def make_shape(Sketch, component, name="<component>"):
                 inversed
             )
 
-        elif kind == "bspline":
+        elif kind == "spline":
             # Use SHAPER TUI: Sketch.addSpline(external=ModelHighAPI_Selection(), degree=-1, poles=..., weights=..., knots=..., multiplicities=..., periodic=False)
             # Example TUI uses: Sketch_1.addSpline(poles=[(x,y),...], weights=[...], periodic=True/False)
             # https://docs.salome-platform.org/latest/gui/SHAPER/SketchPlugin/TUI_bsplineFeature.html
@@ -297,7 +297,7 @@ def make_shape(Sketch, component, name="<component>"):
             periodic = bool(payload.get("periodic", False))
 
             if not poles:
-                raise ValueError("bspline payload has no poles")
+                raise ValueError("spline payload has no poles")
 
             # TUI accepts poles as list of (x,y) tuples
             poles_xy = [(float(p[0]), float(p[1])) for p in poles]
@@ -308,7 +308,8 @@ def make_shape(Sketch, component, name="<component>"):
             }
             if degree is not None and int(degree) >= 0:
                 kwargs["degree"] = int(degree)
-            if weights:
+            # NURBS or B Spline
+            if len(weights) > 0:
                 kwargs["weights"] = [float(w) for w in weights]
             if knots:
                 kwargs["knots"] = [float(k) for k in knots]
@@ -439,11 +440,11 @@ def make_shape(Sketch, component, name="<component>"):
 
         lines.append(l)
 
-    for i in range(n):
-        Sketch.setCoincident(
-            lines[i].endPoint(),
-            lines[(i + 1) % n].startPoint()
-        )
+    #for i in range(n):
+    #    Sketch.setCoincident(
+    #        lines[i].endPoint(),
+    #        lines[(i + 1) % n].startPoint()
+    #    )
 
     return lines
 
