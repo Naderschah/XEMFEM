@@ -173,10 +173,6 @@ def slice_component_edges(
     tol: float = 1e-7,
     per_solid_clean: bool = True,
 ):
-    """
-    Returns a flat list of edges for THIS component only.
-    Key behavior: preserve duplicates by NOT doing compound removeSplitter/cleanTolerance.
-    """
     tol_eff = float(max(tol, 1e-6))
 
     try:
@@ -204,7 +200,6 @@ def slice_component_edges(
         if sec is None or sec.isNull():
             continue
 
-        # minimal cleaning, per-solid only (does not merge across solids)
         if per_solid_clean:
             try:
                 sec = sec.cleanTolerance(tol_eff)
@@ -217,6 +212,50 @@ def slice_component_edges(
             pass
 
     return out_edges
+
+
+# -----------------------
+# Wire grouping diagnostics
+# -----------------------
+
+def wire_group_edges(edges, tol: float):
+    """
+    Returns:
+      groups: list[list[Edge]] (from Part.sortEdges; fallback single group)
+      status: list[str] per group: CLOSED / OPEN / WIRE_FAIL
+      ok: bool -> True iff no group is WIRE_FAIL (i.e., wire-grouping succeeded)
+    """
+    tol_eff = float(max(tol, 1e-6))
+    edges = list(edges) if edges else []
+    if not edges:
+        return [], [], True
+
+    try:
+        groups = [list(g) for g in Part.sortEdges(edges)]
+    except Exception:
+        groups = [edges]
+
+    status = []
+    ok = True
+    for g in groups:
+        try:
+            w = Part.Wire(g)
+        except Exception:
+            status.append("WIRE_FAIL")
+            ok = False
+            continue
+
+        try:
+            w.fixTolerance(tol_eff)
+        except Exception:
+            pass
+
+        try:
+            status.append("CLOSED" if w.isClosed() else "OPEN")
+        except Exception:
+            status.append("OPEN")
+
+    return groups, status, ok
 
 
 # -----------------------
@@ -415,12 +454,11 @@ def _add_ellipse_from_edge(msp, edge, layer, origin3, A, R):
     )
     return True
 
-
-def export_component_edges_to_dxf(
+def _export_edges_to_msp(
     *,
-    subpath: str,
+    msp,
+    layer: str,
     edges,
-    dxf_path: str,
     angle_deg: float,
     axis: str,
     origin,
@@ -428,13 +466,6 @@ def export_component_edges_to_dxf(
 ):
     origin3 = FreeCAD.Vector(*origin)
     A, R = _plane_frame(angle_deg=angle_deg, axis=axis)
-
-    dxf = ezdxf.new("R2010")
-    msp = dxf.modelspace()
-
-    layer = _sanitize_layer(subpath)
-    if layer not in dxf.layers:
-        dxf.layers.new(layer)
 
     prim_counts = {"LINE": 0, "ARC": 0, "CIRCLE": 0, "ELLIPSE": 0, "SPLINE": 0, "FAIL": 0}
 
@@ -488,12 +519,88 @@ def export_component_edges_to_dxf(
         except Exception:
             prim_counts["FAIL"] += 1
 
-    dxf.saveas(dxf_path)
     return prim_counts
+
+
+def export_component_wiregrouped_or_raw(
+    *,
+    subpath: str,
+    edges,
+    dxf_path: str,
+    angle_deg: float,
+    axis: str,
+    origin,
+    tol: float,
+):
+    """
+    If wire grouping succeeds (no WIRE_FAIL groups), export grouped on multiple layers (normal directory).
+    Else export all raw edges on a single layer (raw directory).
+    Returns (mode, prim_counts, group_summary)
+    """
+    tol_eff = float(max(tol, 1e-6))
+    safe = _sanitize_layer(subpath, max_len=180)
+
+    groups, status, ok = wire_group_edges(edges, tol=tol_eff)
+
+    dxf = ezdxf.new("R2010")
+    msp = dxf.modelspace()
+
+    group_summary = {"groups": len(groups), "closed": 0, "open": 0, "wire_fail": 0}
+    for st in status:
+        if st == "CLOSED":
+            group_summary["closed"] += 1
+        elif st == "OPEN":
+            group_summary["open"] += 1
+        else:
+            group_summary["wire_fail"] += 1
+
+    if ok:
+        # wire grouped: one layer per group (keeps visibility of where the break is)
+        mode = "WIRE_GROUPED"
+        prim_total = {"LINE": 0, "ARC": 0, "CIRCLE": 0, "ELLIPSE": 0, "SPLINE": 0, "FAIL": 0}
+
+        for i, (g, st) in enumerate(zip(groups, status)):
+            layer = _sanitize_layer(f"{safe}__G{i:03d}_{st}", max_len=200)
+            if layer not in dxf.layers:
+                dxf.layers.new(layer)
+            prim = _export_edges_to_msp(
+                msp=msp,
+                layer=layer,
+                edges=g,
+                angle_deg=angle_deg,
+                axis=axis,
+                origin=origin,
+                tol=tol,
+            )
+            for k in prim_total:
+                prim_total[k] += prim.get(k, 0)
+
+        dxf.saveas(dxf_path)
+        return mode, prim_total, group_summary
+
+    # raw: put everything on one layer for maximum forensic visibility
+    mode = "RAW"
+    layer = safe
+    if layer not in dxf.layers:
+        dxf.layers.new(layer)
+
+    prim = _export_edges_to_msp(
+        msp=msp,
+        layer=layer,
+        edges=edges,
+        angle_deg=angle_deg,
+        axis=axis,
+        origin=origin,
+        tol=tol,
+    )
+    dxf.saveas(dxf_path)
+    return mode, prim, group_summary
 
 
 # -----------------------
 # Export: angle subdir + one DXF per component
+#   - normal dir: wire-grouped outputs (if wire grouping succeeded)
+#   - out_dir_raw: raw outputs ONLY for components that fail wire-grouping
 # -----------------------
 
 def export_slices_per_component(
@@ -507,17 +614,28 @@ def export_slices_per_component(
     trim_u_ge_0: bool = True,
     per_solid_clean: bool = True,
 ):
+    out_dir = os.path.abspath(out_dir)
+    out_dir_raw = out_dir + "_raw"  # requested: _raw at highest-order directory
+
     os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(out_dir_raw, exist_ok=True)
+
     subpaths = collect_leaf_geometry_subpaths(root)
 
     diag = _compute_global_bbox_diag(root)
     extent = diag * 3.0
     thickness = diag * 0.25
 
+    total_with_edges = 0
+    failed_wiregroup = 0
+
     for ang in angles_deg:
         ang = float(ang)
+
         angle_dir = os.path.join(out_dir, f"slice_{ang:06.2f}deg")
+        angle_dir_raw = os.path.join(out_dir_raw, f"slice_{ang:06.2f}deg")
         os.makedirs(angle_dir, exist_ok=True)
+        os.makedirs(angle_dir_raw, exist_ok=True)
 
         N = _slice_plane_normal(ang, axis=axis)
         ox, oy, oz = origin
@@ -529,7 +647,7 @@ def export_slices_per_component(
                 angle_deg=ang, axis=axis, origin=origin, extent=extent, thickness=thickness
             )
 
-        print(f"[angle] {ang:.2f}° → {angle_dir}")
+        print(f"[angle] {ang:.2f}° → {angle_dir}  (raw failures → {angle_dir_raw})")
 
         for sp in subpaths:
             try:
@@ -549,22 +667,101 @@ def export_slices_per_component(
             if not edges:
                 continue
 
-            # file name per component
+            total_with_edges += 1
             safe = _sanitize_layer(sp, max_len=180)
-            dxf_path = os.path.join(angle_dir, f"{safe}.dxf")
 
-            prim = export_component_edges_to_dxf(
+            # decide output destination based on wire grouping success
+            # wire-grouped -> normal dir; raw only if grouping fails -> raw dir
+            dxf_path_normal = os.path.join(angle_dir, f"{safe}.dxf")
+            dxf_path_raw = os.path.join(angle_dir_raw, f"{safe}.dxf")
+
+            # Try wire-grouped first; if it fails, write raw into _raw dir
+            mode, prim, gsum = export_component_wiregrouped_or_raw(
                 subpath=sp,
                 edges=edges,
-                dxf_path=dxf_path,
+                dxf_path=dxf_path_normal,  # will be used if WIRE_GROUPED
                 angle_deg=ang,
                 axis=axis,
                 origin=origin,
                 tol=tol,
             )
 
-            # Debug: confirms "every edge we got was attempted"
-            print(f"  [comp] {safe} edges={len(edges)} prim={prim}")
+            if mode == "WIRE_GROUPED":
+                print(f"  [comp] {safe} mode=WIRE groups={gsum} edges={len(edges)} prim={prim}")
+            else:
+                # re-export to raw location (so raw is only written on failures)
+                failed_wiregroup += 1
+                mode2, prim2, gsum2 = export_component_wiregrouped_or_raw(
+                    subpath=sp,
+                    edges=edges,
+                    dxf_path=dxf_path_raw,
+                    angle_deg=ang,
+                    axis=axis,
+                    origin=origin,
+                    tol=tol,
+                )
+                # mode2 will still be RAW; keep the RAW print
+                print(f"  [comp] {safe} mode=RAW  groups={gsum2} edges={len(edges)} prim={prim2}")
+
+    frac = (failed_wiregroup / total_with_edges) if total_with_edges else 0.0
+    print(
+        f"[summary] components_with_edges={total_with_edges} "
+        f"wiregroup_failed={failed_wiregroup} "
+        f"fraction_failed={frac:.6f}"
+    )
+
+import multiprocessing as mp
+
+STEP_PATH = "/work/geometry/createGeometryFromCAD/CAD_files/XENT-TPC_20250428.STEP"
+
+def _export_one_angle_worker(args):
+    """
+    Runs in a separate process.
+    """
+    (step_path, out_dir, ang, axis, origin, tol, trim_u_ge_0, per_solid_clean) = args
+
+    # Load in this process
+    doc = load_step(step_path, doc_name=f"nb_step_{ang:.2f}")
+    root = find_step_root(doc)
+
+    # Export only this single angle
+    export_slices_per_component(
+        root=root,
+        out_dir=out_dir,
+        angles_deg=[ang],
+        axis=axis,
+        origin=origin,
+        tol=tol,
+        trim_u_ge_0=trim_u_ge_0,
+        per_solid_clean=per_solid_clean,
+    )
+    return ang
+
+def export_slices_per_component_parallel(
+    *,
+    step_path: str,
+    out_dir: str,
+    angles_deg,
+    axis: str = "Y",
+    origin=(0.0, 0.0, 0.0),
+    tol: float = 1e-7,
+    trim_u_ge_0: bool = True,
+    per_solid_clean: bool = True,
+    workers: int | None = None,
+):
+    angles = [float(a) for a in angles_deg]
+    args = [
+        (step_path, out_dir, ang, axis, origin, tol, trim_u_ge_0, per_solid_clean)
+        for ang in angles
+    ]
+
+    # Use spawn for safety with FreeCAD
+    ctx = mp.get_context("spawn")
+    n = workers or max(1, (os.cpu_count() or 2) - 1)
+
+    with ctx.Pool(processes=n) as pool:
+        for ang in pool.imap_unordered(_export_one_angle_worker, args):
+            print(f"[done] angle={ang:.2f}")
 
 
 # -----------------------
@@ -572,16 +769,18 @@ def export_slices_per_component(
 # -----------------------
 
 STEP_PATH = "/work/geometry/createGeometryFromCAD/CAD_files/XENT-TPC_20250428.STEP"
-doc = load_step(STEP_PATH, doc_name="nb_step")
-root = find_step_root(doc)
 
-export_slices_per_component(
-    root=root,
-    out_dir="/work/geometry/createGeometryFromCAD/DXF_slices_parts",
-    angles_deg=[15 * (i + 1) for i in range(0, 24)],
-    axis="Y",
-    origin=(0.0, 0.0, 0.0),
-    tol=1e-7,
-    trim_u_ge_0=True,
-    per_solid_clean=True,
-)
+# Example usage:
+if __name__ == "__main__":
+    angle_offset = math.atan2(164.59, 1250.21) * 180 / math.pi
+    export_slices_per_component_parallel(
+        step_path=STEP_PATH,
+        out_dir="/work/geometry/createGeometryFromCAD/DXF_slices_parts",
+        angles_deg=[15 * (i + 1) + angle_offset for i in range(0, 24)],
+        axis="Y",
+        origin=(0.0, 0.0, 0.0),
+        tol=1e-7,
+        trim_u_ge_0=True,
+        per_solid_clean=True,
+        workers=20,  # set as desired
+    )
