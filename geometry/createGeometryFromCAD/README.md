@@ -21,6 +21,9 @@ python3 distribute_components_and_check_same.py  # Uses the naming_convention.cs
 dxf_to_intermediary
 ```
 
+The cylinder height is in y, the 0 degree slice corrsponds to the XY plane in this code. Unfortunately the angles are not in the xenon coordinate system, so I don't actually know which slice applies to data. So I picked an arbitrary PMT that forms a line with other PMTs and the central PMT, the picked PMT is at a distance of 607.75 mm in x and 80.01 mm in y from the central PMT, producing a rotation of 7.4998 degrees to align a PMT row with the XY plane.  
+
+Note that DXF BSplines still have a weight field in my export, this is usually interpreted as a NURBS curve and then fails as there are no weights. For the DXF to Salome translator this is not an issue.
 
 ### 3D Geometry 
 
