@@ -21,30 +21,15 @@ def build_sketch_dicts(shrinkage_factor):
     'VerticalPosition': 0.0,
     'Radius': inner_cylinder_R,
   }
-  electrode_sketches["OuterCylinder"] = {
-    'RadialPosition': 0.0,
-    'VerticalPosition': 0.0,
-    'Radius': outer_cylinder_R + cylinder_thicknes,
-  }
   # Dielectric
   xenon_sketches["GXe"] = {
     'RadialPosition': 0.0,
     'VerticalPosition': 0.0,
     'Radius': outer_cylinder_R,
   }
-
-  # Simulation Volume
-  xenon_sketches["LXe"] = {
-    'RadialPosition': x0,
-    'VerticalPosition': y0,
-    'Width': W,
-    'Height': H,
-  }
   
   manual_mapping = {
-    1-1: "OuterCylinder",
-    2-1: 'LXe_comp',
-    3-1: "InnerCylinder",
-    4-1: "GXe_comp"
+    1-1: "InnerCylinder",
+    2-1: "GXe"
   }
   return ptfe_sketches, electrode_sketches, xenon_sketches, manual_mapping

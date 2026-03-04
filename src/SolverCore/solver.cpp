@@ -1,5 +1,6 @@
 #include "solver.h"
 
+#include <cmath>
 #include <filesystem>
 #include <iomanip>
 #include "HYPRE_parcsr_ls.h"
@@ -61,8 +62,15 @@ inline bool IsDistributed(const mfem::FiniteElementSpace &fes)
 // Build ε(x) that is piecewise-constant over element attributes (volume tags)
 static PWConstCoefficient BuildEpsilonPWConst(const Mesh &mesh, const std::shared_ptr<const Config>& cfg)
 {
+    // https://physics.nist.gov/cgi-bin/cuu/Value?ep0
+    constexpr double eps0 = 8.8541878188e-12;
+
+    MFEM_VERIFY(mesh.attributes.Size() > 0,
+                "Mesh has no volume attributes; cannot build permittivity coefficient.");
+
     // attributes are 1-based; we need a vector sized by the max attribute id
     const int max_attr = mesh.attributes.Max();  // e.g. 2004 in your case
+    MFEM_VERIFY(max_attr > 0, "Invalid mesh volume attribute range.");
     Vector eps_by_attr(max_attr);
     eps_by_attr = 0.0;
 
@@ -78,16 +86,41 @@ static PWConstCoefficient BuildEpsilonPWConst(const Mesh &mesh, const std::share
     for (const auto& [name, mat] : cfg->materials)
     {
       // Skip materials that have no explicit attr_id (e.g. "Default")
-      if (mat.id > 0)  set_eps(mat.id, mat.epsilon_r * 8.8541878188e-12);
+      if (mat.id > 0)
+      {
+        MFEM_VERIFY(std::isfinite(mat.epsilon_r) && mat.epsilon_r > 0.0,
+                    "Invalid epsilon_r for material '" << name
+                    << "': epsilon_r must be finite and > 0.");
+        set_eps(mat.id, mat.epsilon_r * eps0);
+      }
       else if (name == "Default")
       {
+        MFEM_VERIFY(std::isfinite(mat.epsilon_r) && mat.epsilon_r > 0.0,
+                    "Invalid epsilon_r for material 'Default': epsilon_r must be finite and > 0.");
         // Fill in any remaining attributes that were not explicitly set
         for (int a = 1; a <= max_attr; ++a)
         {
-          if (eps_by_attr(a - 1) == 0.0)  eps_by_attr(a - 1) = mat.epsilon_r;
+          if (eps_by_attr(a - 1) == 0.0)  eps_by_attr(a - 1) = mat.epsilon_r * eps0;
         }
       }
     }
+
+    // Validate that every volume attribute present in the mesh has a valid epsilon.
+    int bad_attr = -1;
+    for (int i = 0; i < mesh.attributes.Size(); ++i)
+    {
+      const int attr = mesh.attributes[i];
+      const double eps = eps_by_attr(attr - 1);
+      if (!(std::isfinite(eps) && eps > 0.0))
+      {
+        bad_attr = attr;
+        break;
+      }
+    }
+    MFEM_VERIFY(bad_attr < 0,
+                "Missing or invalid permittivity for mesh volume attribute "
+                << bad_attr << ". Ensure materials.*.attr_id covers all mesh attributes.");
+
     // ctor available in your MFEM: PWConstCoefficient(Vector &c)
     return PWConstCoefficient(eps_by_attr);
 }
@@ -142,6 +175,11 @@ std::unique_ptr<mfem::ParGridFunction> SolvePoisson(ParFiniteElementSpace &pfes,
 
   a->FormLinearSystem(ess_tdof, *V, *b, A, X, B);  
   auto *Ap = A.As<mfem::HypreParMatrix>();
+  MFEM_VERIFY(Ap != nullptr, "FormLinearSystem did not produce a HypreParMatrix.");
+
+  MFEM_VERIFY(cfg->solver.solver == "MUMPS" || cfg->solver.solver == "CG",
+              "Unknown solver '" << cfg->solver.solver
+              << "'. Supported values are 'MUMPS' and 'CG'.");
 
   if (cfg->solver.solver == "MUMPS")
   {
@@ -197,6 +235,10 @@ std::unique_ptr<mfem::ParGridFunction> SolvePoisson(ParFiniteElementSpace &pfes,
     ResidualFileMonitor monitor(it_log);
     cg.SetMonitor(monitor);
     cg.Mult(B, X);;
+  }
+  else
+  {
+    MFEM_ABORT("Unhandled solver branch.");
   }
 
   // As before:

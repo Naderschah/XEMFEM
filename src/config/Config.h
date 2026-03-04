@@ -2,6 +2,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <limits>
 #include <mpi.h>
 #include <yaml-cpp/yaml.h>
 #include <fstream>
@@ -110,6 +111,12 @@ struct AMRSettings
 
     // Print AMR diagnostics (per rank 0 typically)
     bool verbose = false;
+
+    // ---- AMR mesh export outputs ----
+    // Serial MFEM mesh: amr_mesh_serial.mesh
+    bool save_serial = false;
+    // Parallel VTU/PVTU: amr_mesh_vtu.pvtu + amr_mesh_vtu_*.vtu
+    bool save_vtu_parallel = false;
 };
 
 
@@ -152,8 +159,8 @@ struct DebugSettings
     bool debug                   = false;
     bool timing                  = false;
     bool dry_run                 = false; // TODO Remove? 
-    bool printBoundaryConditions = true;
-    bool printHypreWarnings      = true;
+    bool printBoundaryConditions = false;
+    bool printHypreWarnings      = false;
 
     // Dump data to file where applicable
     bool dumpdata              = false;
@@ -319,12 +326,28 @@ struct ElectronTraceParams
     double max_traversals = 10;
 };
 // ------------------------- Interpolation --------------
+enum class InterpolationCode1Mode
+{
+  NaN = 0,
+  AcceptValue = 1,
+  AverageElements = 2
+};
+
 struct Interpolate
 {
   int Nx = 1;
   int Ny = 1;
   int Nz = 1;
-  bool H1_project;
+  double x_min = std::numeric_limits<double>::quiet_NaN();
+  double x_max = std::numeric_limits<double>::quiet_NaN();
+  double y_min = std::numeric_limits<double>::quiet_NaN();
+  double y_max = std::numeric_limits<double>::quiet_NaN();
+  double z_min = std::numeric_limits<double>::quiet_NaN();
+  double z_max = std::numeric_limits<double>::quiet_NaN();
+  bool H1_project = false;
+  bool E = true;
+  bool V = false;
+  InterpolationCode1Mode code1_mode = InterpolationCode1Mode::AverageElements;
   // Not Exposed
   bool accept_surface_projection = false;
   // TODO Integrate the below, requires knowledge of mesh dimensions

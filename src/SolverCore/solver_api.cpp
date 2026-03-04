@@ -33,13 +33,6 @@ std::string PrecomputeAMRMesh(const Config &cfg,
     const std::filesystem::path out_dir  = cfg.save_path;
     const std::filesystem::path mesh_dir = out_dir / "amr_mesh";
 
-    if (rank == 0) {
-        std::error_code ec;
-        std::filesystem::create_directories(mesh_dir, ec);
-        MFEM_VERIFY(!ec, "Could not create output directory: " << mesh_dir.string()
-                                                            << " : " << ec.message());
-    }
-
     if (cfg.debug.timing) t_start = std::chrono::steady_clock::now();
     SimulationResult res = run_simulation(cfg_ptr, cfg.mesh.path, false);
     if (cfg.debug.timing)
@@ -49,22 +42,18 @@ std::string PrecomputeAMRMesh(const Config &cfg,
         std::cout << "[Timing]: AMR timing (" << dt << " ms)" << std::endl;
     }
 
-    // ensure all ranks see the directory before opening files
-    MPI_Barrier(res.mesh->GetComm()); 
+    SaveAMRMeshArtifacts(*res.mesh, mesh_dir, cfg.mesh.amr, precision);
 
-    // Build the full output file path once
-    std::ostringstream name;
-    name << "amr_mesh." << std::setw(6) << std::setfill('0') << rank;
-
-    const std::filesystem::path file_path = mesh_dir / name.str();
-
-    std::ofstream os(file_path);
-    MFEM_VERIFY(os.good(),
-                "Could not open parallel mesh output file. Rank "
-                << rank << " : " << file_path.string());
-
-    res.mesh->ParPrint(os);
-
+    if (rank == 0)
+    {
+        std::cout << "[AMR] wrote mesh artifacts in: " << mesh_dir << "\n"
+                  << "      - parallel MFEM pieces: enabled\n"
+                  << "      - serial MFEM mesh: "
+                  << (cfg.mesh.amr.save_serial ? "enabled (amr_mesh_serial.mesh)" : "disabled") << "\n"
+                  << "      - parallel VTU/PVTU: "
+                  << (cfg.mesh.amr.save_vtu_parallel ? "enabled (amr_mesh_vtu.pvtu + amr_mesh_vtu_XXXXXX.vtu)" : "disabled")
+                  << "\n";
+    }
 
     return mesh_dir.string();
 }
@@ -229,15 +218,7 @@ void save_results(const SimulationResult &result, const std::filesystem::path &r
     // -------------------------------------------------------------------------
     // 1) Save a PARALLEL mesh (each rank writes its piece)
     // -------------------------------------------------------------------------
-    {
-        std::ostringstream fn;
-        fn << (root_path / "simulation_pmesh").string()
-        << "." << std::setw(6) << std::setfill('0') << rank;
-
-        std::ofstream os(fn.str());
-        MFEM_VERIFY(os.good(), "Could not open parallel mesh output file.");
-        result.mesh->ParPrint(os);  // <-- parallel MFEM mesh format
-    }
+    SaveParallelMesh(*result.mesh, root_path, "simulation_pmesh", 16);
     // -------------------------------------------------------------------------
     // 2) Save ParGridFunctions in PARALLEL form (each rank writes its piece)
     // -------------------------------------------------------------------------

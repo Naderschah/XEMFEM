@@ -44,6 +44,8 @@ mesh:
     estimator: Kelly
     enable_rebalance: true
     verbose: true
+    save_serial: false
+    save_vtu_parallel: false
 save_path: /work/sim_results
 delete_files_present: true
 debug:

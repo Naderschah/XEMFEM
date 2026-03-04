@@ -1,6 +1,6 @@
 def build_sketch_dicts(shrinkage_factor):
   dielectric_height = 0.1
-  plate_x = 0.5
+  plate_x = -0.25
   plate_width = 0.5
   plate_height = 0.05
 
@@ -24,9 +24,8 @@ def build_sketch_dicts(shrinkage_factor):
   # Simulation Volume
   xenon_sketches["LXe"] = {
     'RadialPosition': 0.0,
-    'VerticalPosition': -(dielectric_height + plate_height * 2 + dielectric_height) * 1.5 /2,
-    'Width': plate_x * 2 + plate_width,
-    'Height': (dielectric_height + plate_height * 2 + dielectric_height) * 1.5 ,
+    'VerticalPosition': 0,
+    'Radius': 3 * plate_width / 2
   }
   # Dielectric
   xenon_sketches["GXe"] = {
@@ -35,10 +34,17 @@ def build_sketch_dicts(shrinkage_factor):
     'Width':plate_width,
     'Height':dielectric_height,
   }
+  ptfe_sketches["InfiniteSpace"] = {
+    'RadialPosition': 0.0,
+    'VerticalPosition': 0,
+    'Radius': 10 * plate_width / 2
+  }
+
   manual_mapping = {
-        1-1: "BottomPlate",
-        2-1: "TopPlate",
-        3-1: "GXe_part",
-        4-1: "LXe_part",
+    1-1: "InfiniteSpace",
+    2-1: "LXe",
+    3-1: "BottomPlate",
+    4-1: "GXe",
+    5-1: "TopPlate"
     }
   return ptfe_sketches, electrode_sketches, xenon_sketches, manual_mapping

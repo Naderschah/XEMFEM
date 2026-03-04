@@ -27,10 +27,9 @@ def build_sketch_dicts(shrinkage_factor):
   }
   # Simulation Volume
   xenon_sketches["LXe"] = {
-    'RadialPosition': x0,
-    'VerticalPosition': y0,
-    'Width': W,
-    'Height': H,
+    'RadialPosition': 0,
+    'VerticalPosition': 0,
+    'Radius': 3*wire_center_x,
   }
   # Dielectric
   xenon_sketches["GXe"] = {
@@ -39,12 +38,19 @@ def build_sketch_dicts(shrinkage_factor):
     'Width':2*wire_center_x,
     'Height':2*min(r1, r2),
   }
+  ptfe_sketches["InfiniteSpace"] = {
+    'RadialPosition': 0.0,
+    'VerticalPosition': 0,
+    'Radius': 10 * wire_center_x 
+  }
+
   manual_mapping = {
-        1-1: "Wire1",
-        2-1: "Wire1",
-        3-1: "Wire2",
-        4-1: "Wire2",
-        5-1: "LXe_comp",
-        6-1: "GXe_comp",
+    1-1: "InfiniteSpace",
+    2-1: "LXe",
+    3-1: "Wire2",
+    4-1: "Wire2",
+    5-1: "GXe",
+    6-1: "Wire1",
+    7-1: "Wire1"
     }
   return ptfe_sketches, electrode_sketches, xenon_sketches, manual_mapping

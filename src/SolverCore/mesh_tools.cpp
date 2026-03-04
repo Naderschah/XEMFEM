@@ -1,5 +1,9 @@
 #include "mesh_tools.h"
 
+#include <fstream>
+#include <iomanip>
+#include <sstream>
+
 static std::string RankSuffix6(int rank)
 {
     std::ostringstream os;
@@ -7,10 +11,133 @@ static std::string RankSuffix6(int rank)
     return os.str();
 }
 
-std::unique_ptr<mfem::ParMesh> CreateSimulationDomain(const std::string &path, MPI_Comm comm)
+void SaveParallelMesh(const mfem::ParMesh &pmesh,
+                      const std::filesystem::path &out_dir,
+                      const std::string &prefix,
+                      int precision)
 {
+    namespace fs = std::filesystem;
+
+    const MPI_Comm comm = pmesh.GetComm();
     int rank = 0;
     MPI_Comm_rank(comm, &rank);
+
+    if (rank == 0)
+    {
+        std::error_code ec;
+        fs::create_directories(out_dir, ec);
+        MFEM_VERIFY(!ec,
+                    "SaveParallelMesh: could not create directory '" << out_dir.string()
+                    << "': " << ec.message());
+    }
+    MPI_Barrier(comm);
+
+    const fs::path file_path = out_dir / (prefix + RankSuffix6(rank));
+    std::ofstream os(file_path);
+    MFEM_VERIFY(os.good(),
+                "SaveParallelMesh: could not open '" << file_path.string() << "'");
+    os.precision(precision);
+    os.setf(std::ios::scientific);
+    pmesh.ParPrint(os);
+}
+
+void SaveSerialMesh(const mfem::ParMesh &pmesh,
+                    const std::filesystem::path &mesh_path,
+                    int precision,
+                    const std::string &comments)
+{
+    namespace fs = std::filesystem;
+
+    const MPI_Comm comm = pmesh.GetComm();
+    int rank = 0;
+    MPI_Comm_rank(comm, &rank);
+
+    if (rank == 0)
+    {
+        std::error_code ec;
+        const fs::path parent = mesh_path.parent_path();
+        if (!parent.empty())
+        {
+            fs::create_directories(parent, ec);
+            MFEM_VERIFY(!ec,
+                        "SaveSerialMesh: could not create directory '" << parent.string()
+                        << "': " << ec.message());
+        }
+    }
+    MPI_Barrier(comm);
+
+    std::ofstream mesh_out;
+    if (rank == 0)
+    {
+        mesh_out.open(mesh_path);
+    }
+
+    int ok = 1;
+    if (rank == 0)
+    {
+        ok = mesh_out.is_open() ? 1 : 0;
+        if (ok == 1)
+        {
+            mesh_out.precision(precision);
+            mesh_out.setf(std::ios::scientific);
+        }
+    }
+    MPI_Bcast(&ok, 1, MPI_INT, 0, comm);
+    MFEM_VERIFY(ok == 1, "SaveSerialMesh: could not open serial mesh file on rank 0.");
+
+    pmesh.PrintAsSerial(mesh_out, comments.c_str());
+}
+
+void SaveParallelVTU(mfem::ParMesh &pmesh,
+                     const std::filesystem::path &out_prefix,
+                     mfem::VTKFormat format,
+                     bool high_order_output,
+                     int compression_level,
+                     bool bdr_elements)
+{
+    namespace fs = std::filesystem;
+    const MPI_Comm comm = pmesh.GetComm();
+    int rank = 0;
+    MPI_Comm_rank(comm, &rank);
+
+    if (rank == 0)
+    {
+        std::error_code ec;
+        const fs::path parent = out_prefix.parent_path();
+        if (!parent.empty())
+        {
+            fs::create_directories(parent, ec);
+        }
+        MFEM_VERIFY(!ec,
+                    "SaveParallelVTU: could not create directory '" << parent.string()
+                    << "': " << ec.message());
+    }
+    MPI_Barrier(comm);
+
+    pmesh.PrintVTU(out_prefix.string(), format, high_order_output, compression_level, bdr_elements);
+}
+
+void SaveAMRMeshArtifacts(mfem::ParMesh &pmesh,
+                          const std::filesystem::path &mesh_dir,
+                          const AMRSettings &amr_io,
+                          int precision)
+{
+    SaveParallelMesh(pmesh, mesh_dir, "amr_mesh", precision);
+    if (amr_io.save_serial)
+    {
+        SaveSerialMesh(pmesh, mesh_dir / "amr_mesh_serial.mesh", precision, "AMR serial mesh export");
+    }
+    if (amr_io.save_vtu_parallel)
+    {
+        SaveParallelVTU(pmesh, mesh_dir / "amr_mesh_vtu", mfem::VTKFormat::BINARY, true, 0, false);
+    }
+}
+
+std::unique_ptr<mfem::ParMesh> CreateSimulationDomain(const std::string &path, MPI_Comm comm)
+{
+    int rank = 0, nranks = 1;
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &nranks);
 
     namespace fs = std::filesystem;
     const fs::path p(path);
@@ -67,8 +194,17 @@ std::unique_ptr<mfem::ParMesh> CreateSimulationDomain(const std::string &path, M
     // If you want NC meshes for quad/hex local AMR later:
     // serial->EnsureNCMesh();
 
-    // Partition to parallel mesh
-    auto pmesh = std::make_unique<mfem::ParMesh>(comm, *serial);
+    // Partition to parallel mesh (explicit in-memory prepartition).
+    // This keeps startup behavior consistent across execution paths without
+    // writing/reading intermediate mesh files.
+    int *part_raw = serial->GeneratePartitioning(nranks, 1);
+    if (part_raw == nullptr)
+    {
+        throw std::runtime_error("CreateSimulationDomain: GeneratePartitioning returned null.");
+    }
+    std::unique_ptr<int[]> part(part_raw);
+
+    auto pmesh = std::make_unique<mfem::ParMesh>(comm, *serial, part.get());
     return pmesh;
 }
 
@@ -163,6 +299,21 @@ bool ApplyAMRRefineDerefineStep(mfem::ParMesh &pmesh,
                                 const Config &cfg)
 {
   if (!cfg.mesh.amr.enable) { return false; }
+  const bool amr_verbose = cfg.mesh.amr.verbose;
+  const MPI_Comm comm = pmesh.GetComm();
+  int rank = 0;
+  MPI_Comm_rank(comm, &rank);
+
+  auto global_counts = [&](long long &ne_global, long long &tdof_global)
+  {
+    const long long ne_local = static_cast<long long>(pmesh.GetNE());
+    const long long tdof_local = static_cast<long long>(pfes.GetTrueVSize());
+    MPI_Allreduce(&ne_local, &ne_global, 1, MPI_LONG_LONG, MPI_SUM, comm);
+    MPI_Allreduce(&tdof_local, &tdof_global, 1, MPI_LONG_LONG, MPI_SUM, comm);
+  };
+
+  long long ne_before = 0, tdof_before = 0;
+  global_counts(ne_before, tdof_before);
 
   // --- 1) Build an element-wise error estimator (ex15p-style).
   //
@@ -206,18 +357,24 @@ bool ApplyAMRRefineDerefineStep(mfem::ParMesh &pmesh,
   refiner.Reset();
 
   bool changed = false;
+  bool refined = false;
+  bool stop_after_refine = false;
+  bool did_derefine = false;
+  bool derefined = false;
 
   // --- 3) Apply refinement.
   refiner.Apply(pmesh);
+  stop_after_refine = refiner.Stop();
+  refined = refiner.Refined();
 
   // STOP is satisfied if: stopping criterion met OR nothing was marked.
   // Either way, no mesh modification that we should continue from.
-  if (refiner.Stop())
+  if (stop_after_refine)
   {
     // Even if Stop() is true, it can be because of "no elements marked".
     // In either case, there's nothing to update/transfer.
   }
-  else if (refiner.Refined())
+  else if (refined)
   {
     UpdateTransferAndRebalanceIfNeeded(pmesh, pfes, V);
     changed = true;
@@ -237,11 +394,30 @@ bool ApplyAMRRefineDerefineStep(mfem::ParMesh &pmesh,
     derefiner.Reset();
 
     // MeshOperator::Apply returns true if something happened (derefined + continue).
-    const bool did_derefine = derefiner.Apply(pmesh);
-    if (did_derefine && derefiner.Derefined())
+    did_derefine = derefiner.Apply(pmesh);
+    derefined = derefiner.Derefined();
+    if (did_derefine && derefined)
     {
       UpdateTransferAndRebalanceIfNeeded(pmesh, pfes, V);
       changed = true;
+    }
+  }
+
+  if (amr_verbose)
+  {
+    long long ne_after = 0, tdof_after = 0;
+    global_counts(ne_after, tdof_after);
+    if (rank == 0)
+    {
+      std::cout << "[AMR] refine: stop=" << (stop_after_refine ? "true" : "false")
+                << ", refined=" << (refined ? "true" : "false")
+                << " | derefine: attempted=" << (cfg.mesh.amr.enable_derefine ? "true" : "false")
+                << ", applied=" << (did_derefine ? "true" : "false")
+                << ", derefined=" << (derefined ? "true" : "false")
+                << " | changed=" << (changed ? "true" : "false")
+                << "\n";
+      std::cout << "[AMR] global size: NE " << ne_before << " -> " << ne_after
+                << ", true_dofs " << tdof_before << " -> " << tdof_after << "\n";
     }
   }
 

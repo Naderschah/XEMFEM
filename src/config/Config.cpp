@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <sstream>
 #include <cstdlib>
+#include <cmath>
+#include <cctype>
 #include <mpi.h>
 
 
@@ -498,6 +500,43 @@ static void parse_civ_params(Config &cfg, const YAML::Node &root)
     cfg.civ_params.block_size = O["block_size"].as<int>(cfg.civ_params.block_size);
 }
 
+static InterpolationCode1Mode parse_interp_code1_mode(const YAML::Node &node,
+                                                      const InterpolationCode1Mode current_mode)
+{
+    if (!node)
+    {
+        return current_mode;
+    }
+
+    if (!node.IsScalar())
+    {
+        throw std::runtime_error("interpolate.code1_mode must be a scalar.");
+    }
+
+    std::string mode = node.as<std::string>("");
+    std::transform(mode.begin(), mode.end(), mode.begin(),
+                   [](unsigned char c) -> char
+                   {
+                       if (c == '-' || c == ' ') { return '_'; }
+                       return static_cast<char>(std::tolower(c));
+                   });
+
+    if (mode == "0" || mode == "nan")
+    {
+        return InterpolationCode1Mode::NaN;
+    }
+    if (mode == "1" || mode == "accept" || mode == "accept_value")
+    {
+        return InterpolationCode1Mode::AcceptValue;
+    }
+    if (mode == "2" || mode == "average" || mode == "average_elements")
+    {
+        return InterpolationCode1Mode::AverageElements;
+    }
+
+    throw std::runtime_error("interpolate.code1_mode must be one of {nan|0, accept_value|1, average_elements|2}.");
+}
+
 static void parse_interp_params(Config &cfg, const YAML::Node &root)
 {
     if (!root["interpolate"]) {
@@ -513,12 +552,42 @@ static void parse_interp_params(Config &cfg, const YAML::Node &root)
     cfg.interp.Ny = O["Ny"].as<double>(cfg.interp.Ny);
     cfg.interp.Nz = O["Nz"].as<double>(cfg.interp.Nz);
     cfg.interp.H1_project = O["H1_project"].as<bool>(cfg.interp.H1_project);
+    cfg.interp.E = O["E"].as<bool>(cfg.interp.E);
+    cfg.interp.V = O["V"].as<bool>(cfg.interp.V);
+    cfg.interp.code1_mode = parse_interp_code1_mode(O["code1_mode"], cfg.interp.code1_mode);
+
+    if (O["x_min"]) { cfg.interp.x_min = O["x_min"].as<double>(); }
+    if (O["x_max"]) { cfg.interp.x_max = O["x_max"].as<double>(); }
+    if (O["y_min"]) { cfg.interp.y_min = O["y_min"].as<double>(); }
+    if (O["y_max"]) { cfg.interp.y_max = O["y_max"].as<double>(); }
+    if (O["z_min"]) { cfg.interp.z_min = O["z_min"].as<double>(); }
+    if (O["z_max"]) { cfg.interp.z_max = O["z_max"].as<double>(); }
 
     if ((cfg.interp.Nx == 0) || (cfg.interp.Ny == 0))
     {
         throw std::runtime_error("Interpolation input producess 0 elements in x or y");
-        
     }
+
+    auto validate_interp_axis = [](const char *axis, const double vmin, const double vmax)
+    {
+        const bool has_min = std::isfinite(vmin);
+        const bool has_max = std::isfinite(vmax);
+
+        if (has_min != has_max)
+        {
+            throw std::runtime_error(std::string("Interpolation input requires both interpolate.")
+                                     + axis + "_min and interpolate." + axis + "_max");
+        }
+        if (has_min && !(vmax > vmin))
+        {
+            throw std::runtime_error(std::string("Interpolation input requires interpolate.")
+                                     + axis + "_max > interpolate." + axis + "_min");
+        }
+    };
+
+    validate_interp_axis("x", cfg.interp.x_min, cfg.interp.x_max);
+    validate_interp_axis("y", cfg.interp.y_min, cfg.interp.y_max);
+    validate_interp_axis("z", cfg.interp.z_min, cfg.interp.z_max);
 }
 
 // -----------------------------------------------------------------------------
@@ -586,6 +655,8 @@ static void parse_mesh_params(Config &cfg, const YAML::Node &root)
     { std::string est = root["mesh"]["AMR"]["estimator"].as<std::string>("Kelly"); if (est == "Kelly") cfg.mesh.amr.estimator = AMRSettings::EstimatorType::Kelly; else if (est == "ZienkiewiczZhu") cfg.mesh.amr.estimator = AMRSettings::EstimatorType::ZienkiewiczZhu; else if (est == "L2ZienkiewiczZhu") cfg.mesh.amr.estimator = AMRSettings::EstimatorType::L2ZienkiewiczZhu; }
     cfg.mesh.amr.enable_rebalance = root["mesh"]["AMR"]["enable_rebalance"].as<bool>(cfg.mesh.amr.enable_rebalance);
     cfg.mesh.amr.verbose = root["mesh"]["AMR"]["verbose"].as<bool>(cfg.mesh.amr.verbose);
+    cfg.mesh.amr.save_serial = root["mesh"]["AMR"]["save_serial"].as<bool>(cfg.mesh.amr.save_serial);
+    cfg.mesh.amr.save_vtu_parallel = root["mesh"]["AMR"]["save_vtu_parallel"].as<bool>(cfg.mesh.amr.save_vtu_parallel);
   }
 }
 

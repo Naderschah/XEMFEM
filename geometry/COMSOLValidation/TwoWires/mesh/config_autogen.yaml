@@ -3,10 +3,15 @@ materials:
     attr_id: 1
   LXe:
     attr_id: 2
+  PTFE:
+    attr_id: 3
 
 boundaries:
+  BC_Outer:
+    bdr_id: 6
+    type: dirichlet
   BC_Wire1:
-    bdr_id: 3
+    bdr_id: 5
     type: dirichlet
   BC_Wire2:
     bdr_id: 4

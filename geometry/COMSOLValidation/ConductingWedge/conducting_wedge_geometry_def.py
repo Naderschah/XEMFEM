@@ -14,39 +14,29 @@ def build_sketch_dicts(shrinkage_factor):
 
   electrode_sketches["Wedge"] = {
     'pts': [
-      ['line', 0.0,-wedge_height+y_offset],
-      ['line', wedge_base/2, y_offset],
-      ['line', -wedge_base/2, y_offset],
+      ['line', 0.0,0],
+      ['line', wedge_base/2, wedge_height],
+      ['line', -wedge_base/2,wedge_height],
     ]
   }
-
-  electrode_sketches["GroundedPlate"] = {
-    'RadialPosition': -wedge_base,
-    'VerticalPosition': -wedge_height-gap-groundedPlateH,
-    'Width': 2*wedge_base,
-    'Height': groundedPlateH,
-  }
   
-  # Dielectric
+  # Dielectric - Infinite Space
   xenon_sketches["LXe"] = {
-    'RadialPosition': -wedge_base/2,
-    'VerticalPosition': -wedge_height-gap,
-    'Width': wedge_base,
-    'Height': gap,
+    'RadialPosition': 0,
+    'VerticalPosition': 0,
+    'Radius': 10*wedge_height,
   }
 
   # Simulation Volume
   xenon_sketches["GXe"] = {
-    'RadialPosition': -wedge_base,
-    'VerticalPosition': -wedge_height-gap-groundedPlateH,
-    'Width': 2*wedge_base,
-    'Height': +wedge_height+gap+groundedPlateH + 0.1,
+    'RadialPosition': 0,
+    'VerticalPosition': 0,
+    'Radius': 4*wedge_height,
   }
   
   manual_mapping = {
-    1-1: "GroundedPlate",
-    2-1: "Wedge",
-    3-1: "GXe",
-    4-1: "LXe",
+    1-1: "Wedge",
+    2-1: "GXe",
+    3-1: "LXe"
   }
   return ptfe_sketches, electrode_sketches, xenon_sketches, manual_mapping

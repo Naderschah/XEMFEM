@@ -4,21 +4,24 @@ mesh:
   path: /work/geometry/COMSOLValidation/eccentric_coaxial_cylinder/mesh/mesh22.msh
   geom_volt_path_overwrite: /work/geometry/COMSOLValidation/eccentric_coaxial_cylinder/
   is_tpc: false
+  mark_external_boundary: true
+  external_boundary_name: BC_Outer
+  split_axis_boundary: false
   geometry: eccentric
   voltages: eccentric
   liquid_level: 0.004
   shrinkage_factor: 1
   manual_naming_only: true
-  autoappend: true
+  autoappend: false
   append_fieldShaping_Voltages_toConfig: false
   NetgenParams:
     debugCoarse: false
-    maxSize: 0.015008
-    minSize: 1.0e-06
-    growthRate: 0.1
+    maxSize: 0.03
+    minSize: 6.0e-6
+    growthRate: 1.1
     UseSurfaceCurvature: 1
     NBSegmentsPerEdge: 4
-    NBSegmentsPerRadius: 3
+    NBSegmentsPerRadius: 5
     UseChordalError: 0
     ChordalErrorValue: 1
     AQ_ElemSizeWeight: 0.5
@@ -30,17 +33,36 @@ mesh:
     Opt_SecondOrder: 0
     Opt_Optimize: true
   AMR:
-    enable: false
+    enable: true
+    max_iter: 10
+    local_error_goal: 1e-4
+    total_error_goal: 0.0
+    total_error_fraction: 0.0
+    total_error_norm_p: 2.0
+    enable_derefine: true
+    derefine_hysterisis: 0.5
+    derefine_op: 2
+    max_elements: 0
+    max_dofs: 0
+    nc_limit: 0
+    prefer_conforming_refinement: true
+    min_marked_elements: 1
+    min_rel_error_reduction: 0.0
+    estimator: Kelly
+    enable_rebalance: true
+    verbose: false
+    save_serial: true
 save_path: /work/sim_results/eccentric_coaxial_cylinder
 delete_files_present: true
-debug:
-  debug: true
-  timing: true
-  StopAfterSketh: false
-  dry_run: false
-  printBoundaryConditions: false
-  printHypreWarnings: false
-  dumpdata: false
+interpolate:
+  Nx: 3000
+  Ny: 3000
+  x_min: -1.5
+  x_max: 1.5
+  y_min: -1.5
+  y_max: 1.5
+  V: true
+  E: true
 solver:
   solver: MUMPS
   generate_E: false
@@ -51,17 +73,14 @@ solver:
   printlevel: 0
 materials:
   GXe:
-    epsilon_r: 1.0
     attr_id: 1
-  LXe:
-    epsilon_r: 1.95
-    attr_id: 2
+    epsilon_r: 1.0
 boundaries:
-  BC_OuterCylinder:
+  BC_InnerCylinder:
+    bdr_id: 2
+    type: dirichlet
+    value: 100
+  BC_Outer:
     bdr_id: 3
     type: dirichlet
     value: 0
-  BC_InnerCylinder:
-    bdr_id: 4
-    type: dirichlet
-    value: 100

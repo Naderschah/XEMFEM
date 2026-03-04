@@ -5,9 +5,9 @@ materials:
     attr_id: 2
 
 boundaries:
-  BC_GroundedPlate:
-    bdr_id: 3
+  BC_Outer:
+    bdr_id: 4
     type: dirichlet
   BC_Wedge:
-    bdr_id: 4
+    bdr_id: 3
     type: dirichlet

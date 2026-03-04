@@ -30,6 +30,14 @@ mesh_path = os.path.normpath(
 )
 shrinkage_factor = config["mesh"].get('shrinkage_factor', 1-0.014)
 
+# Optional external-boundary tagging (independent of is_tpc).
+# Defaults preserve existing behavior.
+mark_external_boundary = config["mesh"].get("mark_external_boundary", is_tpc)
+external_boundary_name = config["mesh"].get("external_boundary_name", "BC_Cryostat")
+split_axis_boundary = config["mesh"].get("split_axis_boundary", is_tpc)
+axis_boundary_name = config["mesh"].get("axis_boundary_name", "BC_r0")
+axis_boundary_tol = float(config["mesh"].get("axis_boundary_tol", 1e-9))
+
 # If it looks like a file, strip filename
 if '.' in mesh_path.split('/')[-1]:
     mesh_path = os.path.dirname(mesh_path)
@@ -58,7 +66,11 @@ else:
 
 # ==============  Debug Options ===========================
 makeface = True
-stop_after_sketch = config['debug']['StopAfterSketh']
+stop_after_sketch = (
+    config
+    .get('debug', {})
+    .get('StopAfterSketh', False)
+)
 
 #def main():
 # ----------------- Build sketch dicts (dict-of-dicts) -----------------
@@ -80,8 +92,8 @@ if "GXe0" not in xenon_face_map.keys(): xenon_face_map["GXe0"] = None
 if "LXe0" not in xenon_face_map.keys(): xenon_face_map["LXe0"] = None
 model.do()
 
-#if stop_after_sketch: return
-raise Exception("Stopping after sketching as per debug config") if stop_after_sketch else None
+if stop_after_sketch:
+    raise Exception("Stopping after sketching as per debug config") if stop_after_sketch else None
 # MAke selection Groups and Partition
 if len(ptfe_face_map) > 0:      PTFEGrp = makeGroupByName(Cryostat_doc, "PTFE", ptfe_face_map) 
 if len(electrode_face_map) > 0: ElectrodeGrp = makeGroupByName(Cryostat_doc, "Electrodes", electrode_face_map) 
@@ -353,44 +365,59 @@ BCs = [mesh.GroupOnGeom(msh_grp, msh_grp.GetName(), SMESH.EDGE) for msh_grp in B
 mesh.Compute()
 # --------------------------------  Also mark the cryostat boundary --------------------------------
 # Select only the free borders of the mesh (ie edges that dont connect to a triangle) 
-if is_tpc:
+if mark_external_boundary:
     free_border_edges = mesh.MakeGroup("FreeBordersAll",
                                         SMESH.EDGE,
                                         SMESH.FT_FreeBorders)
-    # Subtract every single boundary condition we have
-    all_bc_edges = mesh.UnionListOfGroups(BCs, "AllBC_Edges") # We need a union group here
-    all_bc_edges = mesh.ConvertToStandalone(all_bc_edges)
-    free_borders_clean = mesh.CutGroups(
-        free_border_edges, 
-        all_bc_edges,
-        "FreeBorders_NoBC"
-    )   
-    free_borders_clean = mesh.ConvertToStandalone(free_borders_clean)
-    # Pop out the x = 0 zero lines 
-    tol = 1e-9
-    def on_axis(node_id):
-        x, y, z = mesh.GetNodeXYZ(node_id)
-        return abs(x) < tol
-    edge_ids = free_borders_clean.GetIDs()
-    keep_edges = []
-    r0_edges = []
-    for eid in edge_ids:
-        nodes = mesh.GetElemNodes(eid)
-        if not (on_axis(nodes[0]) and on_axis(nodes[1])):
-            keep_edges.append(eid)
-        else:
-            r0_edges.append(eid)
 
-    cleaned = mesh.CreateEmptyGroup(SMESH.EDGE, "BC_Cryostat")
-    cleaned.Add(keep_edges)
+    all_bc_edges = None
+    if len(BCs) > 0:
+        # Subtract all already-defined BC edges from free borders.
+        all_bc_edges = mesh.UnionListOfGroups(BCs, "AllBC_Edges")
+        all_bc_edges = mesh.ConvertToStandalone(all_bc_edges)
+        free_borders_clean = mesh.CutGroups(
+            free_border_edges, 
+            all_bc_edges,
+            "FreeBorders_NoBC"
+        )
+        free_borders_clean = mesh.ConvertToStandalone(free_borders_clean)
+    else:
+        free_borders_clean = mesh.ConvertToStandalone(free_border_edges)
+
+    edge_ids = free_borders_clean.GetIDs()
+    keep_edges = list(edge_ids)
+    r0_edges = []
+
+    if split_axis_boundary:
+        # Split out edges lying on x=0 axis to a separate boundary group.
+        def on_axis(node_id):
+            x, y, z = mesh.GetNodeXYZ(node_id)
+            return abs(x) < axis_boundary_tol
+
+        keep_edges = []
+        r0_edges = []
+        for eid in edge_ids:
+            nodes = mesh.GetElemNodes(eid)
+            if not (on_axis(nodes[0]) and on_axis(nodes[1])):
+                keep_edges.append(eid)
+            else:
+                r0_edges.append(eid)
+
+    cleaned = mesh.CreateEmptyGroup(SMESH.EDGE, external_boundary_name)
+    if len(keep_edges) > 0:
+        cleaned.Add(keep_edges)
     cleaned = mesh.ConvertToStandalone(cleaned)
 
-    cleaned2 = mesh.CreateEmptyGroup(SMESH.EDGE, "BC_r0")
-    cleaned2.Add(keep_edges)
-    cleaned2 = mesh.ConvertToStandalone(cleaned2)
-    # Delete helpers 
+    if split_axis_boundary:
+        cleaned2 = mesh.CreateEmptyGroup(SMESH.EDGE, axis_boundary_name)
+        if len(r0_edges) > 0:
+            cleaned2.Add(r0_edges)
+        cleaned2 = mesh.ConvertToStandalone(cleaned2)
+
+    # Delete helper groups
     mesh.RemoveGroup(free_borders_clean)
-    mesh.RemoveGroup(all_bc_edges)
+    if all_bc_edges is not None:
+        mesh.RemoveGroup(all_bc_edges)
     mesh.RemoveGroup(free_border_edges)
 
 
