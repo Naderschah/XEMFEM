@@ -1,5 +1,0 @@
-4
-1 3 "BC_Wire1"
-1 4 "BC_Wire2"
-2 1 "GXe"
-2 2 "LXe"

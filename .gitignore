@@ -24,6 +24,9 @@ sim_results/
 COMSOL_res
 plots
 *.pyc
+*/*/*/phys_map.txt
+*/*/phys_map.txt
+*/phys_map.txt
 mount/
 geometry/createGeometryFromCAD/out
 geometry/createGeometryFromCAD/CAD_*

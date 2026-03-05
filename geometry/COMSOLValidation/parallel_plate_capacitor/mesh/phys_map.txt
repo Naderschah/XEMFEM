@@ -1,7 +1,0 @@
-6
-1 4 "BC_BottomPlate"
-1 5 "BC_TopPlate"
-1 6 "BC_Outer"
-2 1 "GXe"
-2 2 "LXe"
-2 3 "PTFE"
