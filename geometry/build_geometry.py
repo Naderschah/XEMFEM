@@ -72,9 +72,63 @@ stop_after_sketch = (
     .get('StopAfterSketh', False)
 )
 
+def _component_has_spline(component):
+    if not isinstance(component, dict):
+        return False
+
+    pts = component.get("pts", [])
+    if isinstance(pts, list):
+        for item in pts:
+            if (
+                isinstance(item, (list, tuple))
+                and len(item) > 0
+                and isinstance(item[0], str)
+                and item[0].lower() == "spline"
+            ):
+                return True
+
+    sub = component.get("sub_sketches", {})
+    if isinstance(sub, dict):
+        for child in sub.values():
+            if _component_has_spline(child):
+                return True
+    elif isinstance(sub, list):
+        for child in sub:
+            if _component_has_spline(child):
+                return True
+
+    return False
+
+def _sketch_dict_has_spline(sketch_dict):
+    for name, component in sketch_dict.items():
+        if name == "shrinkage_factor":
+            continue
+        if _component_has_spline(component):
+            return True
+    return False
+
 #def main():
 # ----------------- Build sketch dicts (dict-of-dicts) -----------------
-ptfe_sketches, electrode_sketches, xenon_sketches, manual_mapping = geometry.build_sketch_dicts(shrinkage_factor)
+sketch_build = geometry.build_sketch_dicts(shrinkage_factor)
+if len(sketch_build) == 4:
+    ptfe_sketches, electrode_sketches, xenon_sketches, manual_mapping = sketch_build
+    sketch_repeat = True
+elif len(sketch_build) == 5:
+    ptfe_sketches, electrode_sketches, xenon_sketches, manual_mapping, sketch_repeat = sketch_build
+else:
+    raise Exception("build_sketch_dicts must return 4 or 5 values")
+
+has_spline = (
+    _sketch_dict_has_spline(ptfe_sketches)
+    or _sketch_dict_has_spline(electrode_sketches)
+    or _sketch_dict_has_spline(xenon_sketches)
+)
+use_sketch_repeat = bool(sketch_repeat) and (not has_spline)
+print(
+    "repeat mode:",
+    "SKETCH_REPEAT" if use_sketch_repeat else "FACE_REPEAT",
+    "(sketch_repeat=", bool(sketch_repeat), ", has_spline=", has_spline, ")"
+)
 
 # ----------------- SALOME Sketching -------------------------
 model.begin()
@@ -85,9 +139,12 @@ Cryostat_doc = Cryostat.document()
 # --------------------- Draw sketches
 ptfe_sketch_objs, ptfe_face_map = sketch_from_dict(ptfe_sketches, Cryostat_doc, makeface = makeface,
                                                 apply_shrinkage = False, shrink_below_y = config['mesh']['liquid_level'],
-                                                shrinkage_factor = shrinkage_factor)
-electrode_sketch_objs, electrode_face_map = sketch_from_dict(electrode_sketches, Cryostat_doc, makeface = makeface)
-xenon_sketch_objs, xenon_face_map = sketch_from_dict(xenon_sketches, Cryostat_doc, makeface = makeface)
+                                                shrinkage_factor = shrinkage_factor,
+                                                use_sketch_repeat = use_sketch_repeat)
+electrode_sketch_objs, electrode_face_map = sketch_from_dict(electrode_sketches, Cryostat_doc, makeface = makeface,
+                                                            use_sketch_repeat = use_sketch_repeat)
+xenon_sketch_objs, xenon_face_map = sketch_from_dict(xenon_sketches, Cryostat_doc, makeface = makeface,
+                                                    use_sketch_repeat = use_sketch_repeat)
 if "GXe0" not in xenon_face_map.keys(): xenon_face_map["GXe0"] = None
 if "LXe0" not in xenon_face_map.keys(): xenon_face_map["LXe0"] = None
 model.do()

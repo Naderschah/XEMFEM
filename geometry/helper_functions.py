@@ -468,13 +468,8 @@ def repeat_object(Sketch, component, objects):
     x_offset = HorizontalPitch * count
     y_offset = VerticalPitch * count
 
-    # --- pick a reference point ON the geometry ---
-    ref_obj = next(iter(objects))  # any line is fine
-
-    # SALOME Sketcher lines expose start/end points
-    p1 = ref_obj.startPoint()
-    x0, y0 = p1.x(), p1.y()
-    print(x0, y0)
+    x0 = component.get("RadialPosition", 0.0)
+    y0 = component.get("VerticalPosition", 0.0)
 
     start_pt = Sketch.addPoint(x0, y0)
     end_pt = Sketch.addPoint(x0 + x_offset / count, y0 + y_offset / count)
@@ -528,6 +523,7 @@ def geom_sketcher(
     shrink_below_y=None,
     shrinkage_factor=1.0,
     apply_shrinkage=False,
+    use_sketch_repeat=True,
 ):
     """
     Optional shrinkage:
@@ -608,8 +604,7 @@ def geom_sketcher(
         if has_fillet_params and lines:
             filleted = make_fillets(Sketch, component, lines)
             lines = list(lines) + list(filleted)
-        # TODO Add flag
-        if has_repeat and lines and False:
+        if use_sketch_repeat and has_repeat and lines:
             repeat_object(Sketch, component, lines)
 
     # Recurse into sub-sketches
@@ -624,6 +619,7 @@ def geom_sketcher(
                 shrink_below_y=shrink_below_y,
                 shrinkage_factor=shrinkage_factor,
                 apply_shrinkage=apply_shrinkage,
+                use_sketch_repeat=use_sketch_repeat,
             )
     elif isinstance(sub, list):
         for idx, child_component in enumerate(sub):
@@ -635,6 +631,7 @@ def geom_sketcher(
                 shrink_below_y=shrink_below_y,
                 shrinkage_factor=shrinkage_factor,
                 apply_shrinkage=apply_shrinkage,
+                use_sketch_repeat=use_sketch_repeat,
             )
 
 
@@ -684,6 +681,7 @@ def sketch_from_dict(
     apply_shrinkage=False,
     shrink_below_y=None,
     shrinkage_factor=1.0,
+    use_sketch_repeat=True,
 ):
     """
     sketch_dict: dict-of-dicts describing geometry
@@ -703,33 +701,29 @@ def sketch_from_dict(
             apply_shrinkage=apply_shrinkage,
             shrink_below_y=shrink_below_y,
             shrinkage_factor=shrinkage_factor,
+            use_sketch_repeat=use_sketch_repeat,
         )
         if makeface:
             model.do()
             face_feat = model.addFace(part_doc, [sk.result()])
             face_feat.setName(name)
 
-            # Store either original faces or repeated compounds
-            produced = []
-
             for idx, face_i in enumerate(face_feat.results()):
                 name_sub = f"{name}{idx}"
-                face_i.setName(name_sub)
-
-                # Apply part-level repeat if requested
-                rep_feat, rep_results = repeat_face_result_part_level(part_doc, face_i, component)
-
-                if rep_feat is None:
+                if use_sketch_repeat:
                     face_map[name_sub] = face_i
-                    produced.append(face_i)
+                    face_i.setName(name_sub)
                 else:
-                    # rep_feat is a compound feature; keep reference under a derived key
-                    rep_feat.setName(f"{name_sub}_linCopy")
-                    # You can store either the feature or all result shapes; pick what your pipeline expects
-                    face_map[f"{name_sub}_linCopy"] = rep_feat
-                    produced.extend(rep_results)
-
-            sketch_map[name] = face_feat  # or store produced/compound, depending on downstream
+                    rep_feat, rep_results = repeat_face_result_part_level(part_doc, face_i, component)
+                    if rep_feat is None:
+                        face_map[name_sub] = face_i
+                        face_i.setName(name_sub)
+                    else:
+                        for ridx, rep_i in enumerate(rep_results):
+                            rep_name = f"{name_sub}{ridx}"
+                            rep_i.setName(rep_name)
+                            face_map[rep_name] = rep_i
+            sketch_map[name] = face_feat
 
         else:
             sketch_map[name] = sk
@@ -1205,4 +1199,3 @@ def _assign_unique_name(base, used):
                 used.add(cand)
                 return cand
             k += 1
-
