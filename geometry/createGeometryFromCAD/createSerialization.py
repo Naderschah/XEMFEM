@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
+import argparse
 import os
 import json
 import math
 import glob
+import re
 import traceback
 from datetime import datetime
 from collections import Counter
@@ -16,7 +18,9 @@ from ezdxf.math import Vec3, OCS
 # -------------------------
 ROOT_DIR = "/work/geometry/createGeometryFromCAD/DXF_slices_parts"
 DXF_GLOB = "**/*.dxf"
-GAP_TOL  = 1e-6
+GAP_TOL  = 1e-1
+MAX_FORCE_MERGE_DIST = 1
+ENABLE_MANUAL_LINE_CLOSURE = False
 
 # SHAPER Sketch.addArc(..., direction) convention:
 # From your observation, the "inverted CCW" worked for most => True probably means "CW" (i.e. not-CCW).
@@ -26,9 +30,49 @@ FAILED_FILES_LOG   = os.path.join(os.path.abspath(ROOT_DIR), "failed_files.log")
 FAILED_OBJECTS_LOG = os.path.join(os.path.abspath(ROOT_DIR), "failed_objects.log")
 
 
+def _parse_args():
+    p = argparse.ArgumentParser(
+        description="Serialize DXF components into JSON sketch instruction files."
+    )
+    p.add_argument(
+        "--root-dir",
+        default=ROOT_DIR,
+        help="Root directory searched by --dxf-glob (default: %(default)s).",
+    )
+    p.add_argument(
+        "--dxf-glob",
+        default=DXF_GLOB,
+        help="Glob relative to --root-dir used to find DXF files (default: %(default)s).",
+    )
+    p.add_argument(
+        "--dxf-file",
+        action="append",
+        default=[],
+        help="Specific DXF file to process; can be passed multiple times. If set, glob search is skipped.",
+    )
+    p.add_argument(
+        "--path-regex",
+        default=None,
+        help="Regex filter applied to absolute DXF path before processing.",
+    )
+    p.add_argument(
+        "--gap-tol",
+        type=float,
+        default=GAP_TOL,
+        help="Endpoint gap tolerance used in contour extraction (default: %(default)s).",
+    )
+    return p.parse_args()
+
+
 # -------------------------
 # Logging
 # -------------------------
+def _reset_log(path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        ts = datetime.now().isoformat(timespec="seconds")
+        f.write(f"{ts} [RUN_START]\n")
+
 def _log_line(path, msg):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     ts = datetime.now().isoformat(timespec="seconds")
@@ -36,8 +80,26 @@ def _log_line(path, msg):
         f.write(f"{ts} {msg}\n")
 
 def _log_exception(path, header, exc):
+    _log_line(
+        path,
+        f"{header} exc_type={type(exc).__name__} exc_msg={str(exc)}"
+    )
     tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)).rstrip()
     _log_line(path, f"{header}\n{tb}\n---")
+
+def _infer_no_components_reason(entity_types):
+    types = set(entity_types.keys())
+    if not types:
+        return "modelspace had no supported entities"
+    if types.issubset({"LINE"}):
+        return "only LINE entities; no closed contour found within GAP_TOL"
+    if types.issubset({"ARC", "LINE"}):
+        return "ARC/LINE entities did not form a closed contour"
+    if types.issubset({"SPLINE"}):
+        return "SPLINE entities were open/unlinked or unsupported for closed extraction"
+    if "SPLINE" in types:
+        return "mixed entities including SPLINE did not resolve into closed/chainable contour"
+    return "entities did not resolve into closed/chainable contour"
 
 
 # -------------------------
@@ -943,20 +1005,151 @@ def _order_closed_cycle_greedy(entities, eps, tol):
         raise RuntimeError("Ordered chain did not close after bruteforce snapping.")
 
     return chain
+
+def _open_chain_with_manual_closure(entities, eps, tol):
+    """
+    Last-resort fallback:
+    - order a single open chain
+    - append one synthetic line from chain end back to chain start
+    Returns {"pts":[...]} or None.
+    """
+    chain = _order_and_orient_entities_into_chain(entities, eps, tol)
+    if not chain or len(chain) != len(entities):
+        return None
+
+    pts = []
+    for ent, a, b in chain:
+        try:
+            pts.append(_entity_to_vertex_instr(ent, a, b))
+        except Exception:
+            return None
+
+    start_xy = chain[0][1]
+    end_xy = chain[-1][2]
+    if not _isclose_xy(start_xy, end_xy, tol):
+        # make_shape() interprets each item as a segment start to next vertex;
+        # this extra vertex creates an explicit closing segment end->start.
+        pts.append(["line", float(end_xy[0]), float(end_xy[1])])
+
+    return {"pts": pts} if pts else None
+
+def _fallback_components_from_chainables(
+    chainables,
+    gap_tol,
+    allow_manual_line_closure=None,
+    max_force_merge_dist_override=None,
+):
+    """
+    Build components from chainable entities by endpoint snapping + closed-cycle ordering.
+    Tries progressively larger snap tolerances to tolerate endpoint drift from CAD/DXF export.
+    Returns:
+      (components, fail_reason)
+      - components: list (possibly empty)
+      - fail_reason: None if components were produced, else a short reason string
+    """
+    # Cap endpoint snapping to avoid over-merging distant/open contours.
+    merge_cap = (
+        float(MAX_FORCE_MERGE_DIST)
+        if max_force_merge_dist_override is None
+        else float(max_force_merge_dist_override)
+    )
+    base_cap = min(10.0 * gap_tol, merge_cap)
+    snap_caps = []
+    for c in (base_cap, merge_cap):
+        c = float(max(base_cap, c))
+        if c not in snap_caps:
+            snap_caps.append(c)
+
+    last_error = None
+    do_manual_line_closure = (
+        bool(ENABLE_MANUAL_LINE_CLOSURE)
+        if allow_manual_line_closure is None
+        else bool(allow_manual_line_closure)
+    )
+    for snap_cap in snap_caps:
+        eps, endpoints = _endpoints_for_chainables(chainables)
+        if not eps:
+            return [], "no_endpoints"
+
+        eps = _bruteforce_snap_endpoints(eps, endpoints, max_snap_dist=snap_cap)
+        attempt_components = []
+        ok = True
+
+        # Peel connected sets and require each set to form a closed cycle.
+        remaining = list(eps.keys())
+        while remaining:
+            seed = remaining[0]
+            seed_set = [seed]
+            remaining.pop(0)
+            changed = True
+            while changed:
+                changed = False
+                for e in list(remaining):
+                    ea0, ea1 = eps[e][0], eps[e][1]
+                    for g in seed_set:
+                        ga0, ga1 = eps[g][0], eps[g][1]
+                        if (ea0 == ga0 or ea0 == ga1 or ea1 == ga0 or ea1 == ga1):
+                            seed_set.append(e)
+                            remaining.remove(e)
+                            changed = True
+                            break
+
+            try:
+                chain = _order_closed_cycle_greedy(seed_set, eps, tol=snap_cap)
+                pts = []
+                for (ent, a, b) in chain:
+                    try:
+                        pts.append(_entity_to_vertex_instr(ent, a, b))
+                    except Exception as e:
+                        last_error = f"entity_to_vertex_failed:{type(e).__name__}"
+                        ok = False
+                        break
+                if not ok:
+                    break
+                if pts:
+                    attempt_components.append({"pts": pts})
+            except Exception as e:
+                last_error = f"order_or_close_failed:{type(e).__name__}"
+                if do_manual_line_closure:
+                    # Optional last fallback: force-close a single open chain with one line.
+                    comp = _open_chain_with_manual_closure(seed_set, eps, tol=snap_cap)
+                    if comp is None:
+                        last_error = "manual_line_closure_failed"
+                        ok = False
+                        break
+                    attempt_components.append(comp)
+                else:
+                    # Keep open contours open: do not inject synthetic closing lines.
+                    last_error = "open_chain_no_manual_closure"
+                    ok = False
+                    break
+
+        if ok and attempt_components:
+            return attempt_components, None
+
+    if last_error is None:
+        last_error = "no_closed_cycles_after_snapping"
+    return [], last_error
+
 # -------------------------
 # Main extraction: closed primitives + looped open-edge networks
 # -------------------------
-def dxf_to_components(msp, gap_tol=GAP_TOL):
-    # Expand INSERTs to visible geometry
-    entities = []
-    for e in msp:
-        if e.dxftype() == "INSERT":
-            entities.extend(list(e.virtual_entities()))
-        else:
-            entities.append(e)
-
+def _entities_to_components(entities, gap_tol=GAP_TOL):
     components = []
     open_entities = []
+    diag = {
+        "input_entities": len(entities),
+        "input_types": dict(Counter([e.dxftype() for e in entities])),
+        "closed_primitive_components": 0,
+        "open_entities": 0,
+        "edges_count": 0,
+        "loop_components": 0,
+        "fallback_attempted": False,
+        "chainables_count": 0,
+        "fallback_components": 0,
+        "fallback_reason": None,
+        "drop_reason": None,
+    }
 
     for e in entities:
         t = e.dxftype()
@@ -964,24 +1157,28 @@ def dxf_to_components(msp, gap_tol=GAP_TOL):
         # Closed primitives EdgeSmith won't give edges for:
         if t == "CIRCLE":
             components.append(_circle_to_component(e))
+            diag["closed_primitive_components"] += 1
             continue
 
         if t == "LWPOLYLINE" and bool(getattr(e, "closed", False)):
             comp = _lwpolyline_closed_to_component(e)
             if comp is not None and comp.get("pts"):
                 components.append(comp)
+                diag["closed_primitive_components"] += 1
                 continue
 
         if t == "POLYLINE" and bool(getattr(e, "is_closed", False)):
             comp = _polyline_closed_to_component(e)
             if comp is not None and comp.get("pts"):
                 components.append(comp)
+                diag["closed_primitive_components"] += 1
                 continue
 
         if t == "ELLIPSE" and _is_full_ellipse(e):
             comp = _full_ellipse_to_component(e)
             if comp is not None and comp.get("pts"):
                 components.append(comp)
+                diag["closed_primitive_components"] += 1
                 continue
 
         # Closed/periodic SPLINEs are ignored by EdgeSmith -> export directly as single-object contour
@@ -989,13 +1186,16 @@ def dxf_to_components(msp, gap_tol=GAP_TOL):
             comp = _closed_or_periodic_spline_to_component(e)
             if comp is not None and comp.get("pts"):
                 components.append(comp)
+                diag["closed_primitive_components"] += 1
                 continue
 
         # Everything else goes through edgesmith/edgeminer
         open_entities.append(e)
 
+    diag["open_entities"] = len(open_entities)
     # Build edges for loop detection
     edges = list(edgesmith.edges_from_entities_2d(open_entities))
+    diag["edges_count"] = len(edges)
 
     components_from_loops = 0
     if edges:
@@ -1012,56 +1212,74 @@ def dxf_to_components(msp, gap_tol=GAP_TOL):
             if comp is not None and comp.get("pts"):
                 components.append(comp)
                 components_from_loops += 1
+                diag["loop_components"] += 1
 
     # FALLBACK: if no loop-based components were produced, still export any SPLINE geometry
     # (common when edges exist but do not form closed loops, while splines are present)
     if components_from_loops == 0:
         chainables = [e for e in open_entities if e.dxftype() in {"SPLINE", "LINE", "ARC", "ELLIPSE"}]
+        diag["fallback_attempted"] = bool(chainables)
+        diag["chainables_count"] = len(chainables)
         if chainables:
-            eps, endpoints = _endpoints_for_chainables(chainables)
+            fallback_components, fallback_reason = _fallback_components_from_chainables(
+                chainables,
+                gap_tol=gap_tol,
+                allow_manual_line_closure=False,
+            )
+            components.extend(fallback_components)
+            diag["fallback_components"] = len(fallback_components)
+            diag["fallback_reason"] = fallback_reason
 
-            if eps:
-                # Brute-force snap closest pairs; allow a slightly larger cap than GAP_TOL
-                SNAP_CAP = 10.0 * gap_tol
-                eps = _bruteforce_snap_endpoints(eps, endpoints, max_snap_dist=SNAP_CAP)
+    if not components:
+        if diag["fallback_attempted"]:
+            diag["drop_reason"] = diag["fallback_reason"] or "fallback_failed"
+        elif diag["edges_count"] > 0:
+            diag["drop_reason"] = "no_loops_found"
+        elif diag["open_entities"] > 0:
+            diag["drop_reason"] = "no_edges_from_open_entities"
+        else:
+            diag["drop_reason"] = "no_supported_entities"
 
-                # Now order into one or more cycles:
-                # If multiple contours exist, we must split first. Since you claim everything is closed,
-                # we can peel cycles by repeatedly ordering from remaining entities.
-                remaining = list(eps.keys())
-                while remaining:
-                    # take a seed subset by connectivity after snapping (simple BFS on exact-equality nodes)
-                    seed = remaining[0]
-                    # collect a connected set by exact endpoint equality
-                    seed_set = [seed]
-                    remaining.pop(0)
-                    changed = True
-                    while changed:
-                        changed = False
-                        for e in list(remaining):
-                            ea0, ea1 = eps[e][0], eps[e][1]
-                            for g in seed_set:
-                                ga0, ga1 = eps[g][0], eps[g][1]
-                                if (ea0 == ga0 or ea0 == ga1 or ea1 == ga0 or ea1 == ga1):
-                                    seed_set.append(e)
-                                    remaining.remove(e)
-                                    changed = True
-                                    break
+    return components, diag
 
-                    chain = _order_closed_cycle_greedy(seed_set, eps, tol=SNAP_CAP)
 
-                    pts = []
-                    ok = True
-                    for (ent, a, b) in chain:
-                        try:
-                            pts.append(_entity_to_vertex_instr(ent, a, b))
-                        except Exception:
-                            ok = False
-                            break
-                    if ok and pts:
-                        components.append({"pts": pts})
+def dxf_to_components(msp, gap_tol=GAP_TOL):
+    # Expand INSERTs to visible geometry
+    entities = []
+    for e in msp:
+        if e.dxftype() == "INSERT":
+            entities.extend(list(e.virtual_entities()))
+        else:
+            entities.append(e)
 
-    return components, entities
+    # Process layer-wise so open-chain fallback can run for layers that would
+    # otherwise be masked by successful loop extraction in other layers.
+    by_layer = {}
+    for e in entities:
+        layer = str(getattr(getattr(e, "dxf", None), "layer", "0"))
+        by_layer.setdefault(layer, []).append(e)
+
+    component_records = []
+    layer_reports = []
+    for layer in sorted(by_layer.keys()):
+        layer_entities = by_layer[layer]
+        comps, diag = _entities_to_components(layer_entities, gap_tol=gap_tol)
+        for comp in comps:
+            component_records.append(
+                {
+                    "component": comp,
+                    "layer": layer,
+                }
+            )
+        layer_reports.append(
+            {
+                "layer": layer,
+                "component_count": len(comps),
+                "diag": diag,
+            }
+        )
+
+    return component_records, entities, layer_reports, by_layer
 
 
 # -------------------------
@@ -1083,6 +1301,369 @@ def _indexed_dump_paths(base_json_path, count):
     return [f"{root}_{i}{ext}" for i in range(count)]
 
 
+def _layer_group_index(layer_name):
+    """
+    Extract numeric sub-index from DXF layer names like:
+      ...__G056_CLOSED, ...__G072_OPEN, ...__G001_WIRE_FAIL
+    Returns int or None.
+    """
+    layer_name = str(layer_name or "")
+    m = re.search(r"__G(\d+)_(?:OPEN|CLOSED|WIRE_FAIL)\b", layer_name)
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except Exception:
+        return None
+
+
+def _indexed_dump_paths_by_layer(base_json_path, component_records):
+    """
+    Name outputs by DXF group index when available:
+      <base>_<idx>.json
+    If multiple components share an idx, append sub-index:
+      <base>_<idx>_1.json, <base>_<idx>_2.json, ...
+    If idx is unavailable, fall back to a sequential index.
+    """
+    base_json_path = os.path.abspath(base_json_path)
+    root, ext = os.path.splitext(base_json_path)
+    if ext.lower() != ".json":
+        ext = ".json"
+
+    used = set()
+    fallback_counter = 0
+    out = []
+    for rec in component_records:
+        layer = rec.get("layer")
+        idx = _layer_group_index(layer)
+        if idx is None:
+            stem = f"{root}_{fallback_counter}"
+            fallback_counter += 1
+        else:
+            stem = f"{root}_{idx}"
+
+        path = f"{stem}{ext}"
+        if path in used:
+            sub = 1
+            while True:
+                cand = f"{stem}_{sub}{ext}"
+                if cand not in used:
+                    path = cand
+                    break
+                sub += 1
+
+        used.add(path)
+        out.append(path)
+
+    return out
+
+
+def _layer_is_open_group(layer_name):
+    return re.search(r"__G\d+_OPEN\b", str(layer_name or "")) is not None
+
+
+def _choose_canonical_layer(source_layers):
+    """
+    Choose a stable layer label for rescued components merged from multiple OPEN groups.
+    Prefer the smallest numeric G-index when available.
+    """
+    if not source_layers:
+        return "0"
+
+    keyed = []
+    for layer in source_layers:
+        idx = _layer_group_index(layer)
+        keyed.append(((idx if idx is not None else 10**9), str(layer), layer))
+    keyed.sort()
+    return keyed[0][2]
+
+
+def _rescue_open_layers_by_endpoints(layer_reports, by_layer, gap_tol):
+    """
+    Second-pass rescue for dropped OPEN groups:
+    - pool chainable entities from dropped OPEN layers
+    - group by endpoint connectivity
+    - try to close each group using the existing fallback solver
+
+    Returns:
+      rescued_records: [{"component":..., "layer":...}, ...]
+      rescue_reports: list[dict]
+      rescued_source_layers: set[str]
+    """
+    candidate_layers = []
+    for r in layer_reports:
+        if int(r.get("component_count", 0)) != 0:
+            continue
+        layer = r.get("layer", "")
+        diag = r.get("diag", {})
+        reason = str(diag.get("drop_reason", ""))
+        if _layer_is_open_group(layer) and reason.startswith("open_chain"):
+            candidate_layers.append(layer)
+
+    if not candidate_layers:
+        return [], [], set()
+
+    rescued_records = []
+    rescue_reports = []
+    rescued_source_layers = set()
+
+    # Pass 1: rescue each dropped OPEN layer independently.
+    layer_chainables_map = {}
+    unresolved_layers = set()
+    for layer in sorted(candidate_layers):
+        layer_chainables = []
+        for e in by_layer.get(layer, []):
+            if e.dxftype() not in {"SPLINE", "LINE", "ARC", "ELLIPSE"}:
+                continue
+            if _entity_endpoints_xy(e) is None:
+                continue
+            layer_chainables.append(e)
+        layer_chainables_map[layer] = layer_chainables
+
+        if not layer_chainables:
+            rescue_reports.append(
+                {
+                    "status": "failed",
+                    "method": "per_layer",
+                    "layer": layer,
+                    "entity_count": 0,
+                    "reason": "no_chainables",
+                }
+            )
+            unresolved_layers.add(layer)
+            continue
+
+        comps, reason = _fallback_components_from_chainables(
+            layer_chainables,
+            gap_tol=gap_tol,
+            allow_manual_line_closure=True,
+        )
+        if comps:
+            # Reject degenerate single-line "rescues" here; defer to pooled rescue.
+            weak = any(len(c.get("pts", [])) < 3 for c in comps)
+            if weak:
+                rescue_reports.append(
+                    {
+                        "status": "weak",
+                        "method": "per_layer",
+                        "layer": layer,
+                        "entity_count": len(layer_chainables),
+                        "reason": "weak_component_too_small",
+                    }
+                )
+                unresolved_layers.add(layer)
+                continue
+            for comp in comps:
+                rescued_records.append(
+                    {
+                        "component": comp,
+                        "layer": layer,
+                        "rescued": True,
+                        "source_layers": [layer],
+                        "method": "per_layer",
+                    }
+                )
+            rescue_reports.append(
+                {
+                    "status": "rescued",
+                    "method": "per_layer",
+                    "layer": layer,
+                    "entity_count": len(layer_chainables),
+                    "component_count": len(comps),
+                }
+            )
+            rescued_source_layers.add(layer)
+        else:
+            rescue_reports.append(
+                {
+                    "status": "failed",
+                    "method": "per_layer",
+                    "layer": layer,
+                    "entity_count": len(layer_chainables),
+                    "reason": reason or "rescue_failed",
+                }
+            )
+            unresolved_layers.add(layer)
+
+    # Pass 1b: targeted orphan pairing (e.g. single detached line layer with its nearest main layer).
+    rescue_bridge_cap = float(max(3.5, 10.0 * gap_tol, float(MAX_FORCE_MERGE_DIST)))
+    tiny_layers = [
+        l for l in sorted(unresolved_layers)
+        if 0 < len(layer_chainables_map.get(l, [])) <= 2
+    ]
+    for tiny in tiny_layers:
+        if tiny not in unresolved_layers:
+            continue
+        tiny_entities = layer_chainables_map.get(tiny, [])
+        tiny_pts = []
+        for e in tiny_entities:
+            ee = _entity_endpoints_xy(e)
+            if ee is not None:
+                tiny_pts.extend([ee[0], ee[1]])
+        if not tiny_pts:
+            continue
+
+        best_layer = None
+        best_d2 = None
+        for other in sorted(unresolved_layers):
+            if other == tiny:
+                continue
+            other_entities = layer_chainables_map.get(other, [])
+            if len(other_entities) <= 2:
+                continue
+            other_pts = []
+            for e in other_entities:
+                ee = _entity_endpoints_xy(e)
+                if ee is not None:
+                    other_pts.extend([ee[0], ee[1]])
+            if not other_pts:
+                continue
+
+            d2 = min(_sqdist_xy(a, b) for a in tiny_pts for b in other_pts)
+            if best_d2 is None or d2 < best_d2:
+                best_d2 = d2
+                best_layer = other
+
+        if best_layer is None:
+            rescue_reports.append(
+                {
+                    "status": "failed",
+                    "method": "pair",
+                    "tiny_layer": tiny,
+                    "reason": "no_pair_candidate",
+                }
+            )
+            continue
+
+        if best_d2 is None or best_d2 > (rescue_bridge_cap * rescue_bridge_cap):
+            rescue_reports.append(
+                {
+                    "status": "failed",
+                    "method": "pair",
+                    "tiny_layer": tiny,
+                    "target_layer": best_layer,
+                    "distance": (math.sqrt(best_d2) if best_d2 is not None else None),
+                    "reason": "pair_too_far",
+                }
+            )
+            continue
+
+        combo = list(tiny_entities) + list(layer_chainables_map.get(best_layer, []))
+        comps, reason = _fallback_components_from_chainables(
+            combo,
+            gap_tol=gap_tol,
+            allow_manual_line_closure=True,
+            max_force_merge_dist_override=rescue_bridge_cap,
+        )
+        if comps:
+            canonical_layer = best_layer
+            for comp in comps:
+                rescued_records.append(
+                    {
+                        "component": comp,
+                        "layer": canonical_layer,
+                        "rescued": True,
+                        "source_layers": [best_layer, tiny],
+                        "method": "pair",
+                    }
+                )
+            rescue_reports.append(
+                {
+                    "status": "rescued",
+                    "method": "pair",
+                    "tiny_layer": tiny,
+                    "target_layer": best_layer,
+                    "distance": math.sqrt(best_d2),
+                    "component_count": len(comps),
+                }
+            )
+            rescued_source_layers.add(tiny)
+            rescued_source_layers.add(best_layer)
+            unresolved_layers.discard(tiny)
+            unresolved_layers.discard(best_layer)
+        else:
+            rescue_reports.append(
+                {
+                    "status": "failed",
+                    "method": "pair",
+                    "tiny_layer": tiny,
+                    "target_layer": best_layer,
+                    "distance": math.sqrt(best_d2),
+                    "reason": reason or "pair_rescue_failed",
+                }
+            )
+
+    # Pass 2: pooled connectivity rescue for unresolved OPEN layers.
+    # Build pooled groups only from unresolved layers to avoid over-merging.
+    pooled_chainables = []
+    entity_layer = {}
+    for layer in sorted(unresolved_layers):
+        for e in by_layer.get(layer, []):
+            if e.dxftype() not in {"SPLINE", "LINE", "ARC", "ELLIPSE"}:
+                continue
+            if _entity_endpoints_xy(e) is None:
+                continue
+            pooled_chainables.append(e)
+            entity_layer[e] = layer
+
+    if pooled_chainables and unresolved_layers:
+        connect_tol = float(max(gap_tol, 1e-6))
+        conn_groups, _ = _group_open_curves_by_endpoints(pooled_chainables, tol=connect_tol)
+
+        for gi, group in enumerate(conn_groups):
+            source_layers = sorted({entity_layer[e] for e in group})
+            comps, reason = _fallback_components_from_chainables(
+                group,
+                gap_tol=gap_tol,
+                allow_manual_line_closure=True,
+                max_force_merge_dist_override=float(MAX_FORCE_MERGE_DIST),
+            )
+            if comps:
+                canonical_layer = _choose_canonical_layer(source_layers)
+                # Replace any per-layer rescue records participating in this pooled merge.
+                rescued_records = [
+                    rec for rec in rescued_records
+                    if not (rec.get("method") == "per_layer" and rec.get("layer") in set(source_layers))
+                ]
+                for comp in comps:
+                    rescued_records.append(
+                        {
+                            "component": comp,
+                            "layer": canonical_layer,
+                            "rescued": True,
+                            "source_layers": list(source_layers),
+                            "method": "pooled",
+                        }
+                    )
+                rescue_reports.append(
+                    {
+                        "status": "rescued",
+                        "method": "pooled",
+                        "group_index": gi,
+                        "source_layers": source_layers,
+                        "canonical_layer": canonical_layer,
+                        "entity_count": len(group),
+                        "component_count": len(comps),
+                    }
+                )
+                for l in source_layers:
+                    rescued_source_layers.add(l)
+                unresolved_layers.difference_update(source_layers)
+            else:
+                rescue_reports.append(
+                    {
+                        "status": "failed",
+                        "method": "pooled",
+                        "group_index": gi,
+                        "source_layers": source_layers,
+                        "entity_count": len(group),
+                        "reason": reason or "rescue_failed",
+                    }
+                )
+
+    return rescued_records, rescue_reports, rescued_source_layers
+
+
 # -------------------------
 # Processing
 # -------------------------
@@ -1096,27 +1677,158 @@ def process_one_file(dxf_path):
         return
 
     try:
-        components, all_entities = dxf_to_components(msp, gap_tol=GAP_TOL)
+        component_records, all_entities, layer_reports, by_layer = dxf_to_components(
+            msp, gap_tol=GAP_TOL
+        )
     except Exception as e:
         _log_exception(FAILED_FILES_LOG, header=f"[ERROR] extract file={dxf_path}", exc=e)
         print(f"[ERROR] extract: {dxf_path}: {e}")
         return
 
-    if not components:
+    rescued_records, rescue_reports, rescued_source_layers = _rescue_open_layers_by_endpoints(
+        layer_reports=layer_reports,
+        by_layer=by_layer,
+        gap_tol=GAP_TOL,
+    )
+    rescued_total = len(rescued_records)
+    rescued_group_count = sum(1 for rr in rescue_reports if rr.get("status") == "rescued")
+    print(
+        f"[RESCUE_OBJECTS] file={dxf_path} rescued_objects={rescued_total} "
+        f"rescued_groups={rescued_group_count} rescue_attempt_groups={len(rescue_reports)}"
+    )
+    _log_line(
+        FAILED_OBJECTS_LOG,
+        f"[RESCUE_OBJECTS] file={dxf_path} rescued_objects={rescued_total} "
+        f"rescued_groups={rescued_group_count} rescue_attempt_groups={len(rescue_reports)}",
+    )
+    if rescue_reports:
+        rescued_total_from_reports = sum(
+            int(rr.get("component_count", 0))
+            for rr in rescue_reports
+            if rr.get("status") == "rescued"
+        )
+        print(
+            f"[RESCUE_SUMMARY] file={dxf_path} groups={len(rescue_reports)} "
+            f"rescued_components={rescued_total_from_reports}"
+        )
+        for rr in rescue_reports:
+            method = rr.get("method", "pooled")
+            if method == "per_layer":
+                if rr.get("status") == "rescued":
+                    msg = (
+                        f"[RESCUE_LAYER] file={dxf_path} layer={rr['layer']} status=rescued "
+                        f"entities={rr['entity_count']} components={rr['component_count']}"
+                    )
+                elif rr.get("status") == "weak":
+                    msg = (
+                        f"[RESCUE_LAYER] file={dxf_path} layer={rr['layer']} status=weak "
+                        f"entities={rr['entity_count']} reason={rr.get('reason','unknown')}"
+                    )
+                else:
+                    msg = (
+                        f"[RESCUE_LAYER] file={dxf_path} layer={rr['layer']} status=failed "
+                        f"entities={rr['entity_count']} reason={rr.get('reason','unknown')}"
+                    )
+            elif method == "pair":
+                if rr.get("status") == "rescued":
+                    msg = (
+                        f"[RESCUE_PAIR] file={dxf_path} tiny={rr['tiny_layer']} "
+                        f"target={rr['target_layer']} status=rescued "
+                        f"distance={rr.get('distance')} components={rr['component_count']}"
+                    )
+                else:
+                    msg = (
+                        f"[RESCUE_PAIR] file={dxf_path} tiny={rr.get('tiny_layer')} "
+                        f"target={rr.get('target_layer')} status=failed "
+                        f"distance={rr.get('distance')} reason={rr.get('reason','unknown')}"
+                    )
+            elif rr.get("status") == "rescued":
+                msg = (
+                    f"[RESCUE_GROUP] file={dxf_path} group={rr['group_index']} status=rescued "
+                    f"entities={rr['entity_count']} components={rr['component_count']} "
+                    f"canonical_layer={rr['canonical_layer']} source_layers={rr['source_layers']}"
+                )
+            else:
+                msg = (
+                    f"[RESCUE_GROUP] file={dxf_path} group={rr['group_index']} status=failed "
+                    f"entities={rr['entity_count']} reason={rr.get('reason','unknown')} "
+                    f"source_layers={rr['source_layers']}"
+                )
+            print(msg)
+            _log_line(FAILED_OBJECTS_LOG, msg)
+
+    if rescued_records:
+        component_records.extend(rescued_records)
+
+    dropped_layers = [
+        r for r in layer_reports
+        if int(r.get("component_count", 0)) == 0 and r.get("layer") not in rescued_source_layers
+    ]
+    if dropped_layers:
+        print(
+            f"[DROP_SUMMARY] file={dxf_path} dropped_layers={len(dropped_layers)} "
+            f"total_layers={len(layer_reports)}"
+        )
+        for r in dropped_layers:
+            layer = r.get("layer", "<unknown>")
+            diag = r.get("diag", {})
+            reason = diag.get("drop_reason", "unknown")
+            chainables = int(diag.get("chainables_count", 0))
+            fallback_reason = diag.get("fallback_reason")
+            types = diag.get("input_types", {})
+            msg = (
+                f"[DROP_LAYER] file={dxf_path} layer={layer} reason={reason} "
+                f"entities={diag.get('input_entities', 0)} chainables={chainables}"
+            )
+            if fallback_reason:
+                msg += f" fallback_reason={fallback_reason}"
+            msg += f" types={types}"
+            print(msg)
+            _log_line(FAILED_OBJECTS_LOG, msg)
+
+    if not component_records:
         types = Counter([e.dxftype() for e in all_entities])
+        reason = _infer_no_components_reason(types)
         _log_line(
             FAILED_FILES_LOG,
-            f"[FAILED_FILE] no components produced file={dxf_path} entity_types={dict(types)}"
+            "[FAILED_FILE] no components produced "
+            f"file={dxf_path} "
+            f"reason={reason} "
+            f"gap_tol={GAP_TOL} "
+            f"entity_types={dict(types)}"
         )
         print(f"[SKIP] no components: {dxf_path}")
         return
 
     base_json = _dxf_to_base_json_path(dxf_path)
     os.makedirs(os.path.dirname(base_json), exist_ok=True)
-    paths = _indexed_dump_paths(base_json, len(components))
+    paths = _indexed_dump_paths_by_layer(base_json, component_records)
+
+    # Remove stale outputs from previous naming/indexing schemes for this DXF base.
+    root, ext = os.path.splitext(base_json)
+    stale_patterns = [f"{root}{ext}", f"{root}_*{ext}"]
+    stale_removed = 0
+    for pat in stale_patterns:
+        for oldp in glob.glob(pat):
+            try:
+                os.remove(oldp)
+                stale_removed += 1
+            except Exception as e:
+                _log_exception(
+                    FAILED_OBJECTS_LOG,
+                    header=f"[WARN] failed_to_remove_stale file={dxf_path} stale={oldp}",
+                    exc=e,
+                )
+                print(f"[WARN] failed to remove stale output {oldp}: {e}")
+
+    print(f"[CLEAN_OUTPUTS] file={dxf_path} removed_stale={stale_removed}")
+    _log_line(FAILED_OBJECTS_LOG, f"[CLEAN_OUTPUTS] file={dxf_path} removed_stale={stale_removed}")
 
     written = 0
-    for i, (comp, path) in enumerate(zip(components, paths)):
+    rescued_written = 0
+    for i, (rec, path) in enumerate(zip(component_records, paths)):
+        comp = rec.get("component", {})
+        layer = rec.get("layer", "<unknown>")
         try:
             if not comp.get("pts"):
                 raise RuntimeError("component has empty pts")
@@ -1124,23 +1836,63 @@ def process_one_file(dxf_path):
                 json.dump(comp, f, indent=2, ensure_ascii=False)
             print(path)
             written += 1
+            if rec.get("rescued", False):
+                rescued_written += 1
         except Exception as e:
             _log_exception(
                 FAILED_OBJECTS_LOG,
-                header=f"[FAILED_OBJECT] file={dxf_path} comp_index={i} out={path}",
+                header=f"[FAILED_OBJECT] file={dxf_path} comp_index={i} layer={layer} out={path}",
                 exc=e,
             )
-            print(f"[WARN] failed component {i} in {dxf_path}: {e}")
+            print(f"[WARN] failed component {i} layer={layer} in {dxf_path}: {e}")
+
+    print(
+        f"[RESCUE_WRITTEN] file={dxf_path} rescued_written={rescued_written} "
+        f"rescued_created={rescued_total}"
+    )
+    _log_line(
+        FAILED_OBJECTS_LOG,
+        f"[RESCUE_WRITTEN] file={dxf_path} rescued_written={rescued_written} "
+        f"rescued_created={rescued_total}",
+    )
 
     if written == 0:
         _log_line(FAILED_FILES_LOG, f"[FAILED_FILE] no components written file={dxf_path}")
 
 
 def main():
-    pattern = os.path.join(os.path.abspath(ROOT_DIR), DXF_GLOB)
-    dxf_paths = sorted(glob.glob(pattern, recursive=True))
+    global ROOT_DIR, DXF_GLOB, GAP_TOL, FAILED_FILES_LOG, FAILED_OBJECTS_LOG
+
+    args = _parse_args()
+    ROOT_DIR = os.path.abspath(args.root_dir)
+    DXF_GLOB = args.dxf_glob
+    GAP_TOL = float(args.gap_tol)
+    FAILED_FILES_LOG = os.path.join(ROOT_DIR, "failed_files.log")
+    FAILED_OBJECTS_LOG = os.path.join(ROOT_DIR, "failed_objects.log")
+
+    _reset_log(FAILED_FILES_LOG)
+    _reset_log(FAILED_OBJECTS_LOG)
+
+    if args.dxf_file:
+        dxf_paths = sorted(os.path.abspath(p) for p in args.dxf_file)
+    else:
+        pattern = os.path.join(ROOT_DIR, DXF_GLOB)
+        dxf_paths = sorted(glob.glob(pattern, recursive=True))
+
+    if args.path_regex:
+        rx = re.compile(args.path_regex)
+        dxf_paths = [p for p in dxf_paths if rx.search(p)]
+
     if not dxf_paths:
-        raise SystemExit(f"No DXF files found under: {ROOT_DIR}")
+        raise SystemExit(
+            f"No DXF files matched. root_dir={ROOT_DIR} dxf_glob={DXF_GLOB} "
+            f"path_regex={args.path_regex!r} dxf_file_count={len(args.dxf_file)}"
+        )
+
+    print(
+        f"[run] files={len(dxf_paths)} root_dir={ROOT_DIR} "
+        f"dxf_glob={DXF_GLOB!r} gap_tol={GAP_TOL} path_regex={args.path_regex!r}"
+    )
 
     for p in dxf_paths:
         process_one_file(p)

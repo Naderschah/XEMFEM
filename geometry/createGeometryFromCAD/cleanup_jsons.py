@@ -21,6 +21,7 @@ def load_yaml_config(cfg_path):
           override_periodicity: []
           replace_these: []
           manual_additions: {}
+          prune_stale_outputs: True
 
     Expected minimal config:
       paths:
@@ -85,6 +86,7 @@ def load_yaml_config(cfg_path):
     cfg.setdefault("override_periodicity", [])
     cfg.setdefault("replace_these", [])
     cfg.setdefault("manual_additions", {})
+    cfg.setdefault("prune_stale_outputs", True)
 
     if not isinstance(cfg["override_periodicity"], list):
         raise ValueError("override_periodicity must be a list")
@@ -92,6 +94,8 @@ def load_yaml_config(cfg_path):
         raise ValueError("replace_these must be a list")
     if not isinstance(cfg["manual_additions"], dict):
         raise ValueError("manual_additions must be a mapping/object")
+    if not isinstance(cfg["prune_stale_outputs"], bool):
+        raise ValueError("prune_stale_outputs must be a boolean")
 
     # Resolve only known path fields inside sections (leave regex 'match' untouched)
     for rule in cfg.get("replace_these", []) or []:
@@ -124,7 +128,9 @@ def load_and_prepare_jsons(path):
   """
   all_files = {}
 
-  for fname in os.listdir(path):
+  # Deterministic ordering avoids run-to-run differences in which target names
+  # become grouping anchors.
+  for fname in sorted(os.listdir(path)):
     if not fname.lower().endswith(".json"):
       continue
 
@@ -382,6 +388,7 @@ def make_and_write_grouped(
   out_path = os.path.join(out_dir, "%s_grouped.json" % target)
   with open(out_path, "w", encoding="utf-8") as f:
     json.dump(out, f, ensure_ascii=False, indent=2)
+  return out_path
 
 def apply_override_periodicity_pre(all_files, file_meta, override_rules, tol=1e-6):
   forced_groupings = {}
@@ -470,13 +477,14 @@ def apply_manual_additions(manual_additions_cfg, out_dir):
           # to_dir: "/abs/path/out"   # optional; default = out_dir
   """
   if not manual_additions_cfg:
-    return
+    return []
 
   copy_rules = manual_additions_cfg.get("copy", [])
   if not copy_rules:
-    return
+    return []
 
   os.makedirs(out_dir, exist_ok=True)
+  written_paths = []
 
   for rule in copy_rules:
     # destination directory (per rule override)
@@ -488,6 +496,7 @@ def apply_manual_additions(manual_additions_cfg, out_dir):
       dst = os.path.join(dst_dir, f"{stem}.json")
       os.makedirs(dst_dir, exist_ok=True)
       shutil.copy2(src, dst)
+      written_paths.append(dst)
       continue
 
     if "from_glob" in rule:
@@ -498,14 +507,18 @@ def apply_manual_additions(manual_additions_cfg, out_dir):
         stem = os.path.splitext(os.path.basename(src))[0]
         dst = os.path.join(dst_dir, f"{stem}.json")
         shutil.copy2(src, dst)
+        written_paths.append(dst)
       continue
 
     raise ValueError(f"manual_additions.copy entry must have 'from' or 'from_glob': {rule}")
+  return written_paths
 
 def main():
   tol = 1e-6
 
-  cfg_path = "cleanup_config.yaml"  # wherever you keep it
+  cfg_path = "cleanup_config.yaml"
+  if len(sys.argv) > 1:
+    cfg_path = sys.argv[1]
   cfg = load_yaml_config(cfg_path)  # assumes exists
 
   in_dir = cfg["paths"]["in_dir"]
@@ -560,19 +573,21 @@ def main():
           used_candidates.add(m["name"])
 
   os.makedirs(out_dir, exist_ok=True)
+  written_paths = set()
 
   # write unchanged originals where no grouping was found
   for target in no_group_targets:
     src = os.path.join(in_dir, f"{target}.json")
     dst = os.path.join(out_dir, f"{target}.json")
     shutil.copy2(src, dst)
+    written_paths.add(os.path.abspath(dst))
 
   # write new files where groupings were found (and apply replace_these + override_periodicity)
   replace_rules = cfg.get("replace_these", [])
   override_rules = cfg.get("override_periodicity", [])
 
   for target, groupings in out_groupings.items():
-    make_and_write_grouped(
+    out_path = make_and_write_grouped(
         target=target,
         groupings=groupings,
         in_dir=in_dir,
@@ -581,9 +596,45 @@ def main():
         replace_rules=replace_rules,
         override_rules=override_rules,
     )
+    written_paths.add(os.path.abspath(out_path))
 
   # manual additions copied into out_dir regardless of grouping
-  apply_manual_additions(cfg.get("manual_additions", {}), out_dir=out_dir)
+  manual_written = apply_manual_additions(cfg.get("manual_additions", {}), out_dir=out_dir)
+  for p in manual_written:
+    written_paths.add(os.path.abspath(p))
+
+  if cfg.get("prune_stale_outputs", True):
+    removed = 0
+    for fname in os.listdir(out_dir):
+      if not fname.lower().endswith(".json"):
+        continue
+      fpath = os.path.abspath(os.path.join(out_dir, fname))
+      if fpath in written_paths:
+        continue
+      os.remove(fpath)
+      removed += 1
+    print(
+      "[cleanup_jsons] wrote=%d grouped=%d copied=%d manual=%d pruned=%d out_dir=%s"
+      % (
+        len(written_paths),
+        len(out_groupings),
+        len(no_group_targets),
+        len(manual_written),
+        removed,
+        out_dir,
+      )
+    )
+  else:
+    print(
+      "[cleanup_jsons] wrote=%d grouped=%d copied=%d manual=%d prune_stale_outputs=false out_dir=%s"
+      % (
+        len(written_paths),
+        len(out_groupings),
+        len(no_group_targets),
+        len(manual_written),
+        out_dir,
+      )
+    )
 
 
 if __name__ == "__main__":
