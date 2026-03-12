@@ -3,14 +3,17 @@ paths:
   out_dir: "/work/geometry/createGeometryFromCAD/DXF_slices_cleaned/slice_022.50deg"
   extras_dir: "/work/geometry/createGeometryFromCAD/manual_overwrites"
 
+# Remove old JSON files in out_dir that were not produced by the current run.
+prune_stale_outputs: true
+
 # Overrides
-override_periodicity:
-  # PTFE Wall
-  - match: '^XENTTPCAWarmPart088Part088_(?:[7-9]|[1-4]\d|5[0-8])'
-    use_source: max_extremum
-    set:
-      axis: y
-      number: 64
+#override_periodicity:
+#  # PTFE Wall
+#  - match: '^XENTTPCAWarmPart088Part088_(?:[7-9]|[1-4]\d|5[0-8])'
+#    use_source: max_extremum
+#    set:
+#      axis: y
+#      number: 63
 # Compontents To Do 15 deg:
 # Cathode + Insulation
 # Bell = TPCF 5484 + 54730 + 54720
@@ -40,4 +43,3 @@ override_periodicity:
 #    - from: "/path/to/extra_parts/EXTRA_001.json"
 #      to_name: "EXTRA_001"       # written as out_dir/EXTRA_001.json
 #    - from_glob: "/path/to/extra_parts/*.json"  # optional if you want many
-

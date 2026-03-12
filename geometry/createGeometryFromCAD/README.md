@@ -13,12 +13,15 @@ So instead, each slice is saved as a DXF and then this is postprocessed to produ
 The order of operations is 
 
 ```
-# Produce all slices
-python3 ExportSliceToDXF.py
-# Distribute DXF in file structure rather than in DXF, also produces a hash lookup to allow for copy operations (faster to construct in salome)
-python3 distribute_components_and_check_same.py  # Uses the naming_convention.csv file and checks if they are marked for meshing 
-# We switch to the intermediary format saving the jsons in the same location, this will err on unclosed contours 
-dxf_to_intermediary
+pip install pyyaml ezdxf
+# Produce all DXF component level slices, with audit file in case of problems
+python3 ExportSliceToDXF.py \
+  --workers 4 \
+  --component-audit-csv DXF_slices_parts/full_audit.csv
+# DXF to intermediary JSON format, SALOME capable but takes very long 
+python3 createSerialization.py
+# Finally group and cleanup with the cleanup config
+python3 cleanup_jsons.py cleanup_config.yaml
 ```
 
 The cylinder height is in y, the 0 degree slice corrsponds to the XY plane in this code. Unfortunately the angles are not in the xenon coordinate system, so I don't actually know which slice applies to data. So I picked an arbitrary PMT that forms a line with other PMTs and the central PMT, the picked PMT is at a distance of 607.75 mm in x and 80.01 mm in y from the central PMT, producing a rotation of 7.4998 degrees to align a PMT row with the XY plane.  

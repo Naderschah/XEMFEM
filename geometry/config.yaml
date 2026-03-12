@@ -3,7 +3,7 @@ geometry_id: SR3XENONnT
 mesh:
   path: /work/geometry/mesh/mesh22.msh
   geometry: debug
-  voltages: SR0
+  voltages: SR1
   liquid_level: 0.004
   autoappend: true
   append_fieldShaping_Voltages_toConfig: false
@@ -26,7 +26,7 @@ mesh:
     Opt_SecondOrder: 0
     Opt_Optimize: true
   AMR:
-    enable: false
+    enable: true
     max_iter: 10
     local_error_goal: 1e-4
     total_error_goal: 0.0
@@ -61,7 +61,7 @@ compute:
     enabled: false
 solver:
   solver: MUMPS
-  generate_E: false
+  generate_E: true
   axisymmetric: true
   order: 2
   assembly_mode: partial
@@ -87,27 +87,27 @@ boundaries:
     type: neumann
     value: 0
   BC_TopScreeningElectrode:
-    bdr_id: 6
+    bdr_id: 144
     type: dirichlet
     value: -900
   BC_AnodeElectrode:
-    bdr_id: 5
+    bdr_id: 143
     type: dirichlet
     value: 4950
   BC_GateElectrode:
-    bdr_id: 7
+    bdr_id: 142
     type: dirichlet
     value: 300
   BC_CathodeElectrode:
-    bdr_id: 8
+    bdr_id: 5
     type: dirichlet
     value: -2750
   BC_BottomScreeningElectrode:
-    bdr_id: 80
+    bdr_id: 4
     type: dirichlet
     value: -1300
   BC_AllPMTs:
-    bdr_id: 4
+    bdr_id: 145
     type: dirichlet
     value: -1300
   BC_Bell:
@@ -115,7 +115,7 @@ boundaries:
     type: dirichlet
     value: 0
   BC_CopperRing:
-    bdr_id: 145
+    bdr_id: 141
     type: dirichlet
     value: 0
   BC_Cryostat:
@@ -123,410 +123,410 @@ boundaries:
     type: dirichlet
     value: 0
   BC_FieldShapingRings0:
-    bdr_id: 79
+    bdr_id: 140
     type: dirichlet
     value: 650.0
   BC_FieldShapingRings1:
-    bdr_id: 78
-    type: dirichlet
-  BC_FieldShapingRings2:
-    bdr_id: 77
-    type: dirichlet
-  BC_FieldShapingRings3:
-    bdr_id: 76
-    type: dirichlet
-  BC_FieldShapingRings4:
-    bdr_id: 75
-    type: dirichlet
-  BC_FieldShapingRings5:
-    bdr_id: 74
-    type: dirichlet
-  BC_FieldShapingRings6:
-    bdr_id: 73
-    type: dirichlet
-  BC_FieldShapingRings7:
-    bdr_id: 72
-    type: dirichlet
-  BC_FieldShapingRings8:
-    bdr_id: 71
-    type: dirichlet
-  BC_FieldShapingRings9:
-    bdr_id: 70
-    type: dirichlet
-  BC_FieldShapingRings10:
-    bdr_id: 69
-    type: dirichlet
-  BC_FieldShapingRings11:
-    bdr_id: 68
-    type: dirichlet
-  BC_FieldShapingRings12:
-    bdr_id: 67
-    type: dirichlet
-  BC_FieldShapingRings13:
-    bdr_id: 66
-    type: dirichlet
-  BC_FieldShapingRings14:
-    bdr_id: 65
-    type: dirichlet
-  BC_FieldShapingRings15:
-    bdr_id: 64
-    type: dirichlet
-  BC_FieldShapingRings16:
-    bdr_id: 63
-    type: dirichlet
-  BC_FieldShapingRings17:
-    bdr_id: 62
-    type: dirichlet
-  BC_FieldShapingRings18:
-    bdr_id: 61
-    type: dirichlet
-  BC_FieldShapingRings19:
-    bdr_id: 60
-    type: dirichlet
-  BC_FieldShapingRings20:
-    bdr_id: 59
-    type: dirichlet
-  BC_FieldShapingRings21:
-    bdr_id: 58
-    type: dirichlet
-  BC_FieldShapingRings22:
-    bdr_id: 57
-    type: dirichlet
-  BC_FieldShapingRings23:
-    bdr_id: 56
-    type: dirichlet
-  BC_FieldShapingRings24:
-    bdr_id: 55
-    type: dirichlet
-  BC_FieldShapingRings25:
-    bdr_id: 54
-    type: dirichlet
-  BC_FieldShapingRings26:
-    bdr_id: 53
-    type: dirichlet
-  BC_FieldShapingRings27:
-    bdr_id: 52
-    type: dirichlet
-  BC_FieldShapingRings28:
-    bdr_id: 51
-    type: dirichlet
-  BC_FieldShapingRings29:
-    bdr_id: 50
-    type: dirichlet
-  BC_FieldShapingRings30:
-    bdr_id: 49
-    type: dirichlet
-  BC_FieldShapingRings31:
-    bdr_id: 48
-    type: dirichlet
-  BC_FieldShapingRings32:
-    bdr_id: 47
-    type: dirichlet
-  BC_FieldShapingRings33:
-    bdr_id: 46
-    type: dirichlet
-  BC_FieldShapingRings34:
-    bdr_id: 45
-    type: dirichlet
-  BC_FieldShapingRings35:
-    bdr_id: 44
-    type: dirichlet
-  BC_FieldShapingRings36:
-    bdr_id: 43
-    type: dirichlet
-  BC_FieldShapingRings37:
-    bdr_id: 42
-    type: dirichlet
-  BC_FieldShapingRings38:
-    bdr_id: 41
-    type: dirichlet
-  BC_FieldShapingRings39:
-    bdr_id: 40
-    type: dirichlet
-  BC_FieldShapingRings40:
-    bdr_id: 39
-    type: dirichlet
-  BC_FieldShapingRings41:
-    bdr_id: 38
-    type: dirichlet
-  BC_FieldShapingRings42:
-    bdr_id: 37
-    type: dirichlet
-  BC_FieldShapingRings43:
-    bdr_id: 36
-    type: dirichlet
-  BC_FieldShapingRings44:
-    bdr_id: 35
-    type: dirichlet
-  BC_FieldShapingRings45:
-    bdr_id: 34
-    type: dirichlet
-  BC_FieldShapingRings46:
-    bdr_id: 33
-    type: dirichlet
-  BC_FieldShapingRings47:
-    bdr_id: 32
-    type: dirichlet
-  BC_FieldShapingRings48:
-    bdr_id: 31
-    type: dirichlet
-  BC_FieldShapingRings49:
-    bdr_id: 30
-    type: dirichlet
-  BC_FieldShapingRings50:
-    bdr_id: 29
-    type: dirichlet
-  BC_FieldShapingRings51:
-    bdr_id: 28
-    type: dirichlet
-  BC_FieldShapingRings52:
-    bdr_id: 27
-    type: dirichlet
-  BC_FieldShapingRings53:
-    bdr_id: 26
-    type: dirichlet
-  BC_FieldShapingRings54:
-    bdr_id: 25
-    type: dirichlet
-  BC_FieldShapingRings55:
-    bdr_id: 24
-    type: dirichlet
-  BC_FieldShapingRings56:
-    bdr_id: 23
-    type: dirichlet
-  BC_FieldShapingRings57:
-    bdr_id: 22
-    type: dirichlet
-  BC_FieldShapingRings58:
-    bdr_id: 21
-    type: dirichlet
-  BC_FieldShapingRings59:
-    bdr_id: 20
-    type: dirichlet
-  BC_FieldShapingRings60:
-    bdr_id: 19
-    type: dirichlet
-  BC_FieldShapingRings61:
-    bdr_id: 18
-    type: dirichlet
-  BC_FieldShapingRings62:
-    bdr_id: 17
-    type: dirichlet
-  BC_FieldShapingRings63:
-    bdr_id: 16
-    type: dirichlet
-  BC_FieldShapingRings64:
-    bdr_id: 15
-    type: dirichlet
-  BC_FieldShapingRings65:
-    bdr_id: 14
-    type: dirichlet
-  BC_FieldShapingRings66:
-    bdr_id: 13
-    type: dirichlet
-  BC_FieldShapingRings67:
-    bdr_id: 12
-    type: dirichlet
-  BC_FieldShapingRings68:
-    bdr_id: 11
-    type: dirichlet
-  BC_FieldShapingRings69:
-    bdr_id: 10
-    type: dirichlet
-  BC_FieldShapingRings70:
-    bdr_id: 9
-    type: dirichlet
-  BC_FieldShapingGuard0:
-    bdr_id: 144
-    type: dirichlet
-  BC_FieldShapingGuard1:
-    bdr_id: 143
-    type: dirichlet
-  BC_FieldShapingGuard2:
-    bdr_id: 142
-    type: dirichlet
-  BC_FieldShapingGuard3:
-    bdr_id: 141
-    type: dirichlet
-  BC_FieldShapingGuard4:
-    bdr_id: 140
-    type: dirichlet
-  BC_FieldShapingGuard5:
     bdr_id: 139
     type: dirichlet
-  BC_FieldShapingGuard6:
+  BC_FieldShapingRings2:
     bdr_id: 138
     type: dirichlet
-  BC_FieldShapingGuard7:
+  BC_FieldShapingRings3:
     bdr_id: 137
     type: dirichlet
-  BC_FieldShapingGuard8:
+  BC_FieldShapingRings4:
     bdr_id: 136
     type: dirichlet
-  BC_FieldShapingGuard9:
+  BC_FieldShapingRings5:
     bdr_id: 135
     type: dirichlet
-  BC_FieldShapingGuard10:
+  BC_FieldShapingRings6:
     bdr_id: 134
     type: dirichlet
-  BC_FieldShapingGuard11:
+  BC_FieldShapingRings7:
     bdr_id: 133
     type: dirichlet
-  BC_FieldShapingGuard12:
+  BC_FieldShapingRings8:
     bdr_id: 132
     type: dirichlet
-  BC_FieldShapingGuard13:
+  BC_FieldShapingRings9:
     bdr_id: 131
     type: dirichlet
-  BC_FieldShapingGuard14:
+  BC_FieldShapingRings10:
     bdr_id: 130
     type: dirichlet
-  BC_FieldShapingGuard15:
+  BC_FieldShapingRings11:
     bdr_id: 129
     type: dirichlet
-  BC_FieldShapingGuard16:
+  BC_FieldShapingRings12:
     bdr_id: 128
     type: dirichlet
-  BC_FieldShapingGuard17:
+  BC_FieldShapingRings13:
     bdr_id: 127
     type: dirichlet
-  BC_FieldShapingGuard18:
+  BC_FieldShapingRings14:
     bdr_id: 126
     type: dirichlet
-  BC_FieldShapingGuard19:
+  BC_FieldShapingRings15:
     bdr_id: 125
     type: dirichlet
-  BC_FieldShapingGuard20:
+  BC_FieldShapingRings16:
     bdr_id: 124
     type: dirichlet
-  BC_FieldShapingGuard21:
+  BC_FieldShapingRings17:
     bdr_id: 123
     type: dirichlet
-  BC_FieldShapingGuard22:
+  BC_FieldShapingRings18:
     bdr_id: 122
     type: dirichlet
-  BC_FieldShapingGuard23:
+  BC_FieldShapingRings19:
     bdr_id: 121
     type: dirichlet
-  BC_FieldShapingGuard24:
+  BC_FieldShapingRings20:
     bdr_id: 120
     type: dirichlet
-  BC_FieldShapingGuard25:
+  BC_FieldShapingRings21:
     bdr_id: 119
     type: dirichlet
-  BC_FieldShapingGuard26:
+  BC_FieldShapingRings22:
     bdr_id: 118
     type: dirichlet
-  BC_FieldShapingGuard27:
+  BC_FieldShapingRings23:
     bdr_id: 117
     type: dirichlet
-  BC_FieldShapingGuard28:
+  BC_FieldShapingRings24:
     bdr_id: 116
     type: dirichlet
-  BC_FieldShapingGuard29:
+  BC_FieldShapingRings25:
     bdr_id: 115
     type: dirichlet
-  BC_FieldShapingGuard30:
+  BC_FieldShapingRings26:
     bdr_id: 114
     type: dirichlet
-  BC_FieldShapingGuard31:
+  BC_FieldShapingRings27:
     bdr_id: 113
     type: dirichlet
-  BC_FieldShapingGuard32:
+  BC_FieldShapingRings28:
     bdr_id: 112
     type: dirichlet
-  BC_FieldShapingGuard33:
+  BC_FieldShapingRings29:
     bdr_id: 111
     type: dirichlet
-  BC_FieldShapingGuard34:
+  BC_FieldShapingRings30:
     bdr_id: 110
     type: dirichlet
-  BC_FieldShapingGuard35:
+  BC_FieldShapingRings31:
     bdr_id: 109
     type: dirichlet
-  BC_FieldShapingGuard36:
+  BC_FieldShapingRings32:
     bdr_id: 108
     type: dirichlet
-  BC_FieldShapingGuard37:
+  BC_FieldShapingRings33:
     bdr_id: 107
     type: dirichlet
-  BC_FieldShapingGuard38:
+  BC_FieldShapingRings34:
     bdr_id: 106
     type: dirichlet
-  BC_FieldShapingGuard39:
+  BC_FieldShapingRings35:
     bdr_id: 105
     type: dirichlet
-  BC_FieldShapingGuard40:
+  BC_FieldShapingRings36:
     bdr_id: 104
     type: dirichlet
-  BC_FieldShapingGuard41:
+  BC_FieldShapingRings37:
     bdr_id: 103
     type: dirichlet
-  BC_FieldShapingGuard42:
+  BC_FieldShapingRings38:
     bdr_id: 102
     type: dirichlet
-  BC_FieldShapingGuard43:
+  BC_FieldShapingRings39:
     bdr_id: 101
     type: dirichlet
-  BC_FieldShapingGuard44:
+  BC_FieldShapingRings40:
     bdr_id: 100
     type: dirichlet
-  BC_FieldShapingGuard45:
+  BC_FieldShapingRings41:
     bdr_id: 99
     type: dirichlet
-  BC_FieldShapingGuard46:
+  BC_FieldShapingRings42:
     bdr_id: 98
     type: dirichlet
-  BC_FieldShapingGuard47:
+  BC_FieldShapingRings43:
     bdr_id: 97
     type: dirichlet
-  BC_FieldShapingGuard48:
+  BC_FieldShapingRings44:
     bdr_id: 96
     type: dirichlet
-  BC_FieldShapingGuard49:
+  BC_FieldShapingRings45:
     bdr_id: 95
     type: dirichlet
-  BC_FieldShapingGuard50:
+  BC_FieldShapingRings46:
     bdr_id: 94
     type: dirichlet
-  BC_FieldShapingGuard51:
+  BC_FieldShapingRings47:
     bdr_id: 93
     type: dirichlet
-  BC_FieldShapingGuard52:
+  BC_FieldShapingRings48:
     bdr_id: 92
     type: dirichlet
-  BC_FieldShapingGuard53:
+  BC_FieldShapingRings49:
     bdr_id: 91
     type: dirichlet
-  BC_FieldShapingGuard54:
+  BC_FieldShapingRings50:
     bdr_id: 90
     type: dirichlet
-  BC_FieldShapingGuard55:
+  BC_FieldShapingRings51:
     bdr_id: 89
     type: dirichlet
-  BC_FieldShapingGuard56:
+  BC_FieldShapingRings52:
     bdr_id: 88
     type: dirichlet
-  BC_FieldShapingGuard57:
+  BC_FieldShapingRings53:
     bdr_id: 87
     type: dirichlet
-  BC_FieldShapingGuard58:
+  BC_FieldShapingRings54:
     bdr_id: 86
     type: dirichlet
-  BC_FieldShapingGuard59:
+  BC_FieldShapingRings55:
     bdr_id: 85
     type: dirichlet
-  BC_FieldShapingGuard60:
+  BC_FieldShapingRings56:
     bdr_id: 84
     type: dirichlet
-  BC_FieldShapingGuard61:
+  BC_FieldShapingRings57:
     bdr_id: 83
     type: dirichlet
-  BC_FieldShapingGuard62:
+  BC_FieldShapingRings58:
     bdr_id: 82
     type: dirichlet
-  BC_FieldShapingGuard63:
+  BC_FieldShapingRings59:
     bdr_id: 81
+    type: dirichlet
+  BC_FieldShapingRings60:
+    bdr_id: 80
+    type: dirichlet
+  BC_FieldShapingRings61:
+    bdr_id: 79
+    type: dirichlet
+  BC_FieldShapingRings62:
+    bdr_id: 78
+    type: dirichlet
+  BC_FieldShapingRings63:
+    bdr_id: 77
+    type: dirichlet
+  BC_FieldShapingRings64:
+    bdr_id: 76
+    type: dirichlet
+  BC_FieldShapingRings65:
+    bdr_id: 75
+    type: dirichlet
+  BC_FieldShapingRings66:
+    bdr_id: 74
+    type: dirichlet
+  BC_FieldShapingRings67:
+    bdr_id: 73
+    type: dirichlet
+  BC_FieldShapingRings68:
+    bdr_id: 72
+    type: dirichlet
+  BC_FieldShapingRings69:
+    bdr_id: 71
+    type: dirichlet
+  BC_FieldShapingRings70:
+    bdr_id: 70
+    type: dirichlet
+  BC_FieldShapingGuard0:
+    bdr_id: 69
+    type: dirichlet
+  BC_FieldShapingGuard1:
+    bdr_id: 68
+    type: dirichlet
+  BC_FieldShapingGuard2:
+    bdr_id: 67
+    type: dirichlet
+  BC_FieldShapingGuard3:
+    bdr_id: 66
+    type: dirichlet
+  BC_FieldShapingGuard4:
+    bdr_id: 65
+    type: dirichlet
+  BC_FieldShapingGuard5:
+    bdr_id: 64
+    type: dirichlet
+  BC_FieldShapingGuard6:
+    bdr_id: 63
+    type: dirichlet
+  BC_FieldShapingGuard7:
+    bdr_id: 62
+    type: dirichlet
+  BC_FieldShapingGuard8:
+    bdr_id: 61
+    type: dirichlet
+  BC_FieldShapingGuard9:
+    bdr_id: 60
+    type: dirichlet
+  BC_FieldShapingGuard10:
+    bdr_id: 59
+    type: dirichlet
+  BC_FieldShapingGuard11:
+    bdr_id: 58
+    type: dirichlet
+  BC_FieldShapingGuard12:
+    bdr_id: 57
+    type: dirichlet
+  BC_FieldShapingGuard13:
+    bdr_id: 56
+    type: dirichlet
+  BC_FieldShapingGuard14:
+    bdr_id: 55
+    type: dirichlet
+  BC_FieldShapingGuard15:
+    bdr_id: 54
+    type: dirichlet
+  BC_FieldShapingGuard16:
+    bdr_id: 53
+    type: dirichlet
+  BC_FieldShapingGuard17:
+    bdr_id: 52
+    type: dirichlet
+  BC_FieldShapingGuard18:
+    bdr_id: 51
+    type: dirichlet
+  BC_FieldShapingGuard19:
+    bdr_id: 50
+    type: dirichlet
+  BC_FieldShapingGuard20:
+    bdr_id: 49
+    type: dirichlet
+  BC_FieldShapingGuard21:
+    bdr_id: 48
+    type: dirichlet
+  BC_FieldShapingGuard22:
+    bdr_id: 47
+    type: dirichlet
+  BC_FieldShapingGuard23:
+    bdr_id: 46
+    type: dirichlet
+  BC_FieldShapingGuard24:
+    bdr_id: 45
+    type: dirichlet
+  BC_FieldShapingGuard25:
+    bdr_id: 44
+    type: dirichlet
+  BC_FieldShapingGuard26:
+    bdr_id: 43
+    type: dirichlet
+  BC_FieldShapingGuard27:
+    bdr_id: 42
+    type: dirichlet
+  BC_FieldShapingGuard28:
+    bdr_id: 41
+    type: dirichlet
+  BC_FieldShapingGuard29:
+    bdr_id: 40
+    type: dirichlet
+  BC_FieldShapingGuard30:
+    bdr_id: 39
+    type: dirichlet
+  BC_FieldShapingGuard31:
+    bdr_id: 38
+    type: dirichlet
+  BC_FieldShapingGuard32:
+    bdr_id: 37
+    type: dirichlet
+  BC_FieldShapingGuard33:
+    bdr_id: 36
+    type: dirichlet
+  BC_FieldShapingGuard34:
+    bdr_id: 35
+    type: dirichlet
+  BC_FieldShapingGuard35:
+    bdr_id: 34
+    type: dirichlet
+  BC_FieldShapingGuard36:
+    bdr_id: 33
+    type: dirichlet
+  BC_FieldShapingGuard37:
+    bdr_id: 32
+    type: dirichlet
+  BC_FieldShapingGuard38:
+    bdr_id: 31
+    type: dirichlet
+  BC_FieldShapingGuard39:
+    bdr_id: 30
+    type: dirichlet
+  BC_FieldShapingGuard40:
+    bdr_id: 29
+    type: dirichlet
+  BC_FieldShapingGuard41:
+    bdr_id: 28
+    type: dirichlet
+  BC_FieldShapingGuard42:
+    bdr_id: 27
+    type: dirichlet
+  BC_FieldShapingGuard43:
+    bdr_id: 26
+    type: dirichlet
+  BC_FieldShapingGuard44:
+    bdr_id: 25
+    type: dirichlet
+  BC_FieldShapingGuard45:
+    bdr_id: 24
+    type: dirichlet
+  BC_FieldShapingGuard46:
+    bdr_id: 23
+    type: dirichlet
+  BC_FieldShapingGuard47:
+    bdr_id: 22
+    type: dirichlet
+  BC_FieldShapingGuard48:
+    bdr_id: 21
+    type: dirichlet
+  BC_FieldShapingGuard49:
+    bdr_id: 20
+    type: dirichlet
+  BC_FieldShapingGuard50:
+    bdr_id: 19
+    type: dirichlet
+  BC_FieldShapingGuard51:
+    bdr_id: 18
+    type: dirichlet
+  BC_FieldShapingGuard52:
+    bdr_id: 17
+    type: dirichlet
+  BC_FieldShapingGuard53:
+    bdr_id: 16
+    type: dirichlet
+  BC_FieldShapingGuard54:
+    bdr_id: 15
+    type: dirichlet
+  BC_FieldShapingGuard55:
+    bdr_id: 14
+    type: dirichlet
+  BC_FieldShapingGuard56:
+    bdr_id: 13
+    type: dirichlet
+  BC_FieldShapingGuard57:
+    bdr_id: 12
+    type: dirichlet
+  BC_FieldShapingGuard58:
+    bdr_id: 11
+    type: dirichlet
+  BC_FieldShapingGuard59:
+    bdr_id: 10
+    type: dirichlet
+  BC_FieldShapingGuard60:
+    bdr_id: 9
+    type: dirichlet
+  BC_FieldShapingGuard61:
+    bdr_id: 8
+    type: dirichlet
+  BC_FieldShapingGuard62:
+    bdr_id: 7
+    type: dirichlet
+  BC_FieldShapingGuard63:
+    bdr_id: 6
     type: dirichlet
 fieldcage_network:
   enabled: true
