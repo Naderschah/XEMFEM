@@ -1365,14 +1365,23 @@ def build_sketch_dicts(shrinkage_factor):
     xenon_sketches = LXe(xenon_sketches)
     xenon_sketches = GXe(xenon_sketches)
 
+    #manual_mapping = {
+    #    1-1: "GXe",
+    #    2-1: "Bell",
+    #    154-1: "GateInsulatingFrame",
+    #    158-1: "GXe",
+    #    402-1: "GateInsulatingFrame",
+    #    479-1: "LXe",
+    #    548-1: "Bell",
+    #}
     manual_mapping = {
-        1-1: "GXe",
-        2-1: "Bell",
-        154-1: "GateInsulatingFrame",
-        158-1: "GXe",
-        402-1: "GateInsulatingFrame",
-        479-1: "LXe",
-        548-1: "Bell",
+        20-1: "GateInsulatingFrame",
+        21-1: "GateInsulatingFrame",
+        28-1: "Bell",
+        29-1: "Bell",
+        544-1: "GXe",
+        546-1: "GXe",
+        548-1: "LXe",
     }
 
     return ptfe_sketches, electrode_sketches, xenon_sketches, manual_mapping

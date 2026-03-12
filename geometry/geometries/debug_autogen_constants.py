@@ -1,4 +1,117 @@
-import os, json, glob
+import glob
+import json
+import os
+
+
+EXCLUDED_PREFIXES = ("XENTTPCC", "XENTTPCB")
+ALWAYS_EXCLUDED_COMPONENTS = {
+    "XENTTPCFPart5521Part5521_0",
+    "XENTTPCFPart5521Part5521_1",
+}
+ALWAYS_EXCLUDED_PREFIXES = ("XENTTPCG", "XENTTPCH")
+DEFAULT_ANGLE_DIR = "/work/geometry/createGeometryFromCAD/DXF_slices_parts/slice_037.50deg"
+TARGET_DEBUG_COMPONENT = "XENTTPCAWarmPart088Part088"
+
+
+def _is_excluded_component(key: str) -> bool:
+    if key.startswith(EXCLUDED_PREFIXES):
+        return True
+    if key.startswith(ALWAYS_EXCLUDED_PREFIXES):
+        return True
+    if key in ALWAYS_EXCLUDED_COMPONENTS:
+        return True
+    # Defensive: exclude derivative names if cleanup adds suffixes.
+    for base in ALWAYS_EXCLUDED_COMPONENTS:
+        if key.startswith(base + "_"):
+            return True
+    return False
+
+def _is_drawable_component(data: dict) -> bool:
+    if not isinstance(data, dict):
+        return False
+    if bool(data.get("hull", False)):
+        return True
+    if "pts" in data and isinstance(data["pts"], list) and len(data["pts"]) > 0:
+        return True
+    if "Radius" in data:
+        return True
+    if "Height" in data and "Width" in data:
+        return True
+    return False
+
+
+def _safe_min_y(data: dict):
+    pts = data.get("pts", [])
+    ys = []
+    for item in pts:
+        if isinstance(item, list) and len(item) >= 3 and isinstance(item[2], (int, float)):
+            ys.append(float(item[2]))
+    if not ys:
+        return None
+    return min(ys)
+
+
+def _audit_part088_gaps(merged: dict):
+    keys = sorted(k for k in merged.keys() if k.startswith("XENTTPCAWarmPart088Part088_"))
+    if not keys:
+        return
+
+    # numeric suffix coverage
+    idxs = []
+    for k in keys:
+        try:
+            idxs.append(int(k.rsplit("_", 1)[1]))
+        except Exception:
+            continue
+    idxs = sorted(set(idxs))
+    if idxs:
+        miss = [i for i in range(idxs[0], idxs[-1] + 1) if i not in idxs]
+        if miss:
+            print("[debug_autogen][Part088] missing index labels: %s" % ", ".join(str(i) for i in miss[:30]))
+            if len(miss) > 30:
+                print("[debug_autogen][Part088] ... +%d more missing labels" % (len(miss) - 30))
+        else:
+            print("[debug_autogen][Part088] index labels are contiguous (%d..%d)" % (idxs[0], idxs[-1]))
+
+    # geometric spacing audit by min y
+    rows = []
+    for k in keys:
+        y = _safe_min_y(merged[k])
+        if y is None:
+            continue
+        rows.append((y, k))
+    rows.sort()
+    if len(rows) < 3:
+        return
+
+    diffs = [rows[i + 1][0] - rows[i][0] for i in range(len(rows) - 1)]
+    pos = sorted(d for d in diffs if d > 0)
+    if not pos:
+        return
+    med = pos[len(pos) // 2]
+    if med <= 0:
+        return
+
+    flagged = []
+    threshold = 1.5 * med
+    for i, d in enumerate(diffs):
+        if d > threshold:
+            y0, k0 = rows[i]
+            y1, k1 = rows[i + 1]
+            flagged.append((k0, k1, y0, y1, d))
+
+    if flagged:
+        print(
+            "[debug_autogen][Part088] geometric spacing gaps > %.3f (median step %.3f): %d"
+            % (threshold, med, len(flagged))
+        )
+        for k0, k1, y0, y1, d in flagged[:20]:
+            print(
+                "  [gap] %s (min_y=%.3f) -> %s (min_y=%.3f), delta=%.3f"
+                % (k0, y0, k1, y1, d)
+            )
+        if len(flagged) > 20:
+            print("[debug_autogen][Part088] ... +%d more geometric gaps" % (len(flagged) - 20))
 
 def build_sketch_dicts(_unused=None):
     """
@@ -13,51 +126,58 @@ def build_sketch_dicts(_unused=None):
     Each sketches dict has the form:
       { comp_key : { "pts": [...] }, ... }
 
-    Components are arbitrarily distributed to guarantee
-    each dict has at least one entry (if possible).
+    In debug mode we keep assignment stable and avoid arbitrary
+    multi-bucket distribution that can alter partition behavior.
     """
 
     merged = {}
-    angle_dir = "/work/geometry/createGeometryFromCAD/DXF_slices_cleaned/slice_022.50deg"
+    angle_dir = os.environ.get("DEBUG_AUTOGEN_JSON_DIR", DEFAULT_ANGLE_DIR)
     components = ["*.json"]
+    excluded = []
+    invalid = []
+
     # Load all JSON files in this angle directory
     for i in components:
         for json_path in sorted(glob.glob(os.path.join(angle_dir, i))):
+            key = os.path.splitext(os.path.basename(json_path))[0]
+            if _is_excluded_component(key):
+                excluded.append(key)
+                continue
             with open(json_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            if not isinstance(data, dict):
+            if not _is_drawable_component(data):
+                invalid.append(key)
                 continue
-            key = os.path.splitext(os.path.basename(json_path))[0]
             merged[key] = data
 
     if not merged:
         raise RuntimeError(f"No component JSON files found in {angle_dir}")
 
-    # Split arbitrarily but deterministically
-    keys = list(merged.keys())
-
-    ptfe_sketches = {}
+    # Keep all debug components in a single material bucket for stable behavior.
+    ptfe_sketches = dict(merged)
     electrode_sketches = {}
     xenon_sketches = {}
 
-    for i, k in enumerate(keys):
-        if i % 3 == 0:
-            ptfe_sketches[k] = merged[k]
-        elif i % 3 == 1:
-            electrode_sketches[k] = merged[k]
-        else:
-            xenon_sketches[k] = merged[k]
+    target_present = TARGET_DEBUG_COMPONENT in merged
+    print(
+        "[debug_autogen] dir=%s loaded=%d excluded=%d invalid=%d target(%s)=%s"
+        % (
+            angle_dir,
+            len(merged),
+            len(excluded),
+            len(invalid),
+            TARGET_DEBUG_COMPONENT,
+            "present" if target_present else "missing",
+        )
+    )
+    if not target_present:
+        near = sorted(k for k in merged.keys() if "XENTTPCAWarmPart088Part088_" in k)
+        if near:
+            print("[debug_autogen] nearby Part088 keys: %s" % ", ".join(near[:20]))
+            if len(near) > 20:
+                print("[debug_autogen] ... +%d more Part088 keys" % (len(near) - 20))
 
-    # Ensure non-empty buckets if possible
-    buckets = [ptfe_sketches, electrode_sketches, xenon_sketches]
-    non_empty = [b for b in buckets if b]
-
-    if len(non_empty) == 1:
-        # all data landed in one bucket → copy one element into others
-        k = next(iter(non_empty[0]))
-        for b in buckets:
-            if not b:
-                b[k] = merged[k]
+    _audit_part088_gaps(merged)
 
     manual_mapping = {}
 
