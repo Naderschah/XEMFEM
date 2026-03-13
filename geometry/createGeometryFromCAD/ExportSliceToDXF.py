@@ -4,6 +4,7 @@ import math
 import argparse
 import json
 import csv
+import gc
 
 import FreeCAD
 import Import
@@ -1938,29 +1939,45 @@ def _export_one_angle_worker(args):
         slice_fcstd_dir,
     ) = args
 
-    # Load in this process
-    doc = load_step(step_path, doc_name=f"nb_step_{ang:.2f}")
-    root = find_step_root(doc)
+    doc_name = f"nb_step_{ang:.2f}"
+    doc = None
+    root = None
+    try:
+        # Load in this process
+        doc = load_step(step_path, doc_name=doc_name)
+        root = find_step_root(doc)
 
-    # Export only this single angle
-    export_slices_per_component(
-        root=root,
-        out_dir=out_dir,
-        angles_deg=[ang],
-        axis=axis,
-        origin=origin,
-        tol=tol,
-        trim_u_ge_0=trim_u_ge_0,
-        per_solid_clean=per_solid_clean,
-        component_match=component_match,
-        component_regex=component_regex,
-        require_single_component_match=require_single_component_match,
-        debug_artifacts_dir=debug_artifacts_dir,
-        debug_component_tokens=debug_component_tokens,
-        component_audit_csv=component_audit_csv,
-        slice_fcstd_dir=slice_fcstd_dir,
-    )
-    return ang
+        # Export only this single angle
+        export_slices_per_component(
+            root=root,
+            out_dir=out_dir,
+            angles_deg=[ang],
+            axis=axis,
+            origin=origin,
+            tol=tol,
+            trim_u_ge_0=trim_u_ge_0,
+            per_solid_clean=per_solid_clean,
+            component_match=component_match,
+            component_regex=component_regex,
+            require_single_component_match=require_single_component_match,
+            debug_artifacts_dir=debug_artifacts_dir,
+            debug_component_tokens=debug_component_tokens,
+            component_audit_csv=component_audit_csv,
+            slice_fcstd_dir=slice_fcstd_dir,
+        )
+        return ang
+    finally:
+        root = None
+        if doc is not None:
+            try:
+                FreeCAD.closeDocument(doc.Name)
+            except Exception:
+                try:
+                    FreeCAD.closeDocument(doc_name)
+                except Exception:
+                    pass
+        doc = None
+        gc.collect()
 
 def export_slices_per_component_parallel(
     *,
@@ -2020,9 +2037,60 @@ def export_slices_per_component_parallel(
     # Debug path: force true serial execution in current process.
     if n == 1:
         print("[run] serial mode (workers=1)")
-        for a in args:
-            ang = _export_one_angle_worker(a)
-            print(f"[done] angle={ang:.2f}")
+        doc_name = "nb_step_serial"
+        doc = None
+        root = None
+        try:
+            doc = load_step(step_path, doc_name=doc_name)
+            root = find_step_root(doc)
+            for a in args:
+                (
+                    _step_path,
+                    _out_dir,
+                    ang,
+                    axis,
+                    origin,
+                    tol,
+                    trim_u_ge_0,
+                    per_solid_clean,
+                    component_match,
+                    component_regex,
+                    require_single_component_match,
+                    debug_artifacts_dir,
+                    debug_component_tokens,
+                    component_audit_csv,
+                    slice_fcstd_dir,
+                ) = a
+                export_slices_per_component(
+                    root=root,
+                    out_dir=out_dir,
+                    angles_deg=[ang],
+                    axis=axis,
+                    origin=origin,
+                    tol=tol,
+                    trim_u_ge_0=trim_u_ge_0,
+                    per_solid_clean=per_solid_clean,
+                    component_match=component_match,
+                    component_regex=component_regex,
+                    require_single_component_match=require_single_component_match,
+                    debug_artifacts_dir=debug_artifacts_dir,
+                    debug_component_tokens=debug_component_tokens,
+                    component_audit_csv=component_audit_csv,
+                    slice_fcstd_dir=slice_fcstd_dir,
+                )
+                print(f"[done] angle={ang:.2f}")
+        finally:
+            root = None
+            if doc is not None:
+                try:
+                    FreeCAD.closeDocument(doc.Name)
+                except Exception:
+                    try:
+                        FreeCAD.closeDocument(doc_name)
+                    except Exception:
+                        pass
+            doc = None
+            gc.collect()
         return
 
     # Use spawn for safety with FreeCAD
