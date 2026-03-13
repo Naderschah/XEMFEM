@@ -3,13 +3,13 @@ import json
 import os
 
 
-EXCLUDED_PREFIXES = ("XENTTPCC", "XENTTPCB")
+EXCLUDED_PREFIXES = ()#("XENTTPCC", "XENTTPCB", "XENTTPCD", "XENTTPCE", "XENTTPCF")
 ALWAYS_EXCLUDED_COMPONENTS = {
     "XENTTPCFPart5521Part5521_0",
     "XENTTPCFPart5521Part5521_1",
 }
 ALWAYS_EXCLUDED_PREFIXES = ("XENTTPCG", "XENTTPCH")
-DEFAULT_ANGLE_DIR = "/work/geometry/createGeometryFromCAD/DXF_slices_parts/slice_037.50deg"
+DEFAULT_ANGLE_DIR = "/work/geometry/createGeometryFromCAD/DXF_slices_parts/slice_022.50deg"
 TARGET_DEBUG_COMPONENT = "XENTTPCAWarmPart088Part088"
 
 
@@ -157,27 +157,6 @@ def build_sketch_dicts(_unused=None):
     ptfe_sketches = dict(merged)
     electrode_sketches = {}
     xenon_sketches = {}
-
-    target_present = TARGET_DEBUG_COMPONENT in merged
-    print(
-        "[debug_autogen] dir=%s loaded=%d excluded=%d invalid=%d target(%s)=%s"
-        % (
-            angle_dir,
-            len(merged),
-            len(excluded),
-            len(invalid),
-            TARGET_DEBUG_COMPONENT,
-            "present" if target_present else "missing",
-        )
-    )
-    if not target_present:
-        near = sorted(k for k in merged.keys() if "XENTTPCAWarmPart088Part088_" in k)
-        if near:
-            print("[debug_autogen] nearby Part088 keys: %s" % ", ".join(near[:20]))
-            if len(near) > 20:
-                print("[debug_autogen] ... +%d more Part088 keys" % (len(near) - 20))
-
-    _audit_part088_gaps(merged)
 
     manual_mapping = {}
 

@@ -1749,20 +1749,51 @@ def export_slices_per_component(
             )
             trimmed_candidate_edges = list(edges) if keep_slab is not None else None
             full_candidate_edges = None
+            full_retry_count = ""
+            no_edges_diagnostic = ""
+            shape_info_json = ""
             if not edges:
-                audit_rows.append(
-                    {
-                        "angle_deg": f"{ang:.8f}",
-                        "subpath": sp,
-                        "label_path": label_path,
-                        "status": "NO_EDGES",
-                        "edge_source": edge_source,
-                        "edge_count": "0",
-                        "mode": "",
-                        "dxf_path": "",
-                    }
-                )
-                continue
+                shape_info_json = json.dumps(_shape_info(sh), separators=(",", ":"))
+                if keep_slab is not None:
+                    try:
+                        full_candidate_edges = slice_component_edges(
+                            sh,
+                            plane_face=plane_face,
+                            keep_slab=None,
+                            tol=tol,
+                            per_solid_clean=per_solid_clean,
+                        )
+                    except Exception:
+                        full_candidate_edges = []
+                    full_retry_count = str(len(full_candidate_edges or []))
+                    if full_candidate_edges:
+                        no_edges_diagnostic = "trimmed_empty_full_has_edges"
+                        edge_source = "full_retry"
+                        edges = list(full_candidate_edges)
+                        print(
+                            f"  [fallback] {_sanitize_layer(sp)} trimmed=0 full={len(full_candidate_edges)} -> using full slice"
+                        )
+                    else:
+                        no_edges_diagnostic = "trimmed_empty_full_empty"
+                else:
+                    no_edges_diagnostic = "full_empty"
+                if not edges:
+                    audit_rows.append(
+                        {
+                            "angle_deg": f"{ang:.8f}",
+                            "subpath": sp,
+                            "label_path": label_path,
+                            "status": "NO_EDGES",
+                            "edge_source": edge_source,
+                            "edge_count": "0",
+                            "full_retry_edge_count": full_retry_count,
+                            "no_edges_diagnostic": no_edges_diagnostic,
+                            "shape_info": shape_info_json,
+                            "mode": "",
+                            "dxf_path": "",
+                        }
+                    )
+                    continue
 
             total_with_edges += 1
             safe = _sanitize_layer(sp, max_len=180)
@@ -1811,6 +1842,9 @@ def export_slices_per_component(
                         "status": "EXPORTED",
                         "edge_source": edge_source,
                         "edge_count": str(len(edges)),
+                        "full_retry_edge_count": full_retry_count,
+                        "no_edges_diagnostic": no_edges_diagnostic,
+                        "shape_info": shape_info_json,
                         "mode": mode,
                         "dxf_path": dxf_path_normal,
                     }
@@ -1839,6 +1873,9 @@ def export_slices_per_component(
                         "status": "EXPORTED",
                         "edge_source": edge_source,
                         "edge_count": str(len(edges)),
+                        "full_retry_edge_count": full_retry_count,
+                        "no_edges_diagnostic": no_edges_diagnostic,
+                        "shape_info": shape_info_json,
                         "mode": mode2,
                         "dxf_path": dxf_path_raw,
                     }
@@ -1866,6 +1903,9 @@ def export_slices_per_component(
             "status",
             "edge_source",
             "edge_count",
+            "full_retry_edge_count",
+            "no_edges_diagnostic",
+            "shape_info",
             "mode",
             "dxf_path",
         ]

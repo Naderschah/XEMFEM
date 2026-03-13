@@ -19,7 +19,7 @@ from ezdxf.math import Vec3, OCS
 ROOT_DIR = "/work/geometry/createGeometryFromCAD/DXF_slices_parts"
 DXF_GLOB = "**/*.dxf"
 GAP_TOL  = 1e-1
-MAX_FORCE_MERGE_DIST = 1
+MAX_FORCE_MERGE_DIST = 1e-1
 ENABLE_MANUAL_LINE_CLOSURE = False
 
 # SHAPER Sketch.addArc(..., direction) convention:
@@ -622,6 +622,110 @@ def _chain_to_component(chain):
             raise NotImplementedError(f"Unsupported payload type: {t}")
 
     return {"pts": pts}
+
+
+def _component_start_xy(instr):
+    if not isinstance(instr, (list, tuple)) or len(instr) < 3:
+        return None
+    try:
+        return float(instr[1]), float(instr[2])
+    except Exception:
+        return None
+
+
+def _normalize_component_pts(component, tol=1e-9):
+    """
+    Drop degenerate segments caused by consecutive duplicate start vertices.
+    In this representation, entry i defines the segment from pts[i] to pts[i+1],
+    so if those two starts coincide, the current entry is a zero-length segment.
+    """
+    pts = list(component.get("pts", []))
+    if len(pts) < 2:
+        return component, 0
+
+    removed = 0
+    while len(pts) >= 2:
+        drop = set()
+        n = len(pts)
+        for i in range(n):
+            a = _component_start_xy(pts[i])
+            b = _component_start_xy(pts[(i + 1) % n])
+            if a is None or b is None:
+                continue
+            if _sqdist_xy(a, b) <= tol * tol:
+                drop.add(i)
+
+        if not drop:
+            break
+
+        pts = [p for i, p in enumerate(pts) if i not in drop]
+        removed += len(drop)
+        if len(pts) < 2:
+            break
+
+    out = dict(component)
+    out["pts"] = pts
+    return out, removed
+
+
+def _component_is_strictly_negative_x(component, tol=1e-9):
+    """
+    Conservative filter: return True only if the serialized contour is provably
+    entirely on the x < 0 side using per-segment bounds.
+    """
+    pts = list(component.get("pts", []))
+    if not pts:
+        return False
+
+    n = len(pts)
+    for i, instr in enumerate(pts):
+        kind = str(instr[0]).lower() if instr else ""
+        a = _component_start_xy(instr)
+        b = _component_start_xy(pts[(i + 1) % n])
+        if a is None or b is None:
+            return False
+
+        if max(a[0], b[0]) >= -tol:
+            return False
+
+        if kind == "line":
+            continue
+
+        if kind == "spline":
+            if len(instr) < 4 or not isinstance(instr[3], dict):
+                return False
+            poles = instr[3].get("poles", [])
+            if not poles:
+                return False
+            if max(float(p[0]) for p in poles) >= -tol:
+                return False
+            continue
+
+        if kind == "arc":
+            if len(instr) < 5:
+                return False
+            cx, cy = float(instr[3]), float(instr[4])
+            r = math.hypot(float(a[0]) - cx, float(a[1]) - cy)
+            if (cx + r) >= -tol:
+                return False
+            continue
+
+        if kind == "ellipse":
+            if len(instr) < 8:
+                return False
+            cx = float(instr[3])
+            a_len = float(instr[5])
+            b_len = float(instr[6])
+            phi = math.radians(float(instr[7]))
+            xmax_offset = math.sqrt((a_len * math.cos(phi)) ** 2 + (b_len * math.sin(phi)) ** 2)
+            if (cx + xmax_offset) >= -tol:
+                return False
+            continue
+
+        # Unknown curve type: keep it rather than risk dropping valid geometry.
+        return False
+
+    return True
 def _entity_endpoints_xy(e):
     t = e.dxftype()
 
@@ -1053,7 +1157,7 @@ def _fallback_components_from_chainables(
         if max_force_merge_dist_override is None
         else float(max_force_merge_dist_override)
     )
-    base_cap = min(10.0 * gap_tol, merge_cap)
+    base_cap = min(float(gap_tol), merge_cap)
     snap_caps = []
     for c in (base_cap, merge_cap):
         c = float(max(base_cap, c))
@@ -1826,12 +1930,27 @@ def process_one_file(dxf_path):
 
     written = 0
     rescued_written = 0
+    skipped_negative_x = 0
     for i, (rec, path) in enumerate(zip(component_records, paths)):
         comp = rec.get("component", {})
         layer = rec.get("layer", "<unknown>")
         try:
+            comp, removed_zero_segments = _normalize_component_pts(comp)
+            if removed_zero_segments:
+                msg = (
+                    f"[NORMALIZE_COMPONENT] file={dxf_path} layer={layer} out={path} "
+                    f"removed_zero_segments={removed_zero_segments}"
+                )
+                print(msg)
+                _log_line(FAILED_OBJECTS_LOG, msg)
             if not comp.get("pts"):
                 raise RuntimeError("component has empty pts")
+            if _component_is_strictly_negative_x(comp):
+                skipped_negative_x += 1
+                msg = f"[SKIP_NEGATIVE_X] file={dxf_path} layer={layer} out={path}"
+                print(msg)
+                _log_line(FAILED_OBJECTS_LOG, msg)
+                continue
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(comp, f, indent=2, ensure_ascii=False)
             print(path)
@@ -1854,6 +1973,11 @@ def process_one_file(dxf_path):
         FAILED_OBJECTS_LOG,
         f"[RESCUE_WRITTEN] file={dxf_path} rescued_written={rescued_written} "
         f"rescued_created={rescued_total}",
+    )
+    print(f"[SKIP_NEGATIVE_X_SUMMARY] file={dxf_path} skipped={skipped_negative_x}")
+    _log_line(
+        FAILED_OBJECTS_LOG,
+        f"[SKIP_NEGATIVE_X_SUMMARY] file={dxf_path} skipped={skipped_negative_x}",
     )
 
     if written == 0:
