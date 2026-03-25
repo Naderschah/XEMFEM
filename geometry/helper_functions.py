@@ -736,7 +736,7 @@ def sketch_from_dict(
             face_feat.setName(name)
 
             for idx, face_i in enumerate(face_feat.results()):
-                name_sub = f"{name}{idx}"
+                name_sub = f"{name}_{idx}"
                 if use_sketch_repeat:
                     face_map[name_sub] = face_i
                     face_i.setName(name_sub)
@@ -747,7 +747,7 @@ def sketch_from_dict(
                         face_i.setName(name_sub)
                     else:
                         for ridx, rep_i in enumerate(rep_results):
-                            rep_name = f"{name_sub}{ridx}"
+                            rep_name = f"{name_sub}_{ridx}"
                             rep_i.setName(rep_name)
                             face_map[rep_name] = rep_i
             sketch_map[name] = face_feat
