@@ -39,6 +39,7 @@ endif()
 # ---------------------------------------------------------
 add_library(SolverCore STATIC
   mesh_tools.cpp
+  tmop_tools.cpp
   parallelization.cpp
   boundary_conditions.cpp
   solver.cpp

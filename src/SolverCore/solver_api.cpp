@@ -5,6 +5,7 @@
 #include "solver.h"
 #include "ComputeElectricField.h"
 #include "Config.h"
+#include "tmop_tools.h"
 #include "cmdLineInteraction.h"
 #include "solver_api.h"
 #include "mesh_tools.h"
@@ -84,20 +85,32 @@ SimulationResult run_simulation(std::shared_ptr<Config> cfg,
   // Solve Mesh and AMR 
   std::unique_ptr<mfem::ParGridFunction> V;
 
-  const int max_iter = ((cfg->mesh.amr.enable && !skip_amr) ? cfg->mesh.amr.max_iter : 1);
+  const int max_iter = cfg->mesh.AMR_TMOP_iter;
   std::string solver_log_overwrite = 
     cfg->mesh.amr.enable ? (std::filesystem::path(cfg->save_path) / "amr_mesh").string() : "";
   for (int it = 0; it < max_iter; ++it)
   {
     // Solve Poisson
     V = SolvePoisson(*pfes, BCs, cfg, solver_log_overwrite);
-    // Break if no AMR
-    if (!cfg->mesh.amr.enable || skip_amr) { break; }
 
-    bool changed = ApplyAMRRefineDerefineStep(*mesh, *pfes, *V, *cfg);
+    bool amr_changed = false;
+    if (cfg->mesh.amr.enable && !skip_amr)
+    {
+      amr_changed = ApplyAMRRefineDerefineStep(*mesh, *pfes, *V, *cfg);
+    }
 
-    // Break if goal is reached
-    if (!changed) { break; }
+    bool tmop_changed = false;
+    if (cfg->mesh.tmop.enable)
+    {
+      tmop_changed = ApplyTMOPStep(*mesh, *cfg);
+    }
+
+    if (!amr_changed && !tmop_changed) { break; }
+
+    pfes->Update();
+    V->Update();
+    pfes->UpdatesFinished();
+    BCs = GetBoundaryConditionGroups(mesh.get(), cfg);
   }
 
 

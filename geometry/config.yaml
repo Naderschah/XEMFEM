@@ -2,6 +2,7 @@ schema_version: 1
 geometry_id: SR3XENONnT
 mesh:
   path: /work/geometry/mesh/mesh22.msh
+  AMR_TMOP_iter: 10
   geometry: slice_022.50deg
   voltages: SR1
   liquid_level: 0.004
@@ -46,6 +47,16 @@ mesh:
     verbose: true
     save_serial: false
     save_vtu_parallel: false
+  TMOP:
+    enable: true
+    max_iter: 5
+    metric_id: 2
+    target_type: IdealShapeUnitSize
+    optimizer: Newton
+    step_limit: 0.1
+    rel_tol: 1.0e-6
+    abs_tol: 1.0e-12
+    verbose: true
 save_path: /work/sim_results
 delete_files_present: true
 debug:

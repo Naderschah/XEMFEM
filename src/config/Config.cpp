@@ -630,33 +630,59 @@ static void parse_debug_settings(Config &cfg, const YAML::Node &root)
 
 static void parse_mesh_params(Config &cfg, const YAML::Node &root)
 {
-    // --- Mesh path
+  // --- Mesh path
   if (!root["mesh"] || !root["mesh"]["path"]) {
     throw std::runtime_error("Config error: missing mandatory field 'mesh.path'");
   }
+  const YAML::Node mesh = root["mesh"];
   cfg.mesh.path = root["mesh"]["path"].as<std::string>("");
   if (cfg.mesh.path == "") Error("Mesh Path must be provided");
-  if (root["mesh"]["AMR"]) {
-    cfg.mesh.amr.enable = root["mesh"]["AMR"]["enable"].as<bool>(cfg.mesh.amr.enable);
-    cfg.mesh.amr.max_iter = root["mesh"]["AMR"]["max_iter"].as<int>(cfg.mesh.amr.max_iter);
-    cfg.mesh.amr.local_error_goal = root["mesh"]["AMR"]["local_error_goal"].as<double>(cfg.mesh.amr.local_error_goal);
-    cfg.mesh.amr.total_error_goal = root["mesh"]["AMR"]["total_error_goal"].as<double>(cfg.mesh.amr.total_error_goal);
-    cfg.mesh.amr.total_error_fraction = root["mesh"]["AMR"]["total_error_fraction"].as<double>(cfg.mesh.amr.total_error_fraction);
-    cfg.mesh.amr.total_error_norm_p = root["mesh"]["AMR"]["total_error_norm_p"].as<double>(cfg.mesh.amr.total_error_norm_p);
-    cfg.mesh.amr.enable_derefine = root["mesh"]["AMR"]["enable_derefine"].as<bool>(cfg.mesh.amr.enable_derefine);
-    cfg.mesh.amr.derefine_hysteresis = root["mesh"]["AMR"]["derefine_hysteresis"].as<double>(cfg.mesh.amr.derefine_hysteresis);
-    cfg.mesh.amr.derefine_op = root["mesh"]["AMR"]["derefine_op"].as<int>(cfg.mesh.amr.derefine_op);
-    cfg.mesh.amr.max_elements = root["mesh"]["AMR"]["max_elements"].as<long long>(cfg.mesh.amr.max_elements);
-    cfg.mesh.amr.max_dofs = root["mesh"]["AMR"]["max_dofs"].as<long long>(cfg.mesh.amr.max_dofs);
-    cfg.mesh.amr.nc_limit = root["mesh"]["AMR"]["nc_limit"].as<int>(cfg.mesh.amr.nc_limit);
-    cfg.mesh.amr.prefer_conforming_refinement = root["mesh"]["AMR"]["prefer_conforming_refinement"].as<bool>(cfg.mesh.amr.prefer_conforming_refinement);
-    cfg.mesh.amr.min_marked_elements = root["mesh"]["AMR"]["min_marked_elements"].as<int>(cfg.mesh.amr.min_marked_elements);
-    cfg.mesh.amr.min_rel_error_reduction = root["mesh"]["AMR"]["min_rel_error_reduction"].as<double>(cfg.mesh.amr.min_rel_error_reduction);
-    { std::string est = root["mesh"]["AMR"]["estimator"].as<std::string>("Kelly"); if (est == "Kelly") cfg.mesh.amr.estimator = AMRSettings::EstimatorType::Kelly; else if (est == "ZienkiewiczZhu") cfg.mesh.amr.estimator = AMRSettings::EstimatorType::ZienkiewiczZhu; else if (est == "L2ZienkiewiczZhu") cfg.mesh.amr.estimator = AMRSettings::EstimatorType::L2ZienkiewiczZhu; }
-    cfg.mesh.amr.enable_rebalance = root["mesh"]["AMR"]["enable_rebalance"].as<bool>(cfg.mesh.amr.enable_rebalance);
-    cfg.mesh.amr.verbose = root["mesh"]["AMR"]["verbose"].as<bool>(cfg.mesh.amr.verbose);
-    cfg.mesh.amr.save_serial = root["mesh"]["AMR"]["save_serial"].as<bool>(cfg.mesh.amr.save_serial);
-    cfg.mesh.amr.save_vtu_parallel = root["mesh"]["AMR"]["save_vtu_parallel"].as<bool>(cfg.mesh.amr.save_vtu_parallel);
+  if (mesh["AMR_TMOP_iter"])
+  {
+    cfg.mesh.AMR_TMOP_iter = mesh["AMR_TMOP_iter"].as<int>(cfg.mesh.AMR_TMOP_iter);
+  }
+  else if (mesh["AMR"] && mesh["AMR"]["enable"].as<bool>(cfg.mesh.amr.enable))
+  {
+    cfg.mesh.AMR_TMOP_iter = mesh["AMR"]["max_iter"].as<int>(cfg.mesh.amr.max_iter);
+  }
+  if (cfg.mesh.AMR_TMOP_iter < 1) Error("mesh.AMR_TMOP_iter must be at least 1");
+  if (mesh["AMR"]) {
+    cfg.mesh.amr.enable = mesh["AMR"]["enable"].as<bool>(cfg.mesh.amr.enable);
+    cfg.mesh.amr.max_iter = mesh["AMR"]["max_iter"].as<int>(cfg.mesh.amr.max_iter);
+    cfg.mesh.amr.local_error_goal = mesh["AMR"]["local_error_goal"].as<double>(cfg.mesh.amr.local_error_goal);
+    cfg.mesh.amr.total_error_goal = mesh["AMR"]["total_error_goal"].as<double>(cfg.mesh.amr.total_error_goal);
+    cfg.mesh.amr.total_error_fraction = mesh["AMR"]["total_error_fraction"].as<double>(cfg.mesh.amr.total_error_fraction);
+    cfg.mesh.amr.total_error_norm_p = mesh["AMR"]["total_error_norm_p"].as<double>(cfg.mesh.amr.total_error_norm_p);
+    cfg.mesh.amr.enable_derefine = mesh["AMR"]["enable_derefine"].as<bool>(cfg.mesh.amr.enable_derefine);
+    cfg.mesh.amr.derefine_hysteresis = mesh["AMR"]["derefine_hysteresis"].as<double>(cfg.mesh.amr.derefine_hysteresis);
+    cfg.mesh.amr.derefine_op = mesh["AMR"]["derefine_op"].as<int>(cfg.mesh.amr.derefine_op);
+    cfg.mesh.amr.max_elements = mesh["AMR"]["max_elements"].as<long long>(cfg.mesh.amr.max_elements);
+    cfg.mesh.amr.max_dofs = mesh["AMR"]["max_dofs"].as<long long>(cfg.mesh.amr.max_dofs);
+    cfg.mesh.amr.nc_limit = mesh["AMR"]["nc_limit"].as<int>(cfg.mesh.amr.nc_limit);
+    cfg.mesh.amr.prefer_conforming_refinement = mesh["AMR"]["prefer_conforming_refinement"].as<bool>(cfg.mesh.amr.prefer_conforming_refinement);
+    cfg.mesh.amr.min_marked_elements = mesh["AMR"]["min_marked_elements"].as<int>(cfg.mesh.amr.min_marked_elements);
+    cfg.mesh.amr.min_rel_error_reduction = mesh["AMR"]["min_rel_error_reduction"].as<double>(cfg.mesh.amr.min_rel_error_reduction);
+    { std::string est = mesh["AMR"]["estimator"].as<std::string>("Kelly"); if (est == "Kelly") cfg.mesh.amr.estimator = AMRSettings::EstimatorType::Kelly; else if (est == "ZienkiewiczZhu") cfg.mesh.amr.estimator = AMRSettings::EstimatorType::ZienkiewiczZhu; else if (est == "L2ZienkiewiczZhu") cfg.mesh.amr.estimator = AMRSettings::EstimatorType::L2ZienkiewiczZhu; }
+    cfg.mesh.amr.enable_rebalance = mesh["AMR"]["enable_rebalance"].as<bool>(cfg.mesh.amr.enable_rebalance);
+    cfg.mesh.amr.verbose = mesh["AMR"]["verbose"].as<bool>(cfg.mesh.amr.verbose);
+    cfg.mesh.amr.save_serial = mesh["AMR"]["save_serial"].as<bool>(cfg.mesh.amr.save_serial);
+    cfg.mesh.amr.save_vtu_parallel = mesh["AMR"]["save_vtu_parallel"].as<bool>(cfg.mesh.amr.save_vtu_parallel);
+  }
+  if (mesh["TMOP"]) {
+    cfg.mesh.tmop.enable = mesh["TMOP"]["enable"].as<bool>(cfg.mesh.tmop.enable);
+    cfg.mesh.tmop.max_iter = mesh["TMOP"]["max_iter"].as<int>(cfg.mesh.tmop.max_iter);
+    cfg.mesh.tmop.metric_id = mesh["TMOP"]["metric_id"].as<int>(cfg.mesh.tmop.metric_id);
+    cfg.mesh.tmop.target_type = mesh["TMOP"]["target_type"].as<std::string>(cfg.mesh.tmop.target_type);
+    cfg.mesh.tmop.optimizer = mesh["TMOP"]["optimizer"].as<std::string>(cfg.mesh.tmop.optimizer);
+    cfg.mesh.tmop.step_limit = mesh["TMOP"]["step_limit"].as<double>(cfg.mesh.tmop.step_limit);
+    cfg.mesh.tmop.rel_tol = mesh["TMOP"]["rel_tol"].as<double>(cfg.mesh.tmop.rel_tol);
+    cfg.mesh.tmop.abs_tol = mesh["TMOP"]["abs_tol"].as<double>(cfg.mesh.tmop.abs_tol);
+    cfg.mesh.tmop.verbose = mesh["TMOP"]["verbose"].as<bool>(cfg.mesh.tmop.verbose);
+
+    if (cfg.mesh.tmop.max_iter < 1) Error("mesh.TMOP.max_iter must be at least 1");
+    if (cfg.mesh.tmop.step_limit <= 0.0) Error("mesh.TMOP.step_limit must be > 0");
+    if (cfg.mesh.tmop.rel_tol < 0.0) Error("mesh.TMOP.rel_tol must be >= 0");
+    if (cfg.mesh.tmop.abs_tol < 0.0) Error("mesh.TMOP.abs_tol must be >= 0");
   }
 }
 
