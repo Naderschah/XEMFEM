@@ -307,8 +307,8 @@ try:
     PTFE_post_part_names = []
     for n in names_in_partition:
         for base in ptfe_names:
-            # ^Base + optional digits + _part + optional _<nr>_manual
-            pat = rf"^{re.escape(base)}(\d+)?_part(_\d+_manual)?$"
+            # ^Base + optional synthetic face suffix (_<idx>[ _<ridx> ]) + _part + optional _<nr>_manual
+            pat = rf"^{re.escape(base)}(?:_\d+(?:_\d+)?)?_part(_\d+_manual)?$"
             if re.match(pat, n):
                 PTFE_post_part_names.append(n)
                 break
@@ -340,7 +340,7 @@ try:
         for base in electrode_names:
             if base in split_bases: 
                 # Branch for field shaping that need individual BCs 
-                m = re.match(rf"^{re.escape(base)}(\d+)_part(_\d+_manual)?$", n)
+                m = re.match(rf"^{re.escape(base)}(\d+)(?:_\d+(?:_\d+)?)?_part(_\d+_manual)?$", n)
                 if m:
                     nr = m.group(1)
                     key = f"{base}{nr}"
@@ -348,8 +348,8 @@ try:
                     matched = True
                     break
             elif base != 'shrinkage_factor':
-                # Normal rule: optional number, key by base (e.g. Gate, Anode, Cathode, etc.)
-                if re.match(rf"^{re.escape(base)}(\d+)?_part(_\d+_manual)?$", n):
+                # Normal rule: optional synthetic face suffix after the base name.
+                if re.match(rf"^{re.escape(base)}(?:_\d+(?:_\d+)?)?_part(_\d+_manual)?$", n):
                     Electrode_post_part_by_base.setdefault(base, []).append(n)
                     matched = True
                     break
