@@ -105,56 +105,56 @@ ignore_components:
       - "^slice_097\\.50deg$"
   - match: $^XENTTPCFPart5516Part5516_.*$$
     slices:
-      - "^slice_082\\.50deg.py"
+      - "^slice_082\\.50deg"
   - match: "^XENTTPCFPart5483Part5483_0^"
     slices:
-      - "^slice_82\\.50deg.py"
+      - "^slice_82\\.50deg"
   - match: "^XENTTPCFPart5484Part5484_0$"
     slices:
-      - "^slice_82\\.50deg.py"
+      - "^slice_82\\.50deg"
   - match: "^XENTTPCAWarmPart1126Part1126_0$"
     slices:
-      - "^slice_97\\.50deg.py"
+      - "^slice_97\\.50deg"
   - match: "^XENTTPCDNewAnodeXENTTPCHPWarm002Part4764Part4764_0$"
     slices:
-      - "^slice_127\\.50deg.py"
+      - "^slice_127\\.50deg"
   - match: "^XENTTPCDNewAnodeXENTTPCHPWarm002XENTTPCHP1Warm002Part4745Part4745_0$"
     slices:
-      - "^slice_127\\.50deg.py"
+      - "^slice_127\\.50deg"
   - match: "^XENTTPCDNewAnodeXENTTPCHPWarm002XENTTPCHP1Warm002Part4750Part4750_0$"
     slices:
-      - "^slice_127\\.50deg.py"
+      - "^slice_127\\.50deg"
   - match: "^XENTTPCDNewAnodeXENTTPCHPWarm002XENTTPCHP1Warm002Part4751Part4751_0$"
     slices:
-      - "^slice_127\\.50deg.py"
+      - "^slice_127\\.50deg"
   - match: "^XENTTPCDNewAnodeXENTTPCHPWarm002XENTTPCHP1Warm002Part4752Part4752_0$"
     slices:
-      - "^slice_127\\.50deg.py"
+      - "^slice_127\\.50deg"
   - match: "^XENTTPCEPlanBWarmPart5131Part5131_.*$"
     slices:
-      - "^slice_142\\.50deg.py"
+      - "^slice_142\\.50deg"
   - match: "^XENTTPCG.*"
   - match: "^XENTTPCH.*"
 
   # And now the broken components
   - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4954Part4954_0_11$"
     slices:
-      - "^slice_022\\.50deg.py"
+      - "^slice_022\\.50deg"
   - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4954Part4954_0_12$"
     slices:
-      - "^slice_022\\.50deg.py"
+      - "^slice_022\\.50deg"
   - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4954Part4954_0_13$"
     slices:
-      - "^slice_022\\.50deg.py"
+      - "^slice_022\\.50deg"
   - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4955Part4955_0_11$"
     slices:
-      - "^slice_022\\.50deg.py"
+      - "^slice_022\\.50deg"
   - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4955Part4955_0_14$"
     slices:
-      - "^slice_022\\.50deg.py"
+      - "^slice_022\\.50deg"
   - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4955Part4955_1_6$"
     slices:
-      - "^slice_022\\.50deg.py"
+      - "^slice_022\\.50deg"
 
 
 # Explicit replacements applied before grouping.
