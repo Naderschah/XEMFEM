@@ -136,6 +136,27 @@ ignore_components:
   - match: "^XENTTPCG.*"
   - match: "^XENTTPCH.*"
 
+  # And now the broken components
+  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4954Part4954_0_11$"
+    slices:
+      - "^slice_022\\.50deg.py"
+  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4954Part4954_0_12$"
+    slices:
+      - "^slice_022\\.50deg.py"
+  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4954Part4954_0_13$"
+    slices:
+      - "^slice_022\\.50deg.py"
+  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4955Part4955_0_11$"
+    slices:
+      - "^slice_022\\.50deg.py"
+  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4955Part4955_0_14$"
+    slices:
+      - "^slice_022\\.50deg.py"
+  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4955Part4955_1_6$"
+    slices:
+      - "^slice_022\\.50deg.py"
+
+
 # Explicit replacements applied before grouping.
 # Use `target` for one bad component or `targets` for several fragments.
 # `source` may be:
