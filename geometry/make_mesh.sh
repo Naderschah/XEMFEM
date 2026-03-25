@@ -90,9 +90,6 @@ GUI_ARGS=(
   -v "$HOST_XAUTHORITY:$HOST_XAUTHORITY:ro"
 )
 
-DOCKER_ARGS+=(
-  -it
-)
 # -----------------------------
 # Run SALOME
 # -----------------------------
@@ -103,7 +100,7 @@ if [[ "$MODE" == "gui" ]]; then
     exit 1
   fi
 
-  docker run "${DOCKER_ARGS[@]}" "${GUI_ARGS[@]}" \
+  docker run "${DOCKER_ARGS[@]}" -it "${GUI_ARGS[@]}" \
     "$IMAGE" salome
 else
   echo "Running SALOME in TUI mode"

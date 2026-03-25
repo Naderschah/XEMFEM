@@ -1,16 +1,21 @@
-// Compile with: mpicxx -O2 -std=c++17 parmesh_to_paraview_with_MPIRank.cpp -I/home/felix/mfem-install/include -L/home/felix/mfem-install/lib -lmfem  -lHYPRE -fopenmp -lmetis -o parmesh_to_paraview
+// Compile with:
+// mpicxx -O2 -std=c++17 parmesh_to_paraview_with_MPIRank.cpp \
+//   -I/home/felix/mfem-install/include \
+//   -L/home/felix/mfem-install/lib -lmfem -lHYPRE -fopenmp -lmetis \
+//   -o parmesh_to_paraview
 
 #include "mfem.hpp"
 
 #include <mpi.h>
 
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <memory>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -106,6 +111,91 @@ int main(int argc, char *argv[])
    // MFEM parallel mesh reader: each rank reads its own file/stream.
    mfem::ParMesh pmesh(MPI_COMM_WORLD, mesh_in);
 
+   // ------------------------------------------------------------
+   // Mesh statistics
+   // ------------------------------------------------------------
+
+   const int local_elements = pmesh.GetNE();
+   const int local_shared_faces = pmesh.GetNSharedFaces();
+
+   // Mark owned local elements that touch at least one shared face.
+   mfem::Array<int> is_shared_element(local_elements);
+   is_shared_element = 0;
+
+   for (int sf = 0; sf < local_shared_faces; sf++)
+   {
+      const int lf = pmesh.GetSharedFace(sf); // local face index
+
+      int el1 = -1, el2 = -1;
+      pmesh.GetFaceElements(lf, &el1, &el2);
+
+      if (el1 >= 0 && el1 < local_elements)
+      {
+         is_shared_element[el1] = 1;
+      }
+      if (el2 >= 0 && el2 < local_elements)
+      {
+         is_shared_element[el2] = 1;
+      }
+   }
+
+   int local_shared_elements = 0;
+   for (int el = 0; el < local_elements; el++)
+   {
+      local_shared_elements += is_shared_element[el];
+   }
+
+   int global_elements = 0;
+   int global_shared_elements = 0;
+   int global_shared_faces_twice = 0;
+
+   MPI_Allreduce(&local_elements, &global_elements, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+   MPI_Allreduce(&local_shared_elements, &global_shared_elements, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+   MPI_Allreduce(&local_shared_faces, &global_shared_faces_twice, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+
+   const int unique_global_shared_faces = global_shared_faces_twice / 2;
+
+   std::vector<int> elements_per_rank;
+   std::vector<int> shared_elements_per_rank;
+   if (rank == 0)
+   {
+      elements_per_rank.resize(size);
+      shared_elements_per_rank.resize(size);
+   }
+
+   MPI_Gather(&local_elements, 1, MPI_INT,
+              rank == 0 ? elements_per_rank.data() : nullptr, 1, MPI_INT,
+              0, MPI_COMM_WORLD);
+
+   MPI_Gather(&local_shared_elements, 1, MPI_INT,
+              rank == 0 ? shared_elements_per_rank.data() : nullptr, 1, MPI_INT,
+              0, MPI_COMM_WORLD);
+
+   if (rank == 0)
+   {
+      std::cout << "Mesh statistics\n";
+      std::cout << "===============\n";
+      std::cout << "MPI ranks: " << size << "\n";
+      std::cout << "Total owned elements: " << global_elements << "\n";
+      std::cout << "Total shared boundary-layer elements: "
+                << global_shared_elements << "\n";
+      std::cout << "Total shared faces summed over ranks: "
+                << global_shared_faces_twice << "\n";
+      std::cout << "Unique global shared faces: "
+                << unique_global_shared_faces << "\n\n";
+
+      std::cout << "Per-rank element counts\n";
+      std::cout << "-----------------------\n";
+      for (int r = 0; r < size; r++)
+      {
+         std::cout << "rank " << r
+                   << ": elements = " << elements_per_rank[r]
+                   << ", shared_elements = " << shared_elements_per_rank[r]
+                   << "\n";
+      }
+      std::cout << "\n";
+   }
+   
    // Piecewise-constant discontinuous scalar field, one value per element.
    mfem::L2_FECollection fec(0, pmesh.Dimension());
    mfem::ParFiniteElementSpace pfes(&pmesh, &fec);
@@ -125,7 +215,7 @@ int main(int argc, char *argv[])
 
    // Binary VTU output.
    dc.SetDataFormat(mfem::VTKFormat::BINARY);
-   dc.SetHighOrderOutput(false);   // safer/default for plain partition coloring
+   dc.SetHighOrderOutput(false);
    dc.SetLevelsOfDetail(1);
    dc.SetCycle(0);
    dc.SetTime(0.0);

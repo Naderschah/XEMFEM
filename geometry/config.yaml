@@ -2,7 +2,7 @@ schema_version: 1
 geometry_id: SR3XENONnT
 mesh:
   path: /work/geometry/mesh/mesh22.msh
-  geometry: debug
+  geometry: slice_022.50deg
   voltages: SR1
   liquid_level: 0.004
   autoappend: true
@@ -51,7 +51,9 @@ delete_files_present: true
 debug:
   debug: true
   timing: true
-  StopAfterSketh: true
+  StopAfterSketh: false
+  SaveAfterSketch: true
+  SaveOnPartitionFailure: false
   dry_run: false
   printBoundaryConditions: false
   printHypreWarnings: false

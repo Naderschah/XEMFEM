@@ -458,28 +458,31 @@ def make_circle(Sketch, component):
     return [circle_edges]
 
 def repeat_object(Sketch, component, objects):
-    # Inclusive of original object
-    count = component["Number"]
+    # Number is the total instance count, inclusive of the original object.
+    total_instances = int(component["Number"])
+    copies = total_instances - 1
+    if copies <= 0:
+        return None
 
     HorizontalPitch = component.get("HorizontalPitch", 0.0)
     VerticalPitch = component.get("VerticalPitch", 0.0)
 
     # Total offset from first to last instance
-    x_offset = HorizontalPitch * count
-    y_offset = VerticalPitch * count
+    x_offset = HorizontalPitch * copies
+    y_offset = VerticalPitch * copies
 
     x0 = component.get("RadialPosition", 0.0)
     y0 = component.get("VerticalPosition", 0.0)
 
     start_pt = Sketch.addPoint(x0, y0)
-    end_pt = Sketch.addPoint(x0 + x_offset / count, y0 + y_offset / count)
+    end_pt = Sketch.addPoint(x0 + x_offset / copies, y0 + y_offset / copies)
     start_pt.setAuxiliary(True)
     end_pt.setAuxiliary(True)
     multi = Sketch.addTranslation(
         objects,
         start_pt.coordinates(),
         end_pt.coordinates(),
-        count
+        copies
     )
     
     return multi
@@ -642,7 +645,8 @@ def repeat_face_result_part_level(part_doc, face_result, component, eps=1e-15):
     Part-level linear copy of an existing face result.
     No name-based selections: uses the result object directly.
     """
-    replications = int(component.get("Number", 0))
+    total_instances = int(component.get("Number", 0))
+    replications = total_instances - 1
     if replications <= 0:
         return None, [face_result]
 
@@ -657,7 +661,7 @@ def repeat_face_result_part_level(part_doc, face_result, component, eps=1e-15):
     ox = model.selection("EDGE", "PartSet/OX")
     oy = model.selection("EDGE", "PartSet/OY")
 
-    # Nb is "number of copies" (excluding original)
+    # Nb is the number of copies excluding the original face.
     nb = replications
 
     # Avoid Nb=0: disable direction by step=0 and Nb=1

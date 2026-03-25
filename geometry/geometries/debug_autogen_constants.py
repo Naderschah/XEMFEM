@@ -1,6 +1,8 @@
 import glob
+import copy
 import json
 import os
+import yaml
 
 
 EXCLUDED_PREFIXES = ()#("XENTTPCC", "XENTTPCB", "XENTTPCD", "XENTTPCE", "XENTTPCF")
@@ -10,6 +12,7 @@ ALWAYS_EXCLUDED_COMPONENTS = {
 }
 ALWAYS_EXCLUDED_PREFIXES = ("XENTTPCG", "XENTTPCH")
 DEFAULT_ANGLE_DIR = "/work/geometry/createGeometryFromCAD/DXF_slices_parts/slice_022.50deg"
+DEFAULT_LAYOUT_FILE = "cleanup_autogen.yaml"
 TARGET_DEBUG_COMPONENT = "XENTTPCAWarmPart088Part088"
 
 
@@ -49,6 +52,79 @@ def _safe_min_y(data: dict):
     if not ys:
         return None
     return min(ys)
+
+
+def _load_layout_manifest(angle_dir: str):
+    layout_path = os.environ.get("DEBUG_AUTOGEN_LAYOUT_FILE", DEFAULT_LAYOUT_FILE)
+    if not os.path.isabs(layout_path):
+        layout_path = os.path.join(angle_dir, layout_path)
+    if not os.path.isfile(layout_path):
+        return None, layout_path
+    with open(layout_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"Invalid cleanup autogen layout at {layout_path}")
+    return data, layout_path
+
+
+def _clone_named_components(merged, names):
+    missing = [name for name in names if name not in merged]
+    if missing:
+        raise KeyError("cleanup_autogen references missing components: %s" % ", ".join(sorted(missing)))
+    return {name: copy.deepcopy(merged[name]) for name in names}
+
+
+def _bucketize_from_layout(merged, layout):
+    materials = layout.get("materials") or {}
+    electrodes_cfg = layout.get("electrodes") or {}
+
+    used_names = set()
+    xenon_sketches = {}
+    electrode_sketches = {}
+
+    supported_materials = {"GXe", "LXe", "PTFE"}
+    for material_name, entry in materials.items():
+        if material_name not in supported_materials:
+            raise ValueError(
+                "Unsupported material in cleanup_autogen: %s. Supported: GXe, LXe, PTFE" % material_name
+            )
+        if not isinstance(entry, dict):
+            raise ValueError(f"Invalid material entry for {material_name}: {entry!r}")
+        components = list(entry.get("components", []) or [])
+        if entry.get("default"):
+            continue
+        if material_name == "PTFE":
+            continue
+        if not components:
+            continue
+        if len(components) == 1 and components[0] == material_name:
+            xenon_sketches[material_name] = copy.deepcopy(merged[components[0]])
+        else:
+            xenon_sketches[material_name] = {
+                "hull": True,
+                "sub_sketches": _clone_named_components(merged, components),
+            }
+        used_names.update(components)
+
+    for electrode_name, entry in electrodes_cfg.items():
+        if not isinstance(entry, dict):
+            raise ValueError(f"Invalid electrode entry for {electrode_name}: {entry!r}")
+        components = list(entry.get("components", []) or [])
+        if not components:
+            continue
+        electrode_sketches[electrode_name] = {
+            "hull": True,
+            "sub_sketches": _clone_named_components(merged, components),
+        }
+        used_names.update(components)
+
+    ptfe_sketches = {}
+    for name, data in merged.items():
+        if name in used_names:
+            continue
+        ptfe_sketches[name] = copy.deepcopy(data)
+
+    return ptfe_sketches, electrode_sketches, xenon_sketches
 
 
 def _audit_part088_gaps(merged: dict):
@@ -153,10 +229,18 @@ def build_sketch_dicts(_unused=None):
     if not merged:
         raise RuntimeError(f"No component JSON files found in {angle_dir}")
 
-    # Keep all debug components in a single material bucket for stable behavior.
-    ptfe_sketches = dict(merged)
-    electrode_sketches = {}
-    xenon_sketches = {}
+    layout, layout_path = _load_layout_manifest(angle_dir)
+    if layout is None:
+        # Fallback: keep all debug components in a single material bucket for stable behavior.
+        ptfe_sketches = dict(merged)
+        electrode_sketches = {}
+        xenon_sketches = {}
+    else:
+        ptfe_sketches, electrode_sketches, xenon_sketches = _bucketize_from_layout(merged, layout)
+        print(
+            "[debug_autogen] loaded cleanup layout %s (ptfe=%d electrode=%d xenon=%d)"
+            % (layout_path, len(ptfe_sketches), len(electrode_sketches), len(xenon_sketches))
+        )
 
     manual_mapping = {}
 
