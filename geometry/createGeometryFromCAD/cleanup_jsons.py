@@ -1219,11 +1219,20 @@ def _load_written_components_for_dir(written_paths, out_dir):
   return component_store
 
 
-def _clone_named_components(component_store, names):
-  missing = [name for name in names if name not in component_store]
+def _clone_named_components(component_store, names, owner_name):
+  present = {}
+  missing = []
+  for name in names:
+    if name in component_store:
+      present[name] = copy.deepcopy(component_store[name])
+    else:
+      missing.append(name)
   if missing:
-    raise KeyError("salome config references missing components: %s" % ", ".join(sorted(missing)))
-  return {name: copy.deepcopy(component_store[name]) for name in names}
+    print(
+      "[cleanup_jsons warning] %s references missing components: %s"
+      % (owner_name, ", ".join(sorted(missing)))
+    )
+  return present
 
 
 def _materialize_sketch_buckets(component_store, materials, electrodes_cfg):
@@ -1247,13 +1256,31 @@ def _materialize_sketch_buckets(component_store, materials, electrodes_cfg):
     if not components:
       continue
     if len(components) == 1 and components[0] == material_name:
+      if components[0] not in component_store:
+        print(
+          "[cleanup_jsons warning] material %s references missing component: %s"
+          % (material_name, components[0])
+        )
+        continue
       xenon_sketches[material_name] = copy.deepcopy(component_store[components[0]])
+      used_names.add(components[0])
     else:
+      sub_sketches = _clone_named_components(
+        component_store,
+        components,
+        f"material {material_name}",
+      )
+      if not sub_sketches:
+        print(
+          "[cleanup_jsons warning] material %s has no available components; skipping"
+          % material_name
+        )
+        continue
       xenon_sketches[material_name] = {
         "hull": True,
-        "sub_sketches": _clone_named_components(component_store, components),
+        "sub_sketches": sub_sketches,
       }
-    used_names.update(components)
+      used_names.update(sub_sketches.keys())
 
   for electrode_name, entry in electrodes_cfg.items():
     if not isinstance(entry, dict):
@@ -1261,11 +1288,22 @@ def _materialize_sketch_buckets(component_store, materials, electrodes_cfg):
     components = list(entry.get("components", []) or [])
     if not components:
       continue
+    sub_sketches = _clone_named_components(
+      component_store,
+      components,
+      f"electrode {electrode_name}",
+    )
+    if not sub_sketches:
+      print(
+        "[cleanup_jsons warning] electrode %s has no available components; skipping"
+        % electrode_name
+      )
+      continue
     electrode_sketches[electrode_name] = {
       "hull": True,
-      "sub_sketches": _clone_named_components(component_store, components),
+      "sub_sketches": sub_sketches,
     }
-    used_names.update(components)
+    used_names.update(sub_sketches.keys())
 
   ptfe_sketches = {}
   for name, data in component_store.items():
@@ -1403,11 +1441,17 @@ def write_salome_python_config(cfg, slice_name, written_paths, out_dir, manual_w
     "        vals.append(y)",
     "  return max(vals) if vals else None",
     "",
-    "def _clone_named_components(component_store, names):",
-    "  missing = [name for name in names if name not in component_store]",
+    "def _clone_named_components(component_store, names, owner_name):",
+    "  present = {}",
+    "  missing = []",
+    "  for name in names:",
+    "    if name in component_store:",
+    "      present[name] = copy.deepcopy(component_store[name])",
+    "    else:",
+    "      missing.append(name)",
     "  if missing:",
-    "    raise KeyError('salome config references missing components: %s' % ', '.join(sorted(missing)))",
-    "  return {name: copy.deepcopy(component_store[name]) for name in names}",
+    "    print('[salome config warning] %s references missing components: %s' % (owner_name, ', '.join(sorted(missing))))",
+    "  return present",
     "",
     "def _materialize_sketch_buckets(component_store, materials, electrodes_cfg):",
     "  used_names = set()",
@@ -1421,16 +1465,28 @@ def write_salome_python_config(cfg, slice_name, written_paths, out_dir, manual_w
     "    if (entry or {}).get('default') or material_name == 'PTFE' or not components:",
     "      continue",
     "    if len(components) == 1 and components[0] == material_name:",
+    "      if components[0] not in component_store:",
+    "        print('[salome config warning] material %s references missing component: %s' % (material_name, components[0]))",
+    "        continue",
     "      xenon_sketches[material_name] = copy.deepcopy(component_store[components[0]])",
+    "      used_names.add(components[0])",
     "    else:",
-    "      xenon_sketches[material_name] = {'hull': True, 'sub_sketches': _clone_named_components(component_store, components)}",
-    "    used_names.update(components)",
+    "      sub_sketches = _clone_named_components(component_store, components, 'material %s' % material_name)",
+    "      if not sub_sketches:",
+    "        print('[salome config warning] material %s has no available components; skipping' % material_name)",
+    "        continue",
+    "      xenon_sketches[material_name] = {'hull': True, 'sub_sketches': sub_sketches}",
+    "      used_names.update(sub_sketches.keys())",
     "  for electrode_name, entry in electrodes_cfg.items():",
     "    components = list((entry or {}).get('components', []) or [])",
     "    if not components:",
     "      continue",
-    "    electrode_sketches[electrode_name] = {'hull': True, 'sub_sketches': _clone_named_components(component_store, components)}",
-    "    used_names.update(components)",
+    "    sub_sketches = _clone_named_components(component_store, components, 'electrode %s' % electrode_name)",
+    "    if not sub_sketches:",
+    "      print('[salome config warning] electrode %s has no available components; skipping' % electrode_name)",
+    "      continue",
+    "    electrode_sketches[electrode_name] = {'hull': True, 'sub_sketches': sub_sketches}",
+    "    used_names.update(sub_sketches.keys())",
     "  ptfe_sketches = {}",
     "  for name, data in component_store.items():",
     "    if name in used_names:",
