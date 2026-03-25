@@ -17,7 +17,7 @@ import multiprocessing as mp
 
 DEFAULT_STEP_PATH = "/work/geometry/createGeometryFromCAD/CAD_files/XENT-TPC_20250428.STEP"
 DEFAULT_OUT_DIR = "/work/geometry/createGeometryFromCAD/DXF_slices_parts"
-DEFAULT_WORKERS = 20
+DEFAULT_WORKERS = 3
 DEFAULT_TOL = 0.1
 
 
