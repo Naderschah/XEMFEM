@@ -138,11 +138,34 @@ def makeGroupBySelection(document, selection, baseName):
     group.result().setName(baseName+"Group")
     return group
 
+def _filter_named_faces_by_area(document, face_names, base_name):
+    valid = []
+    for face_name in face_names:
+        sel = model.selection("FACE", face_name)
+        try:
+            _, area, _ = model.getGeometryCalculation(document, sel)
+        except Exception as exc:
+            print(
+                f"[group warning] {base_name}: failed to probe face {face_name}: {exc}"
+            )
+            continue
+        if area is None or area <= 0:
+            print(
+                f"[group warning] {base_name}: skipping face {face_name} with null/non-positive area {area}"
+            )
+            continue
+        valid.append(sel)
+    return valid
+
 def makeGroupByName(document, baseName, face_dict):
     # To select all faces created by sketch result <- Used when i didnt explicitly track each face
     #faces = model.addGroup(Cryostat_doc,[model.selection("FACE", "all-in-"+baseName) for baseName in face_dict.keys()])
     # To select by face name directly
-    faces = model.addGroup(document,[model.selection("FACE", baseName) for baseName in face_dict.keys()])
+    valid_faces = _filter_named_faces_by_area(document, face_dict.keys(), baseName)
+    if not valid_faces:
+        print(f"[group warning] {baseName}: no valid faces remain after area filtering")
+        return None
+    faces = model.addGroup(document, valid_faces)
     faces.setName(baseName+"Faces")
     faces.result().setName(baseName+"Faces")
     group = model.addGroupShape(document,[model.selection("COMPOUND", baseName+"Faces")])

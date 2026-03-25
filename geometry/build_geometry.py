@@ -224,16 +224,20 @@ if stop_after_sketch:
     raise Exception("Stopping after sketching as per debug config") if stop_after_sketch else None
 # MAke selection Groups and Partition
 try:
+    PTFEGrp = None
+    ElectrodeGrp = None
+    GXeGrp = None
+    LXeGrp = None
     if len(ptfe_face_map) > 0:      PTFEGrp = makeGroupByName(Cryostat_doc, "PTFE", ptfe_face_map) 
     if len(electrode_face_map) > 0: ElectrodeGrp = makeGroupByName(Cryostat_doc, "Electrodes", electrode_face_map) 
     if xenon_face_map["GXe0"]:      GXeGrp = makeGroupByName(Cryostat_doc, "GXe", {"GXe0":xenon_face_map["GXe0"]}) 
     if xenon_face_map["LXe0"]:      LXeGrp = makeGroupByName(Cryostat_doc, "LXe", {"LXe0":xenon_face_map["LXe0"]}) 
 
     to_partition = [] 
-    if len(ptfe_face_map) > 0:       to_partition += [PTFEGrp.result()]
-    if len(electrode_face_map) > 0:  to_partition += [ElectrodeGrp.result()]
-    if xenon_face_map["GXe0"]:       to_partition += [GXeGrp.result()]
-    if xenon_face_map["LXe0"]:       to_partition += [LXeGrp.result()]
+    if PTFEGrp is not None:       to_partition += [PTFEGrp.result()]
+    if ElectrodeGrp is not None:  to_partition += [ElectrodeGrp.result()]
+    if GXeGrp is not None:        to_partition += [GXeGrp.result()]
+    if LXeGrp is not None:        to_partition += [LXeGrp.result()]
 
     partition = model.addPartition(Cryostat_doc,to_partition)
     partition.setName("partition_surfaces")
