@@ -9,11 +9,47 @@ from salome.shaper import geom
 
 # Post Partition identification
 from GeomAlgoAPI import GeomAlgoAPI_ShapeTools
-from GeomAPI import GeomAPI_ShapeExplorer 
+from GeomAPI import GeomAPI_Shape, GeomAPI_ShapeExplorer
 import SHAPERSTUDY
 from salome.smesh import smeshBuilder
 import SMESH
 from ModelHighAPI import ModelHighAPI_Selection
+
+GeomAlgoAPI_PointCloudOnFace = None
+
+try:
+    from GeomAlgoAPI import GeomAlgoAPI_PointCloudOnFace as _PointCloudOnFace
+    GeomAlgoAPI_PointCloudOnFace = _PointCloudOnFace
+    print("[import] point cloud API resolved as GeomAlgoAPI.GeomAlgoAPI_PointCloudOnFace")
+except ImportError:
+    pass
+
+if GeomAlgoAPI_PointCloudOnFace is None:
+    try:
+        from GeomAlgoAPI import PointCloudOnFace as _PointCloudOnFace
+        GeomAlgoAPI_PointCloudOnFace = _PointCloudOnFace
+        print("[import] point cloud API resolved as GeomAlgoAPI.PointCloudOnFace")
+    except ImportError:
+        pass
+
+if GeomAlgoAPI_PointCloudOnFace is None:
+    try:
+        from salome.GeomAlgoAPI import GeomAlgoAPI_PointCloudOnFace as _PointCloudOnFace
+        GeomAlgoAPI_PointCloudOnFace = _PointCloudOnFace
+        print("[import] point cloud API resolved as salome.GeomAlgoAPI.GeomAlgoAPI_PointCloudOnFace")
+    except ImportError:
+        pass
+
+if GeomAlgoAPI_PointCloudOnFace is None:
+    try:
+        from salome.GeomAlgoAPI import PointCloudOnFace as _PointCloudOnFace
+        GeomAlgoAPI_PointCloudOnFace = _PointCloudOnFace
+        print("[import] point cloud API resolved as salome.GeomAlgoAPI.PointCloudOnFace")
+    except ImportError:
+        pass
+
+if GeomAlgoAPI_PointCloudOnFace is None:
+    print("[import warning] no PointCloudOnFace binding found; containment fallback will skip point-cloud sampling")
 
 # ------------------------------- Sketching Functions ----------------------------------------------
 def make_anchors(Sketch, lines, pts, line_indices):
@@ -900,10 +936,6 @@ def _validate_probe(x, y, bbox, debug=False, label=""):
     return ok
 
 
-from GeomAlgoAPI import GeomAlgoAPI_ShapeTools
-from GeomAPI import GeomAPI_ShapeExplorer, GeomAPI_Shape
-
-
 def bbox_from_face_name_xy(part_doc, face_result_name):
     """
     Returns (xmin, ymin, xmax, ymax) computed numerically from the vertices of the face (XY only).
@@ -965,6 +997,193 @@ def _dbg_enabled(post_name, pre_name):
     if DEBUG_PRE is not None and pre_name != DEBUG_PRE:
         return False
     return True
+
+
+def _shape_from_result(face_result):
+    if hasattr(face_result, "shape"):
+        return face_result.shape()
+
+    if hasattr(face_result, "resultSubShapePair"):
+        res, sub = face_result.resultSubShapePair()
+        if sub is not None:
+            return sub
+        if res is not None and hasattr(res, "shape"):
+            return res.shape()
+
+    raise TypeError(f"Cannot extract shape from object of type {type(face_result)}")
+
+
+def point_cloud_vertices_on_face(face_result, number_of_points=1):
+    if GeomAlgoAPI_PointCloudOnFace is None:
+        return []
+
+    face_shape = _shape_from_result(face_result)
+    if face_shape is None or face_shape.isNull():
+        return []
+
+    cloud_shape = None
+    error = ""
+    ok = False
+
+    try:
+        cloud_shape = GeomAPI_Shape()
+        result = GeomAlgoAPI_PointCloudOnFace.PointCloud(
+            face_shape,
+            int(number_of_points),
+            cloud_shape,
+            error,
+        )
+        if isinstance(result, tuple):
+            ok = bool(result[0])
+            if len(result) > 1 and isinstance(result[1], GeomAPI_Shape):
+                cloud_shape = result[1]
+            if len(result) > 2:
+                error = str(result[2])
+        else:
+            ok = bool(result)
+    except TypeError:
+        try:
+            result = GeomAlgoAPI_PointCloudOnFace.PointCloud(
+                face_shape,
+                int(number_of_points),
+            )
+            if isinstance(result, tuple):
+                ok = bool(result[0])
+                if len(result) > 1 and isinstance(result[1], GeomAPI_Shape):
+                    cloud_shape = result[1]
+                if len(result) > 2:
+                    error = str(result[2])
+            elif isinstance(result, GeomAPI_Shape):
+                ok = True
+                cloud_shape = result
+            else:
+                ok = bool(result)
+        except Exception as exc:
+            print(
+                f"[containment warning] point cloud call failed for {face_result.name()}: {exc}"
+            )
+            return []
+    except Exception as exc:
+        print(f"[containment warning] point cloud failed for {face_result.name()}: {exc}")
+        return []
+
+    if cloud_shape is None or cloud_shape.isNull() or not ok:
+        if error:
+            print(f"[containment warning] point cloud failed for {face_result.name()}: {error}")
+        return []
+
+    out = []
+    exp = GeomAPI_ShapeExplorer(cloud_shape, GeomAPI_Shape.VERTEX)
+    while exp.more():
+        out.append(exp.current())
+        exp.next()
+    return out
+
+
+def pre_partition_matches_for_post_face(post_face_result, pre_face_results, sample_points=1):
+    samples = point_cloud_vertices_on_face(post_face_result, number_of_points=sample_points)
+    if not samples:
+        return []
+
+    probe = samples[0]
+    matches = []
+    for pre_name, pre_face in pre_face_results.items():
+        pre_shape = _shape_from_result(pre_face)
+        if pre_shape is None or pre_shape.isNull():
+            continue
+        try:
+            inside = GeomAlgoAPI_ShapeTools.isSubShapeInsideShape(probe, pre_shape)
+        except Exception as exc:
+            print(
+                f"[containment warning] inside check failed for post={post_face_result.name()} "
+                f"pre={pre_name}: {exc}"
+            )
+            continue
+        if inside:
+            matches.append(pre_name)
+    return matches
+
+
+def _electrode_group_for_face_name(face_name, electrode_names, split_bases):
+    for base in electrode_names:
+        if base == "shrinkage_factor":
+            continue
+        if base in split_bases:
+            m = re.match(rf"^{re.escape(base)}(\d+)(?:_\d+(?:_\d+)?)?$", face_name)
+            if m:
+                return f"{base}{m.group(1)}"
+        elif re.match(rf"^{re.escape(base)}(?:_\d+(?:_\d+)?)?$", face_name):
+            return base
+    return None
+
+
+def rename_partition_faces_by_containment(
+    partition,
+    pre_face_results,
+    ptfe_face_names,
+    electrode_names,
+    split_bases,
+    sample_points=1,
+):
+    res = partition.result()
+    n_sub = res.numberOfSubs()
+    used_names = {res.subResult(i).name() for i in range(n_sub) if "partition" not in res.subResult(i).name().lower()}
+
+    renamed = []
+    unresolved = []
+
+    for idx in range(n_sub):
+        sub_res = res.subResult(idx)
+        current_name = sub_res.name()
+        if "partition" not in current_name.lower():
+            continue
+
+        matches = pre_partition_matches_for_post_face(
+            sub_res,
+            pre_face_results,
+            sample_points=sample_points,
+        )
+        if not matches:
+            unresolved.append((idx, current_name, "no containment match"))
+            continue
+
+        if len(matches) == 1:
+            chosen = matches[0]
+        elif all(name in ptfe_face_names for name in matches):
+            chosen = matches[0]
+            print(
+                f"[containment info] idx {idx}: PTFE-only ambiguous match {matches}; "
+                f"choosing {chosen}"
+            )
+        else:
+            electrode_groups = {
+                _electrode_group_for_face_name(name, electrode_names, split_bases)
+                for name in matches
+            }
+            electrode_groups.discard(None)
+            if len(electrode_groups) == 1 and len(electrode_groups) > 0:
+                chosen = matches[0]
+                print(
+                    f"[containment info] idx {idx}: same-electrode ambiguous match {matches}; "
+                    f"choosing {chosen} for group {next(iter(electrode_groups))}"
+                )
+            else:
+                unresolved.append((idx, current_name, f"ambiguous matches {matches}"))
+                print(
+                    f"[containment warning] idx {idx}: ambiguous non-PTFE match set {matches}; "
+                    "leaving for manual naming"
+                )
+                continue
+
+        candidate = _assign_unique_partition_name(f"{chosen}_part", used_names)
+        print(f"[containment] idx {idx}: '{current_name}' -> '{candidate}'")
+        sub_res.setName(candidate)
+        renamed.append(candidate)
+
+    if renamed:
+        model.do()
+
+    return renamed, unresolved
 
 def faces_containing_point(part_doc, x, y, z=0.0):
     p = model.addPoint(part_doc, float(x), float(y), float(z))
@@ -1192,37 +1411,19 @@ def rename_two_largest_partition_faces(partition, post_partition):
     pres.subResult(idx_by_name[name2]).setName("GXe_part")
 
     return ["LXe_part", "GXe_part"], [name1, name2]  # new names, original names
-def _assign_unique_name(base, used):
+def _assign_unique_partition_name(base, used, tag="auto"):
     """
     base like "GateInsulatingFrame0_part"
-    If already used, increment trailing integer before "_part" (or append one) until unique.
+    If already used, append "_<n>_<tag>" until unique.
     """
     if base not in used:
         used.add(base)
         return base
 
-    if base.endswith("_part"):
-        stem = base[:-5]
-        # split trailing digits
-        j = len(stem)
-        while j > 0 and stem[j-1].isdigit():
-            j -= 1
-        prefix = stem[:j]
-        num = stem[j:]
-        start = int(num) if num else 0
-
-        k = start + 1
-        while True:
-            cand = f"{prefix}{k}_part"
-            if cand not in used:
-                used.add(cand)
-                return cand
-            k += 1
-    else:
-        k = 1
-        while True:
-            cand = f"{base}{k}"
-            if cand not in used:
-                used.add(cand)
-                return cand
-            k += 1
+    k = 1
+    while True:
+        cand = f"{base}_{k}_{tag}"
+        if cand not in used:
+            used.add(cand)
+            return cand
+        k += 1

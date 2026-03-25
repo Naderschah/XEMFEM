@@ -28,7 +28,7 @@ geom = config["mesh"]["geometry"]
 geom_override = config["mesh"].get("geom_volt_path_overwrite")
 is_tpc = config["mesh"].get("is_tpc", True)
 mesh_path = config["mesh"]['path']
-manual_only = config["mesh"].get("manual_naming_only")
+manual_only = config["mesh"].get("manual_naming_only", False)
 mesh_path = os.path.normpath(
     os.path.expandvars(os.path.expanduser(mesh_path))
 )
@@ -213,8 +213,8 @@ electrode_sketch_objs, electrode_face_map = sketch_from_dict(electrode_sketches,
                                                             use_sketch_repeat = use_sketch_repeat)
 xenon_sketch_objs, xenon_face_map = sketch_from_dict(xenon_sketches, Cryostat_doc, makeface = makeface,
                                                     use_sketch_repeat = use_sketch_repeat)
-if "GXe0" not in xenon_face_map.keys(): xenon_face_map["GXe0"] = None
-if "LXe0" not in xenon_face_map.keys(): xenon_face_map["LXe0"] = None
+if "GXe_0" not in xenon_face_map.keys(): xenon_face_map["GXe_0"] = None
+if "LXe_0" not in xenon_face_map.keys(): xenon_face_map["LXe_0"] = None
 model.do()
 
 if stop_after_sketch:
@@ -230,8 +230,8 @@ try:
     LXeGrp = None
     if len(ptfe_face_map) > 0:      PTFEGrp = makeGroupByName(Cryostat_doc, "PTFE", ptfe_face_map) 
     if len(electrode_face_map) > 0: ElectrodeGrp = makeGroupByName(Cryostat_doc, "Electrodes", electrode_face_map) 
-    if xenon_face_map["GXe0"]:      GXeGrp = makeGroupByName(Cryostat_doc, "GXe", {"GXe0":xenon_face_map["GXe0"]}) 
-    if xenon_face_map["LXe0"]:      LXeGrp = makeGroupByName(Cryostat_doc, "LXe", {"LXe0":xenon_face_map["LXe0"]}) 
+    if xenon_face_map["GXe_0"]:      GXeGrp = makeGroupByName(Cryostat_doc, "GXe", {"GXe_0":xenon_face_map["GXe_0"]})
+    if xenon_face_map["LXe_0"]:      LXeGrp = makeGroupByName(Cryostat_doc, "LXe", {"LXe_0":xenon_face_map["LXe_0"]})
 
     to_partition = [] 
     if PTFEGrp is not None:       to_partition += [PTFEGrp.result()]
@@ -245,32 +245,44 @@ try:
     # Name and Match
     # First by center of weight and area (for all the small components)
     pre_partition_faces = flatten_dict(ptfe_face_map) + flatten_dict(electrode_face_map) + flatten_dict(xenon_face_map)
+    pre_partition_face_results = {i.name(): i for i in pre_partition_faces if i is not None}
+    ptfe_face_names = set(ptfe_face_map.keys())
+    electrode_names = list(electrode_sketches.keys())
+    split_bases = {"FieldShapingRings", "FieldShapingGuard"}
+    total_partition_subs = partition.result().numberOfSubs()
     pre_partition = {i.name(): [get_area(i, Cryostat_doc), *center_of_weight(Cryostat_doc,i)] for i in pre_partition_faces if i is not None}
-    post_partition = {partition.result().subResult(i).name(): [get_area(partition.result().subResult(i), Cryostat_doc), *center_of_weight(Cryostat_doc,partition.result().subResult(i))] for i in range(partition.result().numberOfSubs())}
+    post_partition = {partition.result().subResult(i).name(): [get_area(partition.result().subResult(i), Cryostat_doc), *center_of_weight(Cryostat_doc,partition.result().subResult(i))] for i in range(total_partition_subs)}
     if not manual_only:
         names_in_partition, renamed_cnt = match_and_rename_partition_faces(partition, pre_partition, post_partition)
+        print(f"[naming] center/area step named {renamed_cnt} objects ({len(names_in_partition)}/{total_partition_subs} total named)")
     else:
         names_in_partition, renamed_cnt = [], 0
+        print(f"[naming] center/area step skipped by manual_only ({len(names_in_partition)}/{total_partition_subs} total named)")
     # Make a residuals list TODO Dont recompute
-    post_partition_sub = {partition.result().subResult(i).name():[get_area(partition.result().subResult(i), Cryostat_doc), *center_of_weight(Cryostat_doc,partition.result().subResult(i))] for i in range(partition.result().numberOfSubs()) if ('Partition' in partition.result().subResult(i).name())}
+    post_partition_sub = {partition.result().subResult(i).name():[get_area(partition.result().subResult(i), Cryostat_doc), *center_of_weight(Cryostat_doc,partition.result().subResult(i))] for i in range(total_partition_subs) if ('Partition' in partition.result().subResult(i).name())}
     # Select LXe and GXe by area
-    if xenon_face_map["GXe0"] and xenon_face_map["LXe0"] and len(post_partition_sub.keys()) > 0 and not manual_only:
+    if xenon_face_map["GXe_0"] and xenon_face_map["LXe_0"] and len(post_partition_sub.keys()) > 0 and not manual_only:
         LXeGXeNames, _  = rename_two_largest_partition_faces(partition, post_partition_sub)
         names_in_partition += LXeGXeNames
-        print("Named LXe and GXe by Volume")
+        print(f"[naming] LXe/GXe area step named {len(LXeGXeNames)} objects ({len(names_in_partition)}/{total_partition_subs} total named)")
+    else:
+        print(f"[naming] LXe/GXe area step named 0 objects ({len(names_in_partition)}/{total_partition_subs} total named)")
 
-    """
-    Selection by containment prooved very difficult, 
-    there is a function ported to python via GeomAlgoAPI_ShapeTools
-    https://docs.salome-platform.org/latest/tui/SHAPER/classGeomAlgoAPI__ShapeTools.html#a3f2a4dbb9d3479ef975593de9db7a329
-    However I could not figure out how to use it reliably
-    Points on edges are not guaranteed to return true for containment so a few points inside the 
-    shape must be sampled, for convenience 
-    https://docs.salome-platform.org/latest/tui/SHAPER/classGeomAlgoAPI__PointCloudOnFace.html#details
-    may be used, but I didn't try it yet.
-
-    TODO Implement this
-    """
+    if not manual_only:
+        containment_names, containment_unresolved = rename_partition_faces_by_containment(
+            partition,
+            pre_partition_face_results,
+            ptfe_face_names,
+            electrode_names,
+            split_bases,
+            sample_points=int(config["mesh"].get("partition_containment_sample_points", 1)),
+        )
+        names_in_partition += containment_names
+        print(f"[naming] containment step named {len(containment_names)} objects ({len(names_in_partition)}/{total_partition_subs} total named)")
+        for idx, part_name, reason in containment_unresolved:
+            print(f"[containment unresolved] idx {idx} ({part_name}): {reason}")
+    else:
+        print(f"[naming] containment step skipped by manual_only ({len(names_in_partition)}/{total_partition_subs} total named)")
 
     # Rename by manual mapping
     if len(list(manual_mapping.keys())) > 0:
@@ -278,6 +290,9 @@ try:
             raise Exception("Highest Manual Naming index larger than number of subs available")
         names = rename_partition_subresults_manual(partition, manual_mapping)
         names_in_partition += names
+        print(f"[naming] manual step named {len(names)} objects ({len(names_in_partition)}/{total_partition_subs} total named)")
+    else:
+        print(f"[naming] manual step named 0 objects ({len(names_in_partition)}/{total_partition_subs} total named)")
 
     # Improve stability of renaming (Only req for NVidia GPU I think)
     time.sleep(1)
@@ -307,8 +322,8 @@ try:
     PTFE_post_part_names = []
     for n in names_in_partition:
         for base in ptfe_names:
-            # ^Base + optional synthetic face suffix (_<idx>[ _<ridx> ]) + _part + optional _<nr>_manual
-            pat = rf"^{re.escape(base)}(?:_\d+(?:_\d+)?)?_part(_\d+_manual)?$"
+            # ^Base + optional synthetic face suffix (_<idx>[ _<ridx> ]) + _part + optional auto/manual suffix
+            pat = rf"^{re.escape(base)}(?:_\d+(?:_\d+)?)?_part(?:_\d+_(?:manual|auto))?$"
             if re.match(pat, n):
                 PTFE_post_part_names.append(n)
                 break
@@ -332,15 +347,13 @@ try:
     super_group.setName("Super_Meshing")
     super_group.result().setName("Super_Meshing")
     # -------  Boundary Condition Groups
-    electrode_names = list(electrode_sketches.keys())
-    split_bases = {"FieldShapingRings", "FieldShapingGuard"}
     Electrode_post_part_by_base = {}
     for n in names_in_partition:
         matched = False
         for base in electrode_names:
             if base in split_bases: 
                 # Branch for field shaping that need individual BCs 
-                m = re.match(rf"^{re.escape(base)}(\d+)(?:_\d+(?:_\d+)?)?_part(_\d+_manual)?$", n)
+                m = re.match(rf"^{re.escape(base)}(\d+)(?:_\d+(?:_\d+)?)?_part(?:_\d+_(?:manual|auto))?$", n)
                 if m:
                     nr = m.group(1)
                     key = f"{base}{nr}"
@@ -349,7 +362,7 @@ try:
                     break
             elif base != 'shrinkage_factor':
                 # Normal rule: optional synthetic face suffix after the base name.
-                if re.match(rf"^{re.escape(base)}(?:_\d+(?:_\d+)?)?_part(_\d+_manual)?$", n):
+                if re.match(rf"^{re.escape(base)}(?:_\d+(?:_\d+)?)?_part(?:_\d+_(?:manual|auto))?$", n):
                     Electrode_post_part_by_base.setdefault(base, []).append(n)
                     matched = True
                     break

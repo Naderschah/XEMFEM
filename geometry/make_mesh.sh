@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IMAGE="trophime/salome:9.9.0-focal"
+SALOME_VERSION="${SALOME_VERSION:-9.15.0}"
+SALOME_URL="${SALOME_URL:-https://www.salome-platform.org/?download_id=2885&sdm_process_download=1}"
+IMAGE="${SALOME_IMAGE:-mfem-salome:${SALOME_VERSION}}"
 DEFAULT_TUI_SCRIPT="/work/geometry/build_geometry.py"
 
 # Resolve project root: parent directory of this script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+DOCKERFILE_PATH="$SCRIPT_DIR/Dockerfile.salome"
 
 # Detect NVIDIA support
 if command -v nvidia-smi >/dev/null 2>&1; then
@@ -53,6 +56,25 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+ensure_image() {
+  if docker image inspect "$IMAGE" >/dev/null 2>&1; then
+    return
+  fi
+
+  echo "Building SALOME image: $IMAGE"
+  echo "SALOME version: $SALOME_VERSION"
+  echo "SALOME URL: $SALOME_URL"
+
+  docker build \
+    -f "$DOCKERFILE_PATH" \
+    -t "$IMAGE" \
+    --build-arg "SALOME_VERSION=$SALOME_VERSION" \
+    --build-arg "SALOME_URL=$SALOME_URL" \
+    --build-arg "USER_ID=$(id -u)" \
+    --build-arg "GROUP_ID=$(id -g)" \
+    "$PROJECT_ROOT"
+}
 # -----------------------------
 # Docker arguments
 # -----------------------------
@@ -64,7 +86,7 @@ DOCKER_ARGS=(
   --ipc=host
   --net=host
   -v "$PROJECT_ROOT:/work"
-  -w /work/geometry 
+  -w /work/geometry
 )
 
 if [[ -n "$BASE_PATH_ENV" ]]; then
@@ -95,18 +117,20 @@ GUI_ARGS=(
 # -----------------------------
 
 if [[ "$MODE" == "gui" ]]; then
+  ensure_image
   if [[ -z "$DISPLAY_ENV" ]]; then
     echo "ERROR: DISPLAY is not set. Cannot run GUI mode."
     exit 1
   fi
 
   docker run "${DOCKER_ARGS[@]}" -it "${GUI_ARGS[@]}" \
-    "$IMAGE" salome
+    "$IMAGE"
 else
+  ensure_image
   echo "Running SALOME in TUI mode"
   echo "TUI script: $TUI_SCRIPT"
   echo "Working dir: /work/geometry"
 
   docker run "${DOCKER_ARGS[@]}" \
-    "$IMAGE" salome -t "$TUI_SCRIPT"
+    "$IMAGE" -t "$TUI_SCRIPT"
 fi
