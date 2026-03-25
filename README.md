@@ -86,6 +86,10 @@ geometry_id: SomeName
 mesh:
   # No need to modify this the mesh postprocessor writes the correct path
   path: "/work/geometry/mesh/mesh22.msh"
+  # Shared outer iteration count for the mesh adaptation loop.
+  # Each iteration does:
+  #   solve -> AMR (if enabled) -> TMOP (if enabled)
+  AMR_TMOP_iter: 10
   # In case a different base path is desired for sourcing geom and voltages (both must live in the same directory in this case)
   geom_volt_path_overwrite: /work/geometry/COMSOLValidation/parallel_plate_capacitor/
   # Specifies wheter a TPC geometry is built or not (disables things like ptfe wall BC marking for charge buildup)
@@ -152,7 +156,9 @@ mesh:
   AMR:
     # Enable it -> This will significantly increase computational time
     enable: true
-    # maximal number of refinement/derefinement iterations
+    # Maximal number of refinement/derefinement iterations.
+    # If mesh.AMR_TMOP_iter is omitted and AMR is enabled, this value is used
+    # as the shared outer iteration count for backward compatibility.
     max_iter: 10
     # Error estimate used to compute element-wise error
     # Kelly : Edge/flux jump based (robust for Poisson equation)
@@ -200,6 +206,34 @@ mesh:
     # Optional extra outputs (default false)
     save_serial: false
     save_vtu_parallel: false
+
+  # TMOP mesh optimization (node motion only, boundary motion disabled)
+  # If enabled, TMOP runs after every solve step even if AMR reports no topology change.
+  TMOP:
+    # Enable post-solve TMOP step
+    enable: false
+    # Max nonlinear optimizer iterations inside one TMOP call
+    max_iter: 5
+    # TMOP metric selector (actual supported values depend on the implementation)
+    metric_id: 2
+    # Target type for the metric
+    # Current intended values:
+    #   IdealShapeUnitSize
+    #   IdealShapeEqualSize
+    target_type: IdealShapeUnitSize
+    # Nonlinear optimizer used by TMOP
+    # Current intended values:
+    #   Newton
+    #   LBFGS
+    optimizer: Newton
+    # Maximum nodal motion per TMOP iteration
+    step_limit: 0.1
+    # Relative nonlinear solve tolerance
+    rel_tol: 1.0e-6
+    # Absolute nonlinear solve tolerance
+    abs_tol: 1.0e-12
+    # Print TMOP diagnostics
+    verbose: false
 
 # AMR mesh outputs (written to save_path/amr_mesh when AMR precompute runs):
 # - amr_mesh.000000, amr_mesh.000001, ...   (parallel MFEM mesh pieces, always on)
