@@ -275,7 +275,7 @@ try:
             ptfe_face_names,
             electrode_names,
             split_bases,
-            sample_points=int(config["mesh"].get("partition_containment_sample_points", 1)),
+            sample_points=int(config["mesh"].get("partition_containment_sample_points", 2)),
         )
         names_in_partition += containment_names
         print(f"[naming] containment step named {len(containment_names)} objects ({len(names_in_partition)}/{total_partition_subs} total named)")

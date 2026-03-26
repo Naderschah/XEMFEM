@@ -45,6 +45,7 @@ RUN set -eux; \
     libstdc++6 \
     libtinfo6 \
     libuuid1 \
+    util-linux \
     libx11-6 \
     libx11-xcb1 \
     libxcb-cursor0 \
@@ -100,6 +101,7 @@ RUN curl -fL --retry 5 --retry-all-errors \
     && found_dir="$(find /opt/salome-src -mindepth 1 -maxdepth 1 -type d | head -n 1)" \
     && test -n "${found_dir}" \
     && mv "${found_dir}" "${SALOME_ROOT}" \
+    && chmod -R a+rX "${SALOME_ROOT}" \
     && ln -s "${SALOME_ROOT}" /opt/salome \
     && rm -rf /tmp/salome.tar.gz /opt/salome-src
 
@@ -110,7 +112,7 @@ RUN group_name=$(getent group "${GROUP_ID}" | cut -d: -f1) \
 COPY geometry/salome-container-entrypoint.sh /usr/local/bin/salome-container-entrypoint.sh
 RUN chmod +x /usr/local/bin/salome-container-entrypoint.sh
 
-USER salome
+USER root
 WORKDIR /work/geometry
 
 ENTRYPOINT ["/usr/local/bin/salome-container-entrypoint.sh"]

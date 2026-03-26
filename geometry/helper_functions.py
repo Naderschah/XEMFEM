@@ -16,6 +16,7 @@ import SMESH
 from ModelHighAPI import ModelHighAPI_Selection
 
 GeomAlgoAPI_PointCloudOnFace = None
+PointCloudOnFace_FeatureFactory = None
 
 try:
     from GeomAlgoAPI import GeomAlgoAPI_PointCloudOnFace as _PointCloudOnFace
@@ -48,7 +49,35 @@ if GeomAlgoAPI_PointCloudOnFace is None:
     except ImportError:
         pass
 
-if GeomAlgoAPI_PointCloudOnFace is None:
+try:
+    from FeaturesAPI import makeVertexInsideFace as _makeVertexInsideFace
+    PointCloudOnFace_FeatureFactory = _makeVertexInsideFace
+    print("[import] point cloud API resolved as FeaturesAPI.makeVertexInsideFace")
+except ImportError:
+    pass
+
+if PointCloudOnFace_FeatureFactory is None:
+    try:
+        import FeaturesAPI as _FeaturesAPI
+        if hasattr(_FeaturesAPI, "makeVertexInsideFace"):
+            PointCloudOnFace_FeatureFactory = _FeaturesAPI.makeVertexInsideFace
+            print("[import] point cloud API resolved as FeaturesAPI.makeVertexInsideFace")
+    except ImportError:
+        pass
+
+if PointCloudOnFace_FeatureFactory is None:
+    try:
+        from salome.shaper.model.features import makeVertexInsideFace as _makeVertexInsideFace
+        PointCloudOnFace_FeatureFactory = _makeVertexInsideFace
+        print("[import] point cloud API resolved as salome.shaper.model.features.makeVertexInsideFace")
+    except ImportError:
+        pass
+
+if PointCloudOnFace_FeatureFactory is None and hasattr(model, "makeVertexInsideFace"):
+    PointCloudOnFace_FeatureFactory = model.makeVertexInsideFace
+    print("[import] point cloud API resolved as salome.shaper.model.makeVertexInsideFace")
+
+if GeomAlgoAPI_PointCloudOnFace is None and PointCloudOnFace_FeatureFactory is None:
     print("[import warning] no PointCloudOnFace binding found; containment fallback will skip point-cloud sampling")
 
 # ------------------------------- Sketching Functions ----------------------------------------------
@@ -990,6 +1019,8 @@ def _bbox_area(b):
 
 DEBUG_FACE = True  # set to a post face name string to restrict debug, or None for all
 DEBUG_PRE  = True  # set to a pre face name string to restrict debug, or None for all
+CONTAINMENT_TRACE = os.environ.get("SALOME_CONTAINMENT_TRACE", "1").lower() not in {"0", "false", "no", "off"}
+CONTAINMENT_TRACE_INNER = os.environ.get("SALOME_CONTAINMENT_TRACE_INNER", "1").lower() not in {"0", "false", "no", "off"}
 
 def _dbg_enabled(post_name, pre_name):
     if DEBUG_FACE is not None and post_name != DEBUG_FACE:
@@ -999,27 +1030,140 @@ def _dbg_enabled(post_name, pre_name):
     return True
 
 
+def _containment_trace(message, inner=False):
+    if inner:
+        if not CONTAINMENT_TRACE_INNER:
+            return
+    elif not CONTAINMENT_TRACE:
+        return
+    print(f"[containment trace] {message}")
+
+
 def _shape_from_result(face_result):
     if hasattr(face_result, "shape"):
         return face_result.shape()
 
     if hasattr(face_result, "resultSubShapePair"):
         res, sub = face_result.resultSubShapePair()
+        if res is not None and hasattr(res, "shape"):
+            res_shape = res.shape()
+            if res_shape is not None and not res_shape.isNull():
+                return res_shape
         if sub is not None:
             return sub
-        if res is not None and hasattr(res, "shape"):
-            return res.shape()
 
     raise TypeError(f"Cannot extract shape from object of type {type(face_result)}")
 
 
-def point_cloud_vertices_on_face(face_result, number_of_points=1):
+def _face_result_name(face_result):
+    if hasattr(face_result, "name"):
+        try:
+            return face_result.name()
+        except Exception:
+            pass
+    return str(face_result)
+
+
+def _vertices_from_shape(cloud_shape):
+    out = []
+    exp = GeomAPI_ShapeExplorer(cloud_shape, GeomAPI_Shape.VERTEX)
+    while exp.more():
+        out.append(exp.current())
+        exp.next()
+    return out
+
+
+def _document_for_result(face_result):
+    if hasattr(face_result, "document"):
+        try:
+            doc = face_result.document()
+            if doc is not None:
+                return doc
+        except Exception:
+            pass
+
+    session_cls = getattr(ModelAPI, "ModelAPI_Session", None)
+    if session_cls is not None:
+        try:
+            session = session_cls.get()
+            if session is not None and hasattr(session, "activeDocument"):
+                doc = session.activeDocument()
+                if doc is not None:
+                    return doc
+        except Exception:
+            pass
+
+    return None
+
+
+def _single_face_selection_for_point_cloud(face_result):
+    if hasattr(face_result, "resultSubShapePair"):
+        return face_result, None
+
+    selections = face_feature_to_selections(face_result)
+    if not selections:
+        return None, "no FACE selection available for point-cloud sampling"
+    if len(selections) != 1:
+        return None, f"point-cloud sampling expects one FACE selection, got {len(selections)}"
+    return selections[0], None
+
+
+def _point_cloud_feature_result(cloud_feature):
+    if hasattr(cloud_feature, "result"):
+        return cloud_feature.result()
+
+    if hasattr(cloud_feature, "results"):
+        results = list(cloud_feature.results())
+        if results:
+            return results[0]
+
+    return None
+
+
+def _point_cloud_shape_from_feature_result(cloud_result):
+    if cloud_result is None:
+        return None
+
+    if hasattr(cloud_result, "resultSubShapePair"):
+        parent, _ = cloud_result.resultSubShapePair()
+        if parent is not None and hasattr(parent, "shape"):
+            shape = parent.shape()
+            if shape is not None and not shape.isNull():
+                return shape
+
+    if hasattr(cloud_result, "shape"):
+        shape = cloud_result.shape()
+        if shape is not None and not shape.isNull():
+            return shape
+
+    return None
+
+
+def _remove_temporary_feature(feature, label=None):
+    if feature is None:
+        return
+
+    try:
+        feature_obj = feature.feature() if hasattr(feature, "feature") else feature
+        feature_label = label or getattr(feature_obj, "name", lambda: type(feature_obj).__name__)()
+        _containment_trace(f"{feature_label}: removing temporary point-cloud feature")
+        features = ModelAPI.FeatureSet()
+        features.add(feature_obj)
+        model.removeFeatures(features, False)
+        _containment_trace(f"{feature_label}: temporary point-cloud feature removed; running model.do()")
+        model.do()
+        _containment_trace(f"{feature_label}: point-cloud cleanup model.do() complete")
+    except Exception as exc:
+        print(f"[containment warning] failed to remove temporary point cloud feature: {exc}")
+
+
+def _point_cloud_vertices_via_geomalgo(face_result, number_of_points=1):
     if GeomAlgoAPI_PointCloudOnFace is None:
-        return []
+        return None, None
 
     face_shape = _shape_from_result(face_result)
     if face_shape is None or face_shape.isNull():
-        return []
+        return [], None
 
     cloud_shape = None
     error = ""
@@ -1059,48 +1203,238 @@ def point_cloud_vertices_on_face(face_result, number_of_points=1):
             else:
                 ok = bool(result)
         except Exception as exc:
-            print(
-                f"[containment warning] point cloud call failed for {face_result.name()}: {exc}"
-            )
-            return []
+            return None, str(exc)
     except Exception as exc:
-        print(f"[containment warning] point cloud failed for {face_result.name()}: {exc}")
-        return []
+        return None, str(exc)
 
     if cloud_shape is None or cloud_shape.isNull() or not ok:
-        if error:
-            print(f"[containment warning] point cloud failed for {face_result.name()}: {error}")
-        return []
+        return None, error or "point cloud returned an empty shape"
 
-    out = []
-    exp = GeomAPI_ShapeExplorer(cloud_shape, GeomAPI_Shape.VERTEX)
-    while exp.more():
-        out.append(exp.current())
-        exp.next()
-    return out
+    return _vertices_from_shape(cloud_shape), None
 
 
-def pre_partition_matches_for_post_face(post_face_result, pre_face_results, sample_points=1):
-    samples = point_cloud_vertices_on_face(post_face_result, number_of_points=sample_points)
-    if not samples:
-        return []
+def _point_cloud_vertices_via_feature(face_result, number_of_points=1):
+    if PointCloudOnFace_FeatureFactory is None:
+        return None, None, None
 
-    probe = samples[0]
+    point_count = max(2, int(number_of_points))
+    part_doc = _document_for_result(face_result)
+    if part_doc is None:
+        return None, None, "no active SHAPER document for point cloud feature"
+
+    face_selection, selection_error = _single_face_selection_for_point_cloud(face_result)
+    if face_selection is None:
+        return None, None, selection_error
+
+    try:
+        cloud_feature = PointCloudOnFace_FeatureFactory(
+            part_doc,
+            face_selection,
+            point_count,
+        )
+        model.do()
+    except Exception as exc:
+        return None, None, str(exc)
+
+    try:
+        cloud_result = _point_cloud_feature_result(cloud_feature)
+        if cloud_result is None:
+            return None, cloud_feature, "point cloud feature returned no result"
+
+        cloud_shape = _point_cloud_shape_from_feature_result(cloud_result)
+        if cloud_shape is None or cloud_shape.isNull():
+            feature_error = ""
+            if hasattr(cloud_feature, "feature") and hasattr(cloud_feature.feature(), "error"):
+                try:
+                    feature_error = cloud_feature.feature().error()
+                except Exception:
+                    pass
+            return None, cloud_feature, feature_error or "point cloud feature returned an empty shape"
+
+        return _vertices_from_shape(cloud_shape), cloud_feature, None
+    except Exception as exc:
+        return None, cloud_feature, str(exc)
+
+
+def point_cloud_vertices_on_face(face_result, number_of_points=1):
+    samples, error = _point_cloud_vertices_via_geomalgo(face_result, number_of_points=number_of_points)
+    if samples is not None:
+        return samples
+
+    samples, cloud_feature, feature_error = _point_cloud_vertices_via_feature(
+        face_result,
+        number_of_points=number_of_points,
+    )
+    if samples is not None:
+        return samples
+
+    if cloud_feature is not None:
+        _remove_temporary_feature(cloud_feature)
+
+    face_name = _face_result_name(face_result)
+    details = feature_error or error
+    if details:
+        print(f"[containment warning] point cloud failed for {face_name}: {details}")
+    return []
+
+
+def _matches_for_probe(post_face_name, probe, pre_face_results):
+    _containment_trace(
+        f"{post_face_name}: starting inside checks against {len(pre_face_results)} pre-partition faces"
+    )
     matches = []
-    for pre_name, pre_face in pre_face_results.items():
+    for pre_idx, (pre_name, pre_face) in enumerate(pre_face_results.items(), start=1):
+        _containment_trace(
+            f"{post_face_name}: inside check {pre_idx}/{len(pre_face_results)} against '{pre_name}'",
+            inner=True,
+        )
         pre_shape = _shape_from_result(pre_face)
         if pre_shape is None or pre_shape.isNull():
+            _containment_trace(
+                f"{post_face_name}: pre face '{pre_name}' has no usable shape",
+                inner=True,
+            )
             continue
         try:
             inside = GeomAlgoAPI_ShapeTools.isSubShapeInsideShape(probe, pre_shape)
         except Exception as exc:
             print(
-                f"[containment warning] inside check failed for post={post_face_result.name()} "
+                f"[containment warning] inside check failed for post={post_face_name} "
                 f"pre={pre_name}: {exc}"
             )
             continue
         if inside:
+            _containment_trace(
+                f"{post_face_name}: probe lies inside '{pre_name}'",
+                inner=True,
+            )
             matches.append(pre_name)
+    _containment_trace(f"{post_face_name}: inside checks finished with matches={matches}")
+    return matches
+
+
+def _pre_partition_matches_via_geomalgo(post_face_result, pre_face_results, sample_points=1):
+    if GeomAlgoAPI_PointCloudOnFace is None:
+        return None, None
+
+    face_name = _face_result_name(post_face_result)
+    _containment_trace(
+        f"{face_name}: GeomAlgo point-cloud sampling start sample_points={sample_points} "
+        f"pre_faces={len(pre_face_results)}"
+    )
+    samples, error = _point_cloud_vertices_via_geomalgo(
+        post_face_result,
+        number_of_points=sample_points,
+    )
+    if not samples:
+        return [], error
+
+    probe = None
+    try:
+        probe = samples[0]
+        return _matches_for_probe(face_name, probe, pre_face_results), None
+    finally:
+        probe = None
+        samples = None
+
+
+def _pre_partition_matches_via_feature(post_face_result, pre_face_results, sample_points=1):
+    if PointCloudOnFace_FeatureFactory is None:
+        return None, None
+
+    face_name = _face_result_name(post_face_result)
+    point_count = max(2, int(sample_points))
+    _containment_trace(
+        f"{face_name}: feature point-cloud sampling start sample_points={sample_points} "
+        f"point_count={point_count} pre_faces={len(pre_face_results)}"
+    )
+    part_doc = _document_for_result(post_face_result)
+    if part_doc is None:
+        return [], "no active SHAPER document for point cloud feature"
+
+    face_selection, selection_error = _single_face_selection_for_point_cloud(post_face_result)
+    if face_selection is None:
+        return [], selection_error
+
+    cloud_feature = None
+    cloud_result = None
+    cloud_shape = None
+    explorer = None
+    probe = None
+    try:
+        _containment_trace(
+            f"{face_name}: creating makeVertexInsideFace with selection type={type(face_selection).__name__}"
+        )
+        cloud_feature = PointCloudOnFace_FeatureFactory(
+            part_doc,
+            face_selection,
+            point_count,
+        )
+        _containment_trace(f"{face_name}: point-cloud feature created; running model.do()")
+        model.do()
+        _containment_trace(f"{face_name}: point-cloud creation model.do() complete")
+
+        cloud_result = _point_cloud_feature_result(cloud_feature)
+        if cloud_result is None:
+            return [], "point cloud feature returned no result"
+        _containment_trace(f"{face_name}: point-cloud result resolved")
+
+        cloud_shape = _point_cloud_shape_from_feature_result(cloud_result)
+        if cloud_shape is None or cloud_shape.isNull():
+            feature_error = ""
+            if hasattr(cloud_feature, "feature") and hasattr(cloud_feature.feature(), "error"):
+                try:
+                    feature_error = cloud_feature.feature().error()
+                except Exception:
+                    pass
+            return [], feature_error or "point cloud feature returned an empty shape"
+        _containment_trace(f"{face_name}: point-cloud shape resolved")
+
+        explorer = GeomAPI_ShapeExplorer(cloud_shape, GeomAPI_Shape.VERTEX)
+        _containment_trace(f"{face_name}: vertex explorer created")
+        if not explorer.more():
+            return [], "point cloud feature produced no probe vertices"
+
+        probe = explorer.current()
+        _containment_trace(f"{face_name}: acquired first probe vertex; starting containment checks")
+        matches = _matches_for_probe(face_name, probe, pre_face_results)
+        _containment_trace(f"{face_name}: containment checks returned {matches}")
+        return matches, None
+    except Exception as exc:
+        return [], str(exc)
+    finally:
+        _containment_trace(f"{face_name}: feature sampling finalizer start")
+        probe = None
+        explorer = None
+        cloud_shape = None
+        cloud_result = None
+        _remove_temporary_feature(cloud_feature, label=face_name)
+        _containment_trace(f"{face_name}: feature sampling finalizer end")
+
+
+def pre_partition_matches_for_post_face(post_face_result, pre_face_results, sample_points=1):
+    face_name = _face_result_name(post_face_result)
+    _containment_trace(f"{face_name}: containment matcher entry")
+
+    matches, error = _pre_partition_matches_via_geomalgo(
+        post_face_result,
+        pre_face_results,
+        sample_points=sample_points,
+    )
+    if matches is None:
+        _containment_trace(f"{face_name}: GeomAlgo point-cloud unavailable; falling back to feature API")
+        matches, error = _pre_partition_matches_via_feature(
+            post_face_result,
+            pre_face_results,
+            sample_points=sample_points,
+        )
+
+    if not matches:
+        if error:
+            print(f"[containment warning] point cloud failed for {face_name}: {error}")
+        return []
+
+    _containment_trace(f"{face_name}: containment matcher exit matches={matches}")
     return matches
 
 
@@ -1127,22 +1461,38 @@ def rename_partition_faces_by_containment(
 ):
     res = partition.result()
     n_sub = res.numberOfSubs()
-    used_names = {res.subResult(i).name() for i in range(n_sub) if "partition" not in res.subResult(i).name().lower()}
+    _containment_trace(
+        f"rename loop start total_subs={n_sub} pre_faces={len(pre_face_results)} sample_points={sample_points}"
+    )
+    used_names = {
+        res.subResult(i).name()
+        for i in range(n_sub)
+        if "partition" not in res.subResult(i).name().lower()
+    }
 
     renamed = []
     unresolved = []
 
     for idx in range(n_sub):
-        sub_res = res.subResult(idx)
+        _containment_trace(f"idx {idx}: refresh partition result before sampling")
+        current_res = partition.result()
+        if idx >= current_res.numberOfSubs():
+            unresolved.append((idx, f"Partition_{idx}", "partition result count changed during containment naming"))
+            continue
+
+        sub_res = current_res.subResult(idx)
         current_name = sub_res.name()
+        _containment_trace(f"idx {idx}: current partition face name='{current_name}'")
         if "partition" not in current_name.lower():
             continue
 
+        _containment_trace(f"idx {idx}: starting pre-partition match lookup for '{current_name}'")
         matches = pre_partition_matches_for_post_face(
             sub_res,
             pre_face_results,
             sample_points=sample_points,
         )
+        _containment_trace(f"idx {idx}: match lookup finished with matches={matches}")
         if not matches:
             unresolved.append((idx, current_name, "no containment match"))
             continue
@@ -1175,13 +1525,29 @@ def rename_partition_faces_by_containment(
                 )
                 continue
 
+        _containment_trace(f"idx {idx}: refresh partition result before rename")
+        current_res = partition.result()
+        if idx >= current_res.numberOfSubs():
+            unresolved.append((idx, current_name, "partition result count changed before rename"))
+            continue
+
+        sub_res = current_res.subResult(idx)
+        current_name = sub_res.name()
+        if "partition" not in current_name.lower():
+            unresolved.append((idx, current_name, "face was renamed during containment step"))
+            continue
+
         candidate = _assign_unique_partition_name(f"{chosen}_part", used_names)
         print(f"[containment] idx {idx}: '{current_name}' -> '{candidate}'")
+        _containment_trace(f"idx {idx}: calling setName('{candidate}')")
         sub_res.setName(candidate)
+        _containment_trace(f"idx {idx}: setName complete")
         renamed.append(candidate)
 
     if renamed:
+        _containment_trace(f"rename loop committing {len(renamed)} renamed faces via model.do()")
         model.do()
+        _containment_trace("rename loop model.do() complete")
 
     return renamed, unresolved
 

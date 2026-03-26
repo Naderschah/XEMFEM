@@ -10,6 +10,16 @@ DEFAULT_TUI_SCRIPT="/work/geometry/build_geometry.py"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 DOCKERFILE_PATH="$SCRIPT_DIR/Dockerfile.salome"
+ENTRYPOINT_PATH="$SCRIPT_DIR/salome-container-entrypoint.sh"
+BUILD_LABEL="mfem.salome.build_signature"
+
+compute_build_signature() {
+  local sources_hash
+  sources_hash="$(sha256sum "$DOCKERFILE_PATH" "$ENTRYPOINT_PATH" | sha256sum | awk '{print $1}')"
+  printf '%s\n%s\n%s\n' "$SALOME_VERSION" "$SALOME_URL" "$sources_hash" | sha256sum | awk '{print $1}'
+}
+
+BUILD_SIGNATURE="$(compute_build_signature)"
 
 # Detect NVIDIA support
 if command -v nvidia-smi >/dev/null 2>&1; then
@@ -58,17 +68,27 @@ while [[ $# -gt 0 ]]; do
 done
 
 ensure_image() {
+  local current_signature=""
+
   if docker image inspect "$IMAGE" >/dev/null 2>&1; then
-    return
+    current_signature="$(docker image inspect --format "{{ index .Config.Labels \"$BUILD_LABEL\" }}" "$IMAGE" 2>/dev/null || true)"
+    if [[ "$current_signature" == "$BUILD_SIGNATURE" ]]; then
+      return
+    fi
+
+    echo "Rebuilding SALOME image: $IMAGE"
+    echo "Build inputs changed since the existing image was created"
+  else
+    echo "Building SALOME image: $IMAGE"
   fi
 
-  echo "Building SALOME image: $IMAGE"
   echo "SALOME version: $SALOME_VERSION"
   echo "SALOME URL: $SALOME_URL"
 
   docker build \
     -f "$DOCKERFILE_PATH" \
     -t "$IMAGE" \
+    --label "$BUILD_LABEL=$BUILD_SIGNATURE" \
     --build-arg "SALOME_VERSION=$SALOME_VERSION" \
     --build-arg "SALOME_URL=$SALOME_URL" \
     --build-arg "USER_ID=$(id -u)" \
@@ -81,13 +101,22 @@ ensure_image() {
 
 DOCKER_ARGS=(
   --rm
-  --user "$(id -u):$(id -g)"
   --shm-size=2g
   --ipc=host
   --net=host
+  -e "HOST_UID=$(id -u)"
+  -e "HOST_GID=$(id -g)"
   -v "$PROJECT_ROOT:/work"
   -w /work/geometry
 )
+
+if [[ -n "${SALOME_CONTAINMENT_TRACE:-}" ]]; then
+  DOCKER_ARGS+=(-e "SALOME_CONTAINMENT_TRACE=$SALOME_CONTAINMENT_TRACE")
+fi
+
+if [[ -n "${SALOME_CONTAINMENT_TRACE_INNER:-}" ]]; then
+  DOCKER_ARGS+=(-e "SALOME_CONTAINMENT_TRACE_INNER=$SALOME_CONTAINMENT_TRACE_INNER")
+fi
 
 if [[ -n "$BASE_PATH_ENV" ]]; then
   DOCKER_ARGS+=(
