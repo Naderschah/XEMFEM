@@ -1117,16 +1117,23 @@ def _single_face_selection_for_point_cloud(face_result):
     return selections[0], None
 
 
-def _point_cloud_feature_result(cloud_feature):
-    if hasattr(cloud_feature, "result"):
-        return cloud_feature.result()
+def _feature_result(feature):
+    if feature is None:
+        return None
 
-    if hasattr(cloud_feature, "results"):
-        results = list(cloud_feature.results())
+    if hasattr(feature, "result"):
+        return feature.result()
+
+    if hasattr(feature, "results"):
+        results = list(feature.results())
         if results:
             return results[0]
 
     return None
+
+
+def _point_cloud_feature_result(cloud_feature):
+    return _feature_result(cloud_feature)
 
 
 def _point_cloud_shape_from_feature_result(cloud_result):
@@ -1155,15 +1162,51 @@ def _remove_temporary_feature(feature, label=None):
     try:
         feature_obj = feature.feature() if hasattr(feature, "feature") else feature
         feature_label = label or getattr(feature_obj, "name", lambda: type(feature_obj).__name__)()
-        _containment_trace(f"{feature_label}: removing temporary point-cloud feature")
+        _containment_trace(f"{feature_label}: removing temporary feature")
         features = ModelAPI.FeatureSet()
         features.add(feature_obj)
         model.removeFeatures(features, False)
-        _containment_trace(f"{feature_label}: temporary point-cloud feature removed; running model.do()")
+        _containment_trace(f"{feature_label}: temporary feature removed; running model.do()")
         model.do()
-        _containment_trace(f"{feature_label}: point-cloud cleanup model.do() complete")
+        _containment_trace(f"{feature_label}: temporary feature cleanup model.do() complete")
     except Exception as exc:
-        print(f"[containment warning] failed to remove temporary point cloud feature: {exc}")
+        print(f"[containment warning] failed to remove temporary feature: {exc}")
+
+
+def _face_shape_map(face_results, label):
+    shapes = {}
+    for face_name, face_result in face_results.items():
+        try:
+            face_shape = _shape_from_result(face_result)
+        except Exception as exc:
+            print(f"[containment warning] failed to extract shape for {label} '{face_name}': {exc}")
+            continue
+        if face_shape is None or face_shape.isNull():
+            continue
+        shapes[face_name] = face_shape
+    return shapes
+
+
+def _probe_shape_at_point(part_doc, x, y, z=0.0):
+    point_feature = None
+    point_label = f"probe({x:.6g},{y:.6g},{z:.6g})"
+    try:
+        _containment_trace(f"{point_label}: creating temporary probe point", inner=True)
+        point_feature = model.addPoint(part_doc, float(x), float(y), float(z))
+        model.do()
+        _containment_trace(f"{point_label}: probe point creation model.do() complete", inner=True)
+
+        point_result = _feature_result(point_feature)
+        if point_result is None:
+            return None, point_feature, "temporary probe point returned no result"
+
+        probe_shape = _shape_from_result(point_result)
+        if probe_shape is None or probe_shape.isNull():
+            return None, point_feature, "temporary probe point returned an empty shape"
+
+        return probe_shape, point_feature, None
+    except Exception as exc:
+        return None, point_feature, str(exc)
 
 
 def _point_cloud_vertices_via_geomalgo(face_result, number_of_points=1):
@@ -1287,17 +1330,16 @@ def point_cloud_vertices_on_face(face_result, number_of_points=1):
     return []
 
 
-def _matches_for_probe(post_face_name, probe, pre_face_results):
+def _matches_for_probe(post_face_name, probe, pre_face_shapes):
     _containment_trace(
-        f"{post_face_name}: starting inside checks against {len(pre_face_results)} pre-partition faces"
+        f"{post_face_name}: starting inside checks against {len(pre_face_shapes)} pre-partition faces"
     )
     matches = []
-    for pre_idx, (pre_name, pre_face) in enumerate(pre_face_results.items(), start=1):
+    for pre_idx, (pre_name, pre_shape) in enumerate(pre_face_shapes.items(), start=1):
         _containment_trace(
-            f"{post_face_name}: inside check {pre_idx}/{len(pre_face_results)} against '{pre_name}'",
+            f"{post_face_name}: inside check {pre_idx}/{len(pre_face_shapes)} against '{pre_name}'",
             inner=True,
         )
-        pre_shape = _shape_from_result(pre_face)
         if pre_shape is None or pre_shape.isNull():
             _containment_trace(
                 f"{post_face_name}: pre face '{pre_name}' has no usable shape",
@@ -1327,9 +1369,10 @@ def _pre_partition_matches_via_geomalgo(post_face_result, pre_face_results, samp
         return None, None
 
     face_name = _face_result_name(post_face_result)
+    pre_face_shapes = _face_shape_map(pre_face_results, "pre face")
     _containment_trace(
         f"{face_name}: GeomAlgo point-cloud sampling start sample_points={sample_points} "
-        f"pre_faces={len(pre_face_results)}"
+        f"pre_faces={len(pre_face_shapes)}"
     )
     samples, error = _point_cloud_vertices_via_geomalgo(
         post_face_result,
@@ -1341,7 +1384,7 @@ def _pre_partition_matches_via_geomalgo(post_face_result, pre_face_results, samp
     probe = None
     try:
         probe = samples[0]
-        return _matches_for_probe(face_name, probe, pre_face_results), None
+        return _matches_for_probe(face_name, probe, pre_face_shapes), None
     finally:
         probe = None
         samples = None
@@ -1354,6 +1397,13 @@ def _pre_partition_matches_via_probe_sampling(post_face_result, pre_face_results
         return [], "no active SHAPER document for point-probe containment"
 
     try:
+        post_shape = _shape_from_result(post_face_result)
+    except Exception as exc:
+        return [], f"failed to extract shape for {face_name}: {exc}"
+    if post_shape is None or post_shape.isNull():
+        return [], f"post face {face_name} has no usable shape"
+
+    try:
         bbox = bbox_from_face_name_xy(part_doc, face_name)
     except Exception as exc:
         return [], f"failed to compute bbox for {face_name}: {exc}"
@@ -1363,6 +1413,7 @@ def _pre_partition_matches_via_probe_sampling(post_face_result, pre_face_results
     successful_probes = 0
     counts = {}
     intersection = None
+    pre_face_shapes = None
 
     _containment_trace(
         f"{face_name}: point-probe containment start bbox={bbox} "
@@ -1377,29 +1428,50 @@ def _pre_partition_matches_via_probe_sampling(post_face_result, pre_face_results
             f"{face_name}: point-probe {tag} at ({x:.6g}, {y:.6g})",
             inner=True,
         )
+        point_feature = None
+        probe_shape = None
         try:
-            faces = faces_containing_point(part_doc, x, y)
-        except Exception as exc:
-            _containment_trace(
-                f"{face_name}: point-probe {tag} failed: {exc}",
-                inner=True,
-            )
-            continue
+            probe_shape, point_feature, probe_error = _probe_shape_at_point(part_doc, x, y)
+            if probe_shape is None:
+                _containment_trace(
+                    f"{face_name}: point-probe {tag} failed: {probe_error}",
+                    inner=True,
+                )
+                continue
 
-        if face_name not in faces:
-            _containment_trace(
-                f"{face_name}: point-probe {tag} missed post face; faces={faces}",
-                inner=True,
-            )
-            continue
+            try:
+                in_post_face = GeomAlgoAPI_ShapeTools.isSubShapeInsideShape(probe_shape, post_shape)
+            except Exception as exc:
+                _containment_trace(
+                    f"{face_name}: point-probe {tag} post-face check failed: {exc}",
+                    inner=True,
+                )
+                continue
 
-        probe_matches = _face_names_from_faces_list(faces, pre_face_results.keys())
-        if not probe_matches:
-            _containment_trace(
-                f"{face_name}: point-probe {tag} found no pre-partition matches; faces={faces}",
-                inner=True,
-            )
-            continue
+            if not in_post_face:
+                _containment_trace(
+                    f"{face_name}: point-probe {tag} missed post face",
+                    inner=True,
+                )
+                continue
+
+            if pre_face_shapes is None:
+                _containment_trace(
+                    f"{face_name}: first valid probe found; preparing pre-partition face shapes"
+                )
+                pre_face_shapes = _face_shape_map(pre_face_results, "pre face")
+                if not pre_face_shapes:
+                    return [], "no usable pre-partition face shapes available for containment"
+
+            probe_matches = _matches_for_probe(face_name, probe_shape, pre_face_shapes)
+            if not probe_matches:
+                _containment_trace(
+                    f"{face_name}: point-probe {tag} found no pre-partition matches",
+                    inner=True,
+                )
+                continue
+        finally:
+            _remove_temporary_feature(point_feature, label=f"{face_name}:{tag}")
 
         successful_probes += 1
         probe_match_set = set(probe_matches)
@@ -1444,10 +1516,11 @@ def _pre_partition_matches_via_feature(post_face_result, pre_face_results, sampl
         return None, None
 
     face_name = _face_result_name(post_face_result)
+    pre_face_shapes = _face_shape_map(pre_face_results, "pre face")
     point_count = max(2, int(sample_points))
     _containment_trace(
         f"{face_name}: feature point-cloud sampling start sample_points={sample_points} "
-        f"point_count={point_count} pre_faces={len(pre_face_results)}"
+        f"point_count={point_count} pre_faces={len(pre_face_shapes)}"
     )
     part_doc = _document_for_result(post_face_result)
     if part_doc is None:
@@ -1498,7 +1571,7 @@ def _pre_partition_matches_via_feature(post_face_result, pre_face_results, sampl
 
         probe = explorer.current()
         _containment_trace(f"{face_name}: acquired first probe vertex; starting containment checks")
-        matches = _matches_for_probe(face_name, probe, pre_face_results)
+        matches = _matches_for_probe(face_name, probe, pre_face_shapes)
         _containment_trace(f"{face_name}: containment checks returned {matches}")
         return matches, None
     except Exception as exc:
