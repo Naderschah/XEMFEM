@@ -20,6 +20,7 @@ RUN set -eux; \
     bash \
     ca-certificates \
     curl \
+    dbus \
     file \
     libasound2 \
     libatk-bridge2.0-0 \
@@ -90,6 +91,8 @@ RUN set -eux; \
       apt-get ${APT_ARGS} update; \
     done; \
     locale-gen en_US.UTF-8; \
+    rm -f /etc/machine-id; \
+    dbus-uuidgen --ensure=/etc/machine-id; \
     rm -rf /var/lib/apt/lists/*
 
 RUN curl -fL --retry 5 --retry-all-errors \

@@ -132,6 +132,18 @@ def _finalize_model_for_save():
     except Exception as exc:
         print(f"[study] model.end() before save failed: {exc}")
 
+
+def _save_study_snapshot(tag: str, reopen_transaction: bool = False):
+    _finalize_model_for_save()
+    study_path = _save_current_study(tag)
+    if reopen_transaction:
+        try:
+            model.begin()
+        except Exception as exc:
+            print(f"[study] model.begin() after save failed: {exc}")
+            raise
+    return study_path
+
 def _component_has_spline(component):
     if not isinstance(component, dict):
         return False
@@ -217,11 +229,11 @@ if "GXe_0" not in xenon_face_map.keys(): xenon_face_map["GXe_0"] = None
 if "LXe_0" not in xenon_face_map.keys(): xenon_face_map["LXe_0"] = None
 model.do()
 
+if save_after_sketch:
+    _save_study_snapshot("after_sketch", reopen_transaction=not stop_after_sketch)
+
 if stop_after_sketch:
-    if save_after_sketch:
-        _finalize_model_for_save()
-        _save_current_study("after_sketch")
-    raise Exception("Stopping after sketching as per debug config") if stop_after_sketch else None
+    raise Exception("Stopping after sketching as per debug config")
 # MAke selection Groups and Partition
 try:
     PTFEGrp = None

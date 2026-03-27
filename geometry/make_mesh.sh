@@ -157,7 +157,7 @@ if [[ "$MODE" == "gui" ]]; then
   fi
 
   docker run "${DOCKER_ARGS[@]}" -it "${GUI_ARGS[@]}" \
-    "$IMAGE"
+    "$IMAGE" --gui
 else
   ensure_image
   echo "Running SALOME in TUI mode"

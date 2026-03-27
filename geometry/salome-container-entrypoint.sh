@@ -29,10 +29,27 @@ resolve_salome_launcher() {
   return 1
 }
 
+ensure_machine_id() {
+  if [ -s /etc/machine-id ]; then
+    return 0
+  fi
+
+  if command -v dbus-uuidgen >/dev/null 2>&1; then
+    rm -f /etc/machine-id
+    dbus-uuidgen --ensure=/etc/machine-id
+  fi
+}
+
 if ! SALOME_LAUNCHER="$(resolve_salome_launcher)"; then
   echo "SALOME launcher not found. Checked /opt/salome and /opt/SALOME-*/{salome,run_salome.sh}" >&2
   exit 1
 fi
+
+if [ "${1:-}" = "--gui" ]; then
+  shift
+fi
+
+ensure_machine_id
 
 if [ "$(id -u)" -eq 0 ]; then
   if [ -n "$TARGET_UID" ] || [ -n "$TARGET_GID" ]; then
