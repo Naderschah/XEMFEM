@@ -1021,6 +1021,10 @@ DEBUG_FACE = True  # set to a post face name string to restrict debug, or None f
 DEBUG_PRE  = True  # set to a pre face name string to restrict debug, or None for all
 CONTAINMENT_TRACE = os.environ.get("SALOME_CONTAINMENT_TRACE", "1").lower() not in {"0", "false", "no", "off"}
 CONTAINMENT_TRACE_INNER = os.environ.get("SALOME_CONTAINMENT_TRACE_INNER", "1").lower() not in {"0", "false", "no", "off"}
+CONTAINMENT_ALLOW_FEATURE_POINT_CLOUD = os.environ.get(
+    "SALOME_CONTAINMENT_ALLOW_FEATURE_POINT_CLOUD",
+    "0",
+).lower() in {"1", "true", "yes", "on"}
 
 def _dbg_enabled(post_name, pre_name):
     if DEBUG_FACE is not None and post_name != DEBUG_FACE:
@@ -1062,6 +1066,11 @@ def _face_result_name(face_result):
         except Exception:
             pass
     return str(face_result)
+
+
+def _face_names_from_faces_list(face_names, allowed_names):
+    allowed = set(allowed_names)
+    return [name for name in face_names if name in allowed]
 
 
 def _vertices_from_shape(cloud_shape):
@@ -1338,6 +1347,98 @@ def _pre_partition_matches_via_geomalgo(post_face_result, pre_face_results, samp
         samples = None
 
 
+def _pre_partition_matches_via_probe_sampling(post_face_result, pre_face_results, sample_points=1):
+    face_name = _face_result_name(post_face_result)
+    part_doc = _document_for_result(post_face_result)
+    if part_doc is None:
+        return [], "no active SHAPER document for point-probe containment"
+
+    try:
+        bbox = bbox_from_face_name_xy(part_doc, face_name)
+    except Exception as exc:
+        return [], f"failed to compute bbox for {face_name}: {exc}"
+
+    need_successes = max(1, int(sample_points))
+    rand_tries = max(8, 4 * need_successes)
+    successful_probes = 0
+    counts = {}
+    intersection = None
+
+    _containment_trace(
+        f"{face_name}: point-probe containment start bbox={bbox} "
+        f"need_successes={need_successes} rand_tries={rand_tries}"
+    )
+
+    probe_iter = list(deterministic_probe_points(bbox))
+    probe_iter.extend(random_probe_points(bbox, rand_tries))
+
+    for tag, x, y in probe_iter:
+        _containment_trace(
+            f"{face_name}: point-probe {tag} at ({x:.6g}, {y:.6g})",
+            inner=True,
+        )
+        try:
+            faces = faces_containing_point(part_doc, x, y)
+        except Exception as exc:
+            _containment_trace(
+                f"{face_name}: point-probe {tag} failed: {exc}",
+                inner=True,
+            )
+            continue
+
+        if face_name not in faces:
+            _containment_trace(
+                f"{face_name}: point-probe {tag} missed post face; faces={faces}",
+                inner=True,
+            )
+            continue
+
+        probe_matches = _face_names_from_faces_list(faces, pre_face_results.keys())
+        if not probe_matches:
+            _containment_trace(
+                f"{face_name}: point-probe {tag} found no pre-partition matches; faces={faces}",
+                inner=True,
+            )
+            continue
+
+        successful_probes += 1
+        probe_match_set = set(probe_matches)
+        if intersection is None:
+            intersection = set(probe_match_set)
+        else:
+            intersection &= probe_match_set
+
+        for match_name in probe_match_set:
+            counts[match_name] = counts.get(match_name, 0) + 1
+
+        _containment_trace(
+            f"{face_name}: point-probe {tag} matches={sorted(probe_match_set)} "
+            f"intersection={sorted(intersection)} successes={successful_probes}/{need_successes}"
+        )
+
+        if successful_probes >= need_successes and intersection:
+            matches = sorted(intersection)
+            _containment_trace(f"{face_name}: point-probe containment exit matches={matches}")
+            return matches, None
+
+    if intersection:
+        matches = sorted(intersection)
+        _containment_trace(
+            f"{face_name}: point-probe containment exhausted probes; using intersection matches={matches}"
+        )
+        return matches, None
+
+    if counts:
+        max_hits = max(counts.values())
+        matches = sorted(name for name, hit_count in counts.items() if hit_count == max_hits)
+        _containment_trace(
+            f"{face_name}: point-probe containment fallback to max-hit matches={matches} counts={counts}"
+        )
+        return matches, None
+
+    return [], "point-probe containment found no stable pre-partition matches"
+
+
 def _pre_partition_matches_via_feature(post_face_result, pre_face_results, sample_points=1):
     if PointCloudOnFace_FeatureFactory is None:
         return None, None
@@ -1422,16 +1523,32 @@ def pre_partition_matches_for_post_face(post_face_result, pre_face_results, samp
         sample_points=sample_points,
     )
     if matches is None:
-        _containment_trace(f"{face_name}: GeomAlgo point-cloud unavailable; falling back to feature API")
-        matches, error = _pre_partition_matches_via_feature(
+        _containment_trace(
+            f"{face_name}: GeomAlgo point-cloud unavailable; switching to point-probe containment"
+        )
+        matches, error = _pre_partition_matches_via_probe_sampling(
             post_face_result,
             pre_face_results,
             sample_points=sample_points,
         )
+        if (
+            (not matches)
+            and PointCloudOnFace_FeatureFactory is not None
+            and CONTAINMENT_ALLOW_FEATURE_POINT_CLOUD
+        ):
+            _containment_trace(
+                f"{face_name}: point-probe containment found no matches; retrying feature API because "
+                "SALOME_CONTAINMENT_ALLOW_FEATURE_POINT_CLOUD=1"
+            )
+            matches, error = _pre_partition_matches_via_feature(
+                post_face_result,
+                pre_face_results,
+                sample_points=sample_points,
+            )
 
     if not matches:
         if error:
-            print(f"[containment warning] point cloud failed for {face_name}: {error}")
+            print(f"[containment warning] containment sampling failed for {face_name}: {error}")
         return []
 
     _containment_trace(f"{face_name}: containment matcher exit matches={matches}")
@@ -1451,9 +1568,37 @@ def _electrode_group_for_face_name(face_name, electrode_names, split_bases):
     return None
 
 
+def _match_area(match_name, pre_partition_info):
+    rec = pre_partition_info.get(match_name)
+    if not rec:
+        return float("inf")
+    try:
+        return float(rec[0])
+    except (TypeError, ValueError, IndexError):
+        return float("inf")
+
+
+def _prioritize_containment_matches(matches, pre_partition_info):
+    prioritized = list(dict.fromkeys(matches))
+    if len(prioritized) <= 1:
+        return prioritized, []
+
+    xenon_bulk = {"GXe_0", "LXe_0"}
+    non_xenon = [name for name in prioritized if name not in xenon_bulk]
+    dropped = [name for name in prioritized if name in xenon_bulk]
+    if non_xenon:
+        prioritized = non_xenon
+    else:
+        dropped = []
+
+    prioritized.sort(key=lambda name: (_match_area(name, pre_partition_info), name))
+    return prioritized, dropped
+
+
 def rename_partition_faces_by_containment(
     partition,
     pre_face_results,
+    pre_partition_info,
     ptfe_face_names,
     electrode_names,
     split_bases,
@@ -1496,6 +1641,17 @@ def rename_partition_faces_by_containment(
         if not matches:
             unresolved.append((idx, current_name, "no containment match"))
             continue
+
+        matches, dropped_matches = _prioritize_containment_matches(matches, pre_partition_info)
+        if dropped_matches:
+            print(
+                f"[containment info] idx {idx}: dropping xenon bulk matches {dropped_matches}; "
+                f"keeping prioritized matches {matches}"
+            )
+        elif len(matches) > 1:
+            print(
+                f"[containment info] idx {idx}: prioritized multi-match candidates by area {matches}"
+            )
 
         if len(matches) == 1:
             chosen = matches[0]
@@ -1552,18 +1708,27 @@ def rename_partition_faces_by_containment(
     return renamed, unresolved
 
 def faces_containing_point(part_doc, x, y, z=0.0):
-    p = model.addPoint(part_doc, float(x), float(y), float(z))
-    model.do()
-    vsel = model.selection("VERTEX", "all-in-" + p.name())
+    p = None
+    point_label = f"probe({x:.6g},{y:.6g},{z:.6g})"
+    try:
+        _containment_trace(f"{point_label}: creating temporary probe point", inner=True)
+        p = model.addPoint(part_doc, float(x), float(y), float(z))
+        model.do()
+        _containment_trace(f"{point_label}: probe point creation model.do() complete", inner=True)
 
-    flt = model.filters(part_doc, [model.addFilter(name="BelongsTo", args=[vsel])])
-    face_sels = flt.select("Face")
+        vsel = model.selection("VERTEX", "all-in-" + p.name())
 
-    out = []
-    for fs in face_sels:
-        ctx_res, subshape = fs.resultSubShapePair()
-        out.append(ctx_res.name())
-    return out  # keep order for readable prints
+        flt = model.filters(part_doc, [model.addFilter(name="BelongsTo", args=[vsel])])
+        face_sels = flt.select("Face")
+
+        out = []
+        for fs in face_sels:
+            ctx_res, subshape = fs.resultSubShapePair()
+            out.append(ctx_res.name())
+        _containment_trace(f"{point_label}: containing faces={out}", inner=True)
+        return out  # keep order for readable prints
+    finally:
+        _remove_temporary_feature(p, label=point_label)
 
 
 def deterministic_probe_points(bbox, margin=1e-9):

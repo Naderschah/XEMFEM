@@ -272,6 +272,7 @@ try:
         containment_names, containment_unresolved = rename_partition_faces_by_containment(
             partition,
             pre_partition_face_results,
+            pre_partition,
             ptfe_face_names,
             electrode_names,
             split_bases,
