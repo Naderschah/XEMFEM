@@ -48,25 +48,45 @@ if '.' in mesh_path.split('/')[-1]:
 
 if geom_override:
     # Allow relative paths, resolve against base_path
-    geom_path = (
+    geom_search_paths = [
         geom_override
         if os.path.isabs(geom_override)
         else os.path.join(base_path, geom_override)
-    )
+    ]
 else:
-    geom_path = os.path.join(base_path, "geometries")
-print("globbing: ", os.path.join(geom_path, f"*{geom}*.py"))
-fname = glob.glob(
-    os.path.join(geom_path, f"*{geom}*.py")
-)
+    geom_search_paths = [
+        os.path.join(base_path, "XEMFEM_geometries"),
+        os.path.join(base_path, "geometries"),
+    ]
+
+fname = []
+geom_path = None
+search_pattern = f"*{geom}*.py"
+searched_paths = []
+
+for candidate_path in geom_search_paths:
+    searched_paths.append(candidate_path)
+    print("globbing: ", os.path.join(candidate_path, search_pattern))
+    matches = glob.glob(os.path.join(candidate_path, search_pattern))
+    if matches:
+        fname = matches
+        geom_path = candidate_path
+        break
 
 if len(fname) == 1:
-    module_name = Path(fname[0]).stem # Strip .py
+    module_name = Path(fname[0]).stem  # Strip .py
     spec = importlib.util.spec_from_file_location(module_name, fname[0])
     geometry = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(geometry)
 else:
-    raise Exception("Found " + str(len(fname)) + " choices for geometry source " + config['mesh']['geometry'])
+    raise Exception(
+        "Found "
+        + str(len(fname))
+        + " choices for geometry source "
+        + config['mesh']['geometry']
+        + " in searched paths "
+        + str(searched_paths)
+    )
 
 slice_alignment = getattr(geometry, "_SLICE_ALIGNMENT", None)
 component_store = getattr(geometry, "_COMPONENT_STORE", None)
