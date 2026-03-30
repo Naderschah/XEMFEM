@@ -1331,7 +1331,7 @@ def write_salome_python_config(cfg, slice_name, written_paths, out_dir, manual_w
        and path.lower().endswith(".json")
   })
 
-  salome_cfg_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "salome_configs")
+  salome_cfg_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../XEMFEM_geometries")
   os.makedirs(salome_cfg_dir, exist_ok=True)
   module_path = os.path.join(salome_cfg_dir, f"{slice_name}.py")
   lines = [
