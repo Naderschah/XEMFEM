@@ -27,7 +27,17 @@ plots
 */*/*/phys_map.txt
 */*/phys_map.txt
 */phys_map.txt
+*.hdf
+*/*.hdf
+*/*/*.hdf
 mount/
 geometry/createGeometryFromCAD/out
 geometry/createGeometryFromCAD/CAD_*
 geometry/createGeometryFromCAD/DXF_*
+geometry/createGeometryFromCAD/geometry
+geometry/createGeometryFromCAD/manual_overwrites
+__pycache__
+*/__pycache__
+*/*/__pycache__
+*audit*
+
