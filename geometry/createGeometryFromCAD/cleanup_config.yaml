@@ -714,7 +714,7 @@ electrodes:
 selectors:
   PTFEWall:
     components:
-      - "^XENTTPCAWarmPart088Part088_\d{1,2}$"
+      - ^XENTTPCAWarmPart088Part088_\d{1,2}$
 
 # Manual additions copied into `out_dir`.
 # Each rule supports:

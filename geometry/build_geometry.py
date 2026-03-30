@@ -88,9 +88,46 @@ else:
         + str(searched_paths)
     )
 
+
+def _load_selectors_from_cleanup_config(slice_name):
+    cleanup_dir = os.path.join(base_path, "createGeometryFromCAD")
+    cleanup_module_path = os.path.join(cleanup_dir, "cleanup_jsons.py")
+    cleanup_cfg_path = os.path.join(cleanup_dir, "cleanup_config.yaml")
+    if not os.path.isfile(cleanup_module_path) or not os.path.isfile(cleanup_cfg_path):
+        return None
+
+    try:
+        cleanup_spec = importlib.util.spec_from_file_location(
+            "_cleanup_jsons_selector_fallback",
+            cleanup_module_path,
+        )
+        cleanup_module = importlib.util.module_from_spec(cleanup_spec)
+        cleanup_spec.loader.exec_module(cleanup_module)
+        cleanup_cfg = cleanup_module.load_yaml_config(cleanup_cfg_path)
+        selectors = cleanup_module.applicable_named_component_section(
+            cleanup_cfg,
+            "selectors",
+            slice_name,
+        )
+        if selectors:
+            print(
+                "[selector] Loaded selector fallback from",
+                cleanup_cfg_path,
+                "for",
+                slice_name,
+            )
+            return selectors
+    except Exception as exc:
+        print(f"[selector warning] failed to load cleanup selector fallback: {exc}")
+
+    return None
+
+
 slice_alignment = getattr(geometry, "_SLICE_ALIGNMENT", None)
 component_store = getattr(geometry, "_COMPONENT_STORE", None)
 selectors_cfg = getattr(geometry, "_SELECTORS", None)
+if not isinstance(selectors_cfg, dict) or not selectors_cfg:
+    selectors_cfg = _load_selectors_from_cleanup_config(module_name)
 if isinstance(slice_alignment, dict) and isinstance(component_store, dict):
     ref_name = slice_alignment.get("reference_component")
     if ref_name and ref_name not in component_store:
@@ -222,9 +259,48 @@ def _resolve_named_selector_components(selectors_section, *selector_names):
     return None, []
 
 
+def _selector_pattern_is_regex(selector_pattern):
+    if not isinstance(selector_pattern, str):
+        return False
+    return any(ch in selector_pattern for ch in "^$*+?{}[]|()\\.")
+
+
+def _partition_name_candidates(partition_name):
+    candidates = []
+
+    def _append(value):
+        if value and value not in candidates:
+            candidates.append(value)
+
+    _append(partition_name)
+    logical_name = re.sub(r"_part(?:_\d+_(?:manual|auto))?$", "", partition_name)
+    _append(logical_name)
+
+    stripped = logical_name
+    for _ in range(2):
+        new_stripped = re.sub(r"_\d+$", "", stripped)
+        if new_stripped == stripped:
+            break
+        stripped = new_stripped
+        _append(stripped)
+
+    return candidates
+
+
 def _partition_name_matches_component_base(partition_name, component_base):
+    candidates = _partition_name_candidates(partition_name)
+    if _selector_pattern_is_regex(component_base):
+        try:
+            rx = re.compile(component_base)
+        except re.error as exc:
+            print(f"[selector warning] invalid selector regex {component_base!r}: {exc}")
+            return False
+        return any(rx.match(candidate) for candidate in candidates)
+
     pat = rf"^{re.escape(component_base)}(?:_\d+(?:_\d+)?)?_part(?:_\d+_(?:manual|auto))?$"
-    return re.match(pat, partition_name) is not None
+    if re.match(pat, partition_name):
+        return True
+    return component_base in candidates
 
 
 def _partition_subresults_matching_component_bases(partition_result, component_bases):
