@@ -90,6 +90,7 @@ else:
 
 slice_alignment = getattr(geometry, "_SLICE_ALIGNMENT", None)
 component_store = getattr(geometry, "_COMPONENT_STORE", None)
+selectors_cfg = getattr(geometry, "_SELECTORS", None)
 if isinstance(slice_alignment, dict) and isinstance(component_store, dict):
     ref_name = slice_alignment.get("reference_component")
     if ref_name and ref_name not in component_store:
@@ -198,6 +199,91 @@ def _sketch_dict_has_spline(sketch_dict):
         if _component_has_spline(component):
             return True
     return False
+
+
+def _resolve_named_selector_components(selectors_section, *selector_names):
+    if not isinstance(selectors_section, dict):
+        return None, []
+
+    for selector_name in selector_names:
+        entry = selectors_section.get(selector_name)
+        if not isinstance(entry, dict):
+            continue
+        components = entry.get("components", [])
+        if not isinstance(components, list):
+            continue
+        cleaned = []
+        for component_name in components:
+            if isinstance(component_name, str) and component_name.strip():
+                cleaned.append(component_name)
+        if cleaned:
+            return selector_name, list(dict.fromkeys(cleaned))
+
+    return None, []
+
+
+def _partition_name_matches_component_base(partition_name, component_base):
+    pat = rf"^{re.escape(component_base)}(?:_\d+(?:_\d+)?)?_part(?:_\d+_(?:manual|auto))?$"
+    return re.match(pat, partition_name) is not None
+
+
+def _partition_subresults_matching_component_bases(partition_result, component_bases):
+    matches = []
+    for i in range(partition_result.numberOfSubs()):
+        sub_result = partition_result.subResult(i)
+        sub_name = sub_result.name()
+        for base in component_bases:
+            if _partition_name_matches_component_base(sub_name, base):
+                matches.append(sub_result)
+                break
+    return matches
+
+
+def _vertical_edge_records_for_face_result(face_result, tol):
+    res, sub = face_result.resultSubShapePair()
+    face_shape = sub
+    if face_shape is None or face_shape.isNull():
+        face_shape = res.shape()
+
+    records = []
+    exp = GeomAPI_ShapeExplorer(face_shape, GeomAPI_Shape.EDGE)
+    while exp.more():
+        cur = exp.current()
+        ed = cur.edge()
+        if ed is None:
+            exp.next()
+            continue
+
+        p1 = ed.firstPoint()
+        p2 = ed.lastPoint()
+        x1, y1, z1 = p1.x(), p1.y(), p1.z()
+        x2, y2, z2 = p2.x(), p2.y(), p2.z()
+
+        dx = x2 - x1
+        dy = y2 - y1
+        if abs(dx) <= tol and abs(dy) > tol:
+            edge_key = tuple(
+                sorted(
+                    (
+                        (round(x1, 12), round(y1, 12), round(z1, 12)),
+                        (round(x2, 12), round(y2, 12), round(z2, 12)),
+                    )
+                )
+            )
+            records.append(
+                {
+                    "face_name": face_result.name(),
+                    "context_result": res,
+                    "edge_shape": cur,
+                    "x_mid": 0.5 * (x1 + x2),
+                    "y_mid": 0.5 * (y1 + y2),
+                    "edge_key": edge_key,
+                }
+            )
+
+        exp.next()
+
+    return records
 
 #def main():
 # ----------------- Build sketch dicts (dict-of-dicts) -----------------
@@ -334,19 +420,57 @@ try:
 
     # This is included here as selecting later causes recomputation which makes the idx reassignment mess up
     # Selection doesnt work since i name both the result and sub result objects the same thing (I think) so we jsut select the object here FIXME
-    ptfe_wall_name_for_charge_buildup = "PTFEWall0_part"
-    ptfe_wall_selection = None 
+    legacy_ptfe_wall_name_for_charge_buildup = "PTFEWall0_part"
+    legacy_ptfe_wall_selection = None
     ## Check everything is named 
     any_unnamed = False
     for i in range(partition.result().numberOfSubs()):
         if "partition" in partition.result().subResult(i).name().lower():
             print("Partition result " + str(i+1) + " is not named (idx:"+str(i)+")" )
             any_unnamed = True
-        # FIXME Remove when either naming is fixed or partition naming is fully automated
-        if partition.result().subResult(i).name() == ptfe_wall_name_for_charge_buildup: 
-            ptfe_wall_selection = partition.result().subResult(i)
+        if partition.result().subResult(i).name() == legacy_ptfe_wall_name_for_charge_buildup:
+            legacy_ptfe_wall_selection = partition.result().subResult(i)
     if any_unnamed:
         raise Exception("Stopping: rename partition objects")
+
+    ptfe_wall_selector_key, ptfe_wall_component_bases = _resolve_named_selector_components(
+        selectors_cfg,
+        "PTFEWall",
+        "PTFE_Wall",
+        "PTFE_Wall_Charge",
+        "ptfe_wall",
+    )
+    if not ptfe_wall_component_bases and "PTFEWall" in ptfe_sketches:
+        ptfe_wall_selector_key = "PTFEWall (sketch fallback)"
+        ptfe_wall_component_bases = ["PTFEWall"]
+
+    ptfe_wall_face_results = []
+    if ptfe_wall_component_bases:
+        ptfe_wall_face_results = _partition_subresults_matching_component_bases(
+            partition.result(),
+            ptfe_wall_component_bases,
+        )
+        print(
+            "[selector] PTFE wall selector",
+            ptfe_wall_selector_key,
+            "resolved",
+            len(ptfe_wall_component_bases),
+            "components and",
+            len(ptfe_wall_face_results),
+            "partition faces",
+        )
+    elif is_tpc:
+        print(
+            "[selector] No PTFE wall selector components configured; "
+            "falling back to legacy PTFEWall0_part if present"
+        )
+
+    if not ptfe_wall_face_results and legacy_ptfe_wall_selection is not None:
+        ptfe_wall_face_results = [legacy_ptfe_wall_selection]
+        print(
+            "[selector] Using legacy PTFE wall face",
+            legacy_ptfe_wall_name_for_charge_buildup,
+        )
 
     ## Make Name Lists for submesh groups 
     GXe_post_part_names = [i for i in names_in_partition if "GXe" in i]
@@ -355,9 +479,7 @@ try:
     PTFE_post_part_names = []
     for n in names_in_partition:
         for base in ptfe_names:
-            # ^Base + optional synthetic face suffix (_<idx>[ _<ridx> ]) + _part + optional auto/manual suffix
-            pat = rf"^{re.escape(base)}(?:_\d+(?:_\d+)?)?_part(?:_\d+_(?:manual|auto))?$"
-            if re.match(pat, n):
+            if _partition_name_matches_component_base(n, base):
                 PTFE_post_part_names.append(n)
                 break
     #---------- Make meshing groups
@@ -408,60 +530,44 @@ try:
         electrode_grps.append(grp)
 
     # ------   For wall charge up we also need a PTFE Wall group
-    # We selected earlier swithc to model.selection when the fixme is gone
-    # We need to find all Vertex points for each edge
-    # There is a bunch of points on the rhs of the wall due to touching the field shaping rings
+    # We need the inner wall boundary, so only keep vertical edges on the
+    # selector-marked PTFE wall faces that sit closest to the x=0 axis.
     if is_tpc:
         tol = 1e-6 # TODO Load config param 
-        res, sub = ptfe_wall_selection.resultSubShapePair()
-        exp = GeomAPI_ShapeExplorer(res.shape(), GeomAPI_Shape.EDGE)
-        i = 0
-        lines = {}
-        while exp.more():
-            cur = exp.current()
-            ed = cur.edge()
-            if ed is None:
-                print(f"[{i}] cur.edge() is None -> skip")
-                exp.next()
-                i += 1
-                continue
+        if not ptfe_wall_face_results:
+            raise Exception(
+                "No PTFE wall partition faces found for charge buildup group. "
+                "Populate cleanup_config selectors.PTFEWall.components for this slice."
+            )
 
-            p1 = ed.firstPoint()
-            p2 = ed.lastPoint()
-            x1, y1, z1 = p1.x(), p1.y(), p1.z()
-            x2, y2, z2 = p2.x(), p2.y(), p2.z()
+        vertical_edges = []
+        for face_result in ptfe_wall_face_results:
+            vertical_edges.extend(_vertical_edge_records_for_face_result(face_result, tol))
 
-            dx = x2 - x1
-            dy = y2 - y1
+        if not vertical_edges:
+            raise Exception("No vertical PTFE wall edges found on the selected partition faces")
 
-            if abs(dx) <= tol and abs(dy) > tol:
-                key = ("V", round(0.5*(x1+x2), 12))
-            elif abs(dy) <= tol and abs(dx) > tol:
-                key = ("H", round(0.5*(y1+y2), 12))
-            else:
-                key = ("O", i)  # other / degenerate / angled
+        min_x = min(item["x_mid"] for item in vertical_edges)
+        left_edges = [
+            item for item in vertical_edges
+            if abs(item["x_mid"] - min_x) <= tol
+        ]
+        print(
+            "[selector] PTFE wall charge group using",
+            len(left_edges),
+            "edges from",
+            len({item['face_name'] for item in left_edges}),
+            "faces at x =",
+            min_x,
+        )
 
-            lines.setdefault(key, []).append({
-                "idx": i,
-                "edge_shape": cur,      # GeomAPI_Shape for the edge (handle)
-                "p1": (x1, y1, z1),
-                "p2": (x2, y2, z2),
-            })
-
-            exp.next()
-            i += 1
-
-        # --- pick the left-most vertical column ---
-        v_keys = [k for k in lines.keys() if k[0] == "V"]
-        if not v_keys:
-            raise Exception("No vertical lines found")
-        left_key = min(v_keys, key=lambda k: k[1])   # smallest x
-        left_edges = lines[left_key]
-        # --- convert edge shapes -> selections (try both common bindings) ---
         edge_sels = []
-        for item in left_edges:
-            edge_shape = item["edge_shape"]   # GeomAPI_Shape (EDGE)
-            edge_sels.append(ModelHighAPI_Selection(res, edge_shape))
+        seen_edge_keys = set()
+        for item in sorted(left_edges, key=lambda edge: (edge["y_mid"], edge["face_name"])):
+            if item["edge_key"] in seen_edge_keys:
+                continue
+            seen_edge_keys.add(item["edge_key"])
+            edge_sels.append(ModelHighAPI_Selection(item["context_result"], item["edge_shape"]))
 
         PTFE_Wall_group = model.addGroup(Cryostat_doc, "EDGE", edge_sels )
         PTFE_Wall_group.setName("PTFE_Wall_group")

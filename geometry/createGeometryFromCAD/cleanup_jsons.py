@@ -25,6 +25,7 @@ def load_yaml_config(cfg_path):
           replacements: []
           materials: {}
           electrodes: {}
+          selectors: {}
           manual_additions: {}
           slice_input_scale: 1.0
           slice_offset_y: 0.0
@@ -127,6 +128,7 @@ def load_yaml_config(cfg_path):
     cfg.setdefault("replacements", [])
     cfg.setdefault("materials", {})
     cfg.setdefault("electrodes", {})
+    cfg.setdefault("selectors", {})
     cfg.setdefault("manual_additions", {})
     cfg.setdefault("slice_input_scale", 1.0)
     cfg.setdefault("slice_offset_y", 0.0)
@@ -149,6 +151,8 @@ def load_yaml_config(cfg_path):
         raise ValueError("materials must be a mapping/object")
     if not isinstance(cfg["electrodes"], dict):
         raise ValueError("electrodes must be a mapping/object")
+    if not isinstance(cfg["selectors"], dict):
+        raise ValueError("selectors must be a mapping/object")
     if not isinstance(cfg["manual_additions"], dict):
         raise ValueError("manual_additions must be a mapping/object")
     if not isinstance(cfg["slice_input_scale"], (int, float)):
@@ -333,6 +337,7 @@ def load_yaml_config(cfg_path):
 
     _normalize_named_component_section("materials")
     _normalize_named_component_section("electrodes")
+    _normalize_named_component_section("selectors")
 
     return cfg
 
@@ -1318,6 +1323,7 @@ def write_salome_python_config(cfg, slice_name, written_paths, out_dir, manual_w
   component_store = _load_written_components_for_dir(written_paths, out_dir)
   materials = applicable_named_component_section(cfg, "materials", slice_name)
   electrodes_cfg = applicable_named_component_section(cfg, "electrodes", slice_name)
+  selectors_cfg = applicable_named_component_section(cfg, "selectors", slice_name)
   slice_alignment = copy.deepcopy(cfg.get("slice_alignment") or {})
   if slice_alignment and not rule_applies_to_slice(slice_alignment, slice_name):
     slice_alignment = {}
@@ -1345,6 +1351,8 @@ def write_salome_python_config(cfg, slice_name, written_paths, out_dir, manual_w
     "_MATERIALS = " + pformat(materials, sort_dicts=False, width=100),
     "",
     "_ELECTRODES = " + pformat(electrodes_cfg, sort_dicts=False, width=100),
+    "",
+    "_SELECTORS = " + pformat(selectors_cfg, sort_dicts=False, width=100),
     "",
     "_MANUAL_COMPONENT_NAMES = " + pformat(manual_component_names, sort_dicts=False, width=100),
     "",

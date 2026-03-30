@@ -707,6 +707,15 @@ electrodes:
       - "XENTTPCFPart5472Part5472_1" # Only seen in 67.5 so far
       - "XENTTPCFPart5483Part5483_1" # Only seen in 82.50 so far
 
+# Selector-only component groups for downstream geometry logic.
+# PTFEWall should list the pre-partition source components that make up the
+# wall. The mesh build then finds the matching partition faces and keeps only
+# the vertical inner-wall edges, i.e. the ones closest to x = 0.
+selectors:
+  PTFEWall:
+    components:
+      - "^XENTTPCAWarmPart088Part088_\d{1,2}$"
+
 # Manual additions copied into `out_dir`.
 # Each rule supports:
 #   from: "/path/to/file.json"

@@ -42,6 +42,8 @@ python3 cleanup_jsons.py cleanup_config.yaml
   - either define `components` directly for all slices, or use nested slice keys such as
     `slice_022.50:` / `slice_037.50:` for slice-specific component lists
   - nested `slice_*` keys are treated as exact slice shorthands; omitting the trailing `deg` is allowed
+- `selectors`: per-slice named component markers for downstream SALOME selection logic
+  - `PTFEWall.components` marks the source wall components whose partitioned inner vertical edges become `PTFE_Wall_Charge`
 - `shape_match_tol`: strict tolerance for deciding whether two components are the same shape
 - `periodicity_tol`: looser tolerance for detecting repeated spacing/pitch
 - `grouping_mode`: `periodic` or `none`
