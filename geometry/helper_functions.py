@@ -1580,7 +1580,7 @@ def _electrode_group_for_face_name(face_name, electrode_names, split_bases):
         if base == "shrinkage_factor":
             continue
         if base in split_bases:
-            m = re.match(rf"^{re.escape(base)}(\d+)(?:_\d+(?:_\d+)?)?$", face_name)
+            m = re.match(rf"^{re.escape(base)}_?(\d+)(?:_\d+(?:_\d+)?)?$", face_name)
             if m:
                 return f"{base}{m.group(1)}"
         elif re.match(rf"^{re.escape(base)}(?:_\d+(?:_\d+)?)?$", face_name):

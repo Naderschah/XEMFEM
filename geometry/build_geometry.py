@@ -584,7 +584,7 @@ try:
         for base in electrode_names:
             if base in split_bases: 
                 # Branch for field shaping that need individual BCs 
-                m = re.match(rf"^{re.escape(base)}(\d+)(?:_\d+(?:_\d+)?)?_part(?:_\d+_(?:manual|auto))?$", n)
+                m = re.match(rf"^{re.escape(base)}_?(\d+)(?:_\d+(?:_\d+)?)?_part(?:_\d+_(?:manual|auto))?$", n)
                 if m:
                     nr = m.group(1)
                     key = f"{base}{nr}"
