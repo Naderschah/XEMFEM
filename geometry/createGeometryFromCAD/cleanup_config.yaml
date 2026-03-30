@@ -157,22 +157,40 @@ ignore_components:
       - "^slice_022\\.50deg"
 
   # Screws with threading
-  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4956Part4956_1_4$"
+  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4956Part4956_1_.*$"
     slices:
       - "^slice_022\\.50deg"
-  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4956Part4956_0_7$"
+  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4956Part4956_1$"
     slices:
       - "^slice_022\\.50deg"
-  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4955Part4955_1_4$"
+  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4956Part4956_0_.*$"
     slices:
       - "^slice_022\\.50deg"
-  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4955Part4955_0_13$"
+  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4956Part4956_0$"
     slices:
       - "^slice_022\\.50deg"
-  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4954Part4954_1_8$"
+  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4955Part4955_1_.*$"
     slices:
       - "^slice_022\\.50deg"
-  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4954Part4954_0_2$" 
+  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4955Part4955_1$"
+    slices:
+      - "^slice_022\\.50deg"
+  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4955Part4955_0$"
+    slices:
+      - "^slice_022\\.50deg"
+  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4955Part4955_0_.*$"
+    slices:
+      - "^slice_022\\.50deg"
+  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4954Part4954_1_.*$"
+    slices:
+      - "^slice_022\\.50deg"
+  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4954Part4954_1$"
+    slices:
+      - "^slice_022\\.50deg"
+  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4954Part4954_0_.*$" 
+    slices:
+      - "^slice_022\\.50deg"
+  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4954Part4954_0$" 
     slices:
       - "^slice_022\\.50deg"
     
