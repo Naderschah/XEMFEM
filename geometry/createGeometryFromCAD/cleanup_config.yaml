@@ -156,7 +156,26 @@ ignore_components:
     slices:
       - "^slice_022\\.50deg"
 
-
+  # Screws with threading
+  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4956Part4956_1_4$"
+    slices:
+      - "^slice_022\\.50deg"
+  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4956Part4956_0_7$"
+    slices:
+      - "^slice_022\\.50deg"
+  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4955Part4955_1_4$"
+    slices:
+      - "^slice_022\\.50deg"
+  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4955Part4955_0_13$"
+    slices:
+      - "^slice_022\\.50deg"
+  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4954Part4954_1_8$"
+    slices:
+      - "^slice_022\\.50deg"
+  - match: "^XENTTPCDNewAnodeXENTTPCDQNewAnode017Part4954Part4954_0_2$" 
+    slices:
+      - "^slice_022\\.50deg"
+    
 # Explicit replacements applied before grouping.
 # Use `target` for one bad component or `targets` for several fragments.
 # `source` may be:

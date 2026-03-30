@@ -20,6 +20,6 @@ from ModelAPI import ModelAPI_Session
 
 session = ModelAPI_Session.get()
 session.closeAll()
-ok = session.load("/work/geometry/mesh/slice_142.50deg_after_sketch.shaper")
+ok = session.load("/work/geometry/mesh/slice_022.50deg_partition_failure.shaper")
 print("loaded:", ok)
 ```

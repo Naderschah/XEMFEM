@@ -64,7 +64,7 @@ debug:
   timing: true
   StopAfterSketh: false
   SaveAfterSketch: true
-  SaveOnPartitionFailure: false
+  SaveOnPartitionFailure: true
   dry_run: false
   printBoundaryConditions: false
   printHypreWarnings: false

@@ -1162,13 +1162,10 @@ def _remove_temporary_feature(feature, label=None):
     try:
         feature_obj = feature.feature() if hasattr(feature, "feature") else feature
         feature_label = label or getattr(feature_obj, "name", lambda: type(feature_obj).__name__)()
-        _containment_trace(f"{feature_label}: removing temporary feature")
         features = ModelAPI.FeatureSet()
         features.add(feature_obj)
         model.removeFeatures(features, False)
-        _containment_trace(f"{feature_label}: temporary feature removed; running model.do()")
         model.do()
-        _containment_trace(f"{feature_label}: temporary feature cleanup model.do() complete")
     except Exception as exc:
         print(f"[containment warning] failed to remove temporary feature: {exc}")
 
@@ -1189,18 +1186,21 @@ def _face_shape_map(face_results, label):
 
 def _probe_shape_at_point(part_doc, x, y, z=0.0):
     point_feature = None
-    point_label = f"probe({x:.6g},{y:.6g},{z:.6g})"
     try:
-        _containment_trace(f"{point_label}: creating temporary probe point", inner=True)
         point_feature = model.addPoint(part_doc, float(x), float(y), float(z))
         model.do()
-        _containment_trace(f"{point_label}: probe point creation model.do() complete", inner=True)
 
         point_result = _feature_result(point_feature)
         if point_result is None:
             return None, point_feature, "temporary probe point returned no result"
 
-        probe_shape = _shape_from_result(point_result)
+        probe_shape = None
+        if hasattr(point_result, "shape"):
+            probe_shape = point_result.shape()
+        elif hasattr(point_result, "resultSubShapePair"):
+            res, _ = point_result.resultSubShapePair()
+            if res is not None and hasattr(res, "shape"):
+                probe_shape = res.shape()
         if probe_shape is None or probe_shape.isNull():
             return None, point_feature, "temporary probe point returned an empty shape"
 
@@ -1331,20 +1331,9 @@ def point_cloud_vertices_on_face(face_result, number_of_points=1):
 
 
 def _matches_for_probe(post_face_name, probe, pre_face_shapes):
-    _containment_trace(
-        f"{post_face_name}: starting inside checks against {len(pre_face_shapes)} pre-partition faces"
-    )
     matches = []
-    for pre_idx, (pre_name, pre_shape) in enumerate(pre_face_shapes.items(), start=1):
-        _containment_trace(
-            f"{post_face_name}: inside check {pre_idx}/{len(pre_face_shapes)} against '{pre_name}'",
-            inner=True,
-        )
+    for pre_name, pre_shape in pre_face_shapes.items():
         if pre_shape is None or pre_shape.isNull():
-            _containment_trace(
-                f"{post_face_name}: pre face '{pre_name}' has no usable shape",
-                inner=True,
-            )
             continue
         try:
             inside = GeomAlgoAPI_ShapeTools.isSubShapeInsideShape(probe, pre_shape)
@@ -1355,12 +1344,7 @@ def _matches_for_probe(post_face_name, probe, pre_face_shapes):
             )
             continue
         if inside:
-            _containment_trace(
-                f"{post_face_name}: probe lies inside '{pre_name}'",
-                inner=True,
-            )
             matches.append(pre_name)
-    _containment_trace(f"{post_face_name}: inside checks finished with matches={matches}")
     return matches
 
 
@@ -1409,106 +1393,69 @@ def _pre_partition_matches_via_probe_sampling(post_face_result, pre_face_results
         return [], f"failed to compute bbox for {face_name}: {exc}"
 
     need_successes = max(1, int(sample_points))
-    rand_tries = max(8, 4 * need_successes)
-    successful_probes = 0
-    counts = {}
-    intersection = None
+    max_valid_probe_tries = 5
+    max_total_probe_tries = 100
+    rand_tries = max(0, max_total_probe_tries - 5)
+    all_matches_seen = set()
+    total_tried_probes = 0
+    valid_post_face_probes = 0
     pre_face_shapes = None
-
-    _containment_trace(
-        f"{face_name}: point-probe containment start bbox={bbox} "
-        f"need_successes={need_successes} rand_tries={rand_tries}"
-    )
 
     probe_iter = list(deterministic_probe_points(bbox))
     probe_iter.extend(random_probe_points(bbox, rand_tries))
 
     for tag, x, y in probe_iter:
-        _containment_trace(
-            f"{face_name}: point-probe {tag} at ({x:.6g}, {y:.6g})",
-            inner=True,
-        )
+        if total_tried_probes >= max_total_probe_tries:
+            break
+        if valid_post_face_probes >= max_valid_probe_tries:
+            break
+        total_tried_probes += 1
         point_feature = None
         probe_shape = None
         try:
             probe_shape, point_feature, probe_error = _probe_shape_at_point(part_doc, x, y)
             if probe_shape is None:
-                _containment_trace(
-                    f"{face_name}: point-probe {tag} failed: {probe_error}",
-                    inner=True,
-                )
                 continue
 
             try:
                 in_post_face = GeomAlgoAPI_ShapeTools.isSubShapeInsideShape(probe_shape, post_shape)
             except Exception as exc:
-                _containment_trace(
-                    f"{face_name}: point-probe {tag} post-face check failed: {exc}",
-                    inner=True,
-                )
+                print(f"[containment warning] {face_name}: probe point {tag} post-face check failed: {exc}")
                 continue
 
             if not in_post_face:
-                _containment_trace(
-                    f"{face_name}: point-probe {tag} missed post face",
-                    inner=True,
-                )
                 continue
 
+            valid_post_face_probes += 1
+
             if pre_face_shapes is None:
-                _containment_trace(
-                    f"{face_name}: first valid probe found; preparing pre-partition face shapes"
-                )
                 pre_face_shapes = _face_shape_map(pre_face_results, "pre face")
                 if not pre_face_shapes:
                     return [], "no usable pre-partition face shapes available for containment"
 
             probe_matches = _matches_for_probe(face_name, probe_shape, pre_face_shapes)
             if not probe_matches:
-                _containment_trace(
-                    f"{face_name}: point-probe {tag} found no pre-partition matches",
-                    inner=True,
+                print(
+                    f"[containment trace] {face_name}: probe point {tag} "
+                    f"found [] ({valid_post_face_probes}/{max_valid_probe_tries} valid probes)"
                 )
                 continue
         finally:
             _remove_temporary_feature(point_feature, label=f"{face_name}:{tag}")
 
-        successful_probes += 1
         probe_match_set = set(probe_matches)
-        if intersection is None:
-            intersection = set(probe_match_set)
-        else:
-            intersection &= probe_match_set
-
-        for match_name in probe_match_set:
-            counts[match_name] = counts.get(match_name, 0) + 1
-
-        _containment_trace(
-            f"{face_name}: point-probe {tag} matches={sorted(probe_match_set)} "
-            f"intersection={sorted(intersection)} successes={successful_probes}/{need_successes}"
+        all_matches_seen.update(probe_match_set)
+        print(
+            f"[containment trace] {face_name}: probe point {tag} "
+            f"found {sorted(probe_match_set)} ({valid_post_face_probes}/{max_valid_probe_tries} valid probes)"
         )
+        return sorted(probe_match_set), None
 
-        if successful_probes >= need_successes and intersection:
-            matches = sorted(intersection)
-            _containment_trace(f"{face_name}: point-probe containment exit matches={matches}")
-            return matches, None
-
-    if intersection:
-        matches = sorted(intersection)
-        _containment_trace(
-            f"{face_name}: point-probe containment exhausted probes; using intersection matches={matches}"
-        )
-        return matches, None
-
-    if counts:
-        max_hits = max(counts.values())
-        matches = sorted(name for name, hit_count in counts.items() if hit_count == max_hits)
-        _containment_trace(
-            f"{face_name}: point-probe containment fallback to max-hit matches={matches} counts={counts}"
-        )
-        return matches, None
-
-    return [], "point-probe containment found no stable pre-partition matches"
+    return [], (
+        f"point-probe containment found no stable pre-partition matches after "
+        f"total_tried={total_tried_probes}, valid_post_face={valid_post_face_probes}; "
+        f"all_matches_seen={sorted(all_matches_seen)}"
+    )
 
 
 def _pre_partition_matches_via_feature(post_face_result, pre_face_results, sample_points=1):
@@ -1726,10 +1673,10 @@ def rename_partition_faces_by_containment(
                 f"[containment info] idx {idx}: prioritized multi-match candidates by area {matches}"
             )
 
+        chosen = matches[0]
         if len(matches) == 1:
-            chosen = matches[0]
+            pass
         elif all(name in ptfe_face_names for name in matches):
-            chosen = matches[0]
             print(
                 f"[containment info] idx {idx}: PTFE-only ambiguous match {matches}; "
                 f"choosing {chosen}"
@@ -1741,18 +1688,15 @@ def rename_partition_faces_by_containment(
             }
             electrode_groups.discard(None)
             if len(electrode_groups) == 1 and len(electrode_groups) > 0:
-                chosen = matches[0]
                 print(
                     f"[containment info] idx {idx}: same-electrode ambiguous match {matches}; "
                     f"choosing {chosen} for group {next(iter(electrode_groups))}"
                 )
             else:
-                unresolved.append((idx, current_name, f"ambiguous matches {matches}"))
                 print(
-                    f"[containment warning] idx {idx}: ambiguous non-PTFE match set {matches}; "
-                    "leaving for manual naming"
+                    f"[containment info] idx {idx}: ambiguous match {matches}; "
+                    f"choosing smallest-area candidate {chosen}"
                 )
-                continue
 
         _containment_trace(f"idx {idx}: refresh partition result before rename")
         current_res = partition.result()
