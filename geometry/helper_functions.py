@@ -1598,21 +1598,39 @@ def _match_area(match_name, pre_partition_info):
         return float("inf")
 
 
-def _prioritize_containment_matches(matches, pre_partition_info):
+def _match_priority(match_name, ptfe_face_names, electrode_names, split_bases):
+    if _electrode_group_for_face_name(match_name, electrode_names, split_bases) is not None:
+        return 0
+    if match_name in ptfe_face_names:
+        return 1
+    if match_name.startswith("LXe"):
+        return 2
+    if match_name.startswith("GXe"):
+        return 3
+    return 4
+
+
+def _prioritize_containment_matches(
+    matches,
+    pre_partition_info,
+    ptfe_face_names,
+    electrode_names,
+    split_bases,
+):
     prioritized = list(dict.fromkeys(matches))
     if len(prioritized) <= 1:
-        return prioritized, []
+        return prioritized, [], None
 
-    xenon_bulk = {"GXe_0", "LXe_0"}
-    non_xenon = [name for name in prioritized if name not in xenon_bulk]
-    dropped = [name for name in prioritized if name in xenon_bulk]
-    if non_xenon:
-        prioritized = non_xenon
-    else:
-        dropped = []
+    priority_by_name = {
+        name: _match_priority(name, ptfe_face_names, electrode_names, split_bases)
+        for name in prioritized
+    }
+    best_priority = min(priority_by_name.values())
+    dropped = [name for name in prioritized if priority_by_name[name] > best_priority]
+    prioritized = [name for name in prioritized if priority_by_name[name] == best_priority]
 
     prioritized.sort(key=lambda name: (_match_area(name, pre_partition_info), name))
-    return prioritized, dropped
+    return prioritized, dropped, best_priority
 
 
 def rename_partition_faces_by_containment(
@@ -1662,10 +1680,16 @@ def rename_partition_faces_by_containment(
             unresolved.append((idx, current_name, "no containment match"))
             continue
 
-        matches, dropped_matches = _prioritize_containment_matches(matches, pre_partition_info)
+        matches, dropped_matches, best_priority = _prioritize_containment_matches(
+            matches,
+            pre_partition_info,
+            ptfe_face_names,
+            electrode_names,
+            split_bases,
+        )
         if dropped_matches:
             print(
-                f"[containment info] idx {idx}: dropping xenon bulk matches {dropped_matches}; "
+                f"[containment info] idx {idx}: dropping lower-priority matches {dropped_matches}; "
                 f"keeping prioritized matches {matches}"
             )
         elif len(matches) > 1:

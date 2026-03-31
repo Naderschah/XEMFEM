@@ -507,9 +507,18 @@ try:
     split_bases = {"FieldShapingRings", "FieldShapingGuard"}
     total_partition_subs = partition.result().numberOfSubs()
     pre_partition = {i.name(): [get_area(i, Cryostat_doc), *center_of_weight(Cryostat_doc,i)] for i in pre_partition_faces if i is not None}
+    pre_partition_non_xenon = {
+        name: rec
+        for name, rec in pre_partition.items()
+        if not name.startswith("GXe") and not name.startswith("LXe")
+    }
     post_partition = {partition.result().subResult(i).name(): [get_area(partition.result().subResult(i), Cryostat_doc), *center_of_weight(Cryostat_doc,partition.result().subResult(i))] for i in range(total_partition_subs)}
     if not manual_only:
-        names_in_partition, renamed_cnt = match_and_rename_partition_faces(partition, pre_partition, post_partition)
+        names_in_partition, renamed_cnt = match_and_rename_partition_faces(
+            partition,
+            pre_partition_non_xenon,
+            post_partition,
+        )
         print(f"[naming] center/area step named {renamed_cnt} objects ({len(names_in_partition)}/{total_partition_subs} total named)")
     else:
         names_in_partition, renamed_cnt = [], 0
