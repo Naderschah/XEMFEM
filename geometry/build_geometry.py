@@ -315,6 +315,68 @@ def _partition_subresults_matching_component_bases(partition_result, component_b
     return matches
 
 
+def _logical_partition_name(partition_name):
+    return re.sub(r"_part(?:_\d+_(?:manual|auto))?$", "", partition_name)
+
+
+def _electrode_group_for_partition_name(partition_name, electrode_names, split_bases):
+    logical_name = _logical_partition_name(partition_name)
+    for base in electrode_names:
+        if base == "shrinkage_factor":
+            continue
+        if base in split_bases:
+            m = re.match(rf"^{re.escape(base)}_?(\d+)(?:_\d+(?:_\d+)?)?$", logical_name)
+            if m:
+                return f"{base}{m.group(1)}"
+        elif re.match(rf"^{re.escape(base)}(?:_\d+(?:_\d+)?)?$", logical_name):
+            return base
+    return None
+
+
+def _final_partition_group_assignments(partition_result, ptfe_names, electrode_names, split_bases):
+    priority_order = {"electrode": 0, "PTFE": 1, "LXe": 2, "GXe": 3}
+    assignments = {
+        "electrodes": {},
+        "PTFE": [],
+        "LXe": [],
+        "GXe": [],
+    }
+
+    for i in range(partition_result.numberOfSubs()):
+        name = partition_result.subResult(i).name()
+        if "partition" in name.lower():
+            continue
+
+        matches = []
+        electrode_key = _electrode_group_for_partition_name(name, electrode_names, split_bases)
+        if electrode_key is not None:
+            matches.append(("electrode", electrode_key))
+        if any(_partition_name_matches_component_base(name, base) for base in ptfe_names):
+            matches.append(("PTFE", None))
+        if _partition_name_matches_component_base(name, "LXe"):
+            matches.append(("LXe", None))
+        if _partition_name_matches_component_base(name, "GXe"):
+            matches.append(("GXe", None))
+
+        if not matches:
+            continue
+
+        matches.sort(key=lambda item: priority_order[item[0]])
+        chosen_kind, chosen_key = matches[0]
+        if len(matches) > 1:
+            print(
+                f"[group priority] '{name}' matched multiple group buckets {matches}; "
+                f"keeping {chosen_kind}"
+            )
+
+        if chosen_kind == "electrode":
+            assignments["electrodes"].setdefault(chosen_key, []).append(name)
+        else:
+            assignments[chosen_kind].append(name)
+
+    return assignments
+
+
 def _vertical_edge_records_for_face_result(face_result, tol):
     res, sub = face_result.resultSubShapePair()
     face_shape = sub
@@ -548,16 +610,16 @@ try:
             legacy_ptfe_wall_name_for_charge_buildup,
         )
 
-    ## Make Name Lists for submesh groups 
-    GXe_post_part_names = [i for i in names_in_partition if "GXe" in i]
-    LXe_post_part_names = [i for i in names_in_partition if "LXe" in i]
     ptfe_names = list(ptfe_sketches.keys())
-    PTFE_post_part_names = []
-    for n in names_in_partition:
-        for base in ptfe_names:
-            if _partition_name_matches_component_base(n, base):
-                PTFE_post_part_names.append(n)
-                break
+    final_group_assignments = _final_partition_group_assignments(
+        partition.result(),
+        ptfe_names,
+        electrode_names,
+        split_bases,
+    )
+    GXe_post_part_names = list(dict.fromkeys(final_group_assignments["GXe"]))
+    LXe_post_part_names = list(dict.fromkeys(final_group_assignments["LXe"]))
+    PTFE_post_part_names = list(dict.fromkeys(final_group_assignments["PTFE"]))
     #---------- Make meshing groups
     GXe_faces = [model.selection("FACE", name) for name in GXe_post_part_names]
     GXe_group = model.addGroup(Cryostat_doc, "FACE", GXe_faces)
@@ -578,25 +640,10 @@ try:
     super_group.setName("Super_Meshing")
     super_group.result().setName("Super_Meshing")
     # -------  Boundary Condition Groups
-    Electrode_post_part_by_base = {}
-    for n in names_in_partition:
-        matched = False
-        for base in electrode_names:
-            if base in split_bases: 
-                # Branch for field shaping that need individual BCs 
-                m = re.match(rf"^{re.escape(base)}_?(\d+)(?:_\d+(?:_\d+)?)?_part(?:_\d+_(?:manual|auto))?$", n)
-                if m:
-                    nr = m.group(1)
-                    key = f"{base}{nr}"
-                    Electrode_post_part_by_base.setdefault(key, []).append(n)
-                    matched = True
-                    break
-            elif base != 'shrinkage_factor':
-                # Normal rule: optional synthetic face suffix after the base name.
-                if re.match(rf"^{re.escape(base)}(?:_\d+(?:_\d+)?)?_part(?:_\d+_(?:manual|auto))?$", n):
-                    Electrode_post_part_by_base.setdefault(base, []).append(n)
-                    matched = True
-                    break
+    Electrode_post_part_by_base = {
+        key: list(dict.fromkeys(value))
+        for key, value in final_group_assignments["electrodes"].items()
+    }
     electrode_grps = []
     for electrode in Electrode_post_part_by_base.keys():
         selec_names = Electrode_post_part_by_base[electrode]
