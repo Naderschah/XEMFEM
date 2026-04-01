@@ -203,6 +203,8 @@ ignore_components:
 #         path: "/abs/path/to/fix.json"
 # Optional:
 #   output_name: "replacement_stem"
+#   replace_index_with_line: 8
+#   replace_indices_with_lines: [8, 11]
 #   slices:
 #     - "^slice_022\\.50deg$"
 replacements:
@@ -220,6 +222,10 @@ replacements:
     source: "XENTTPCAWarmPart087Part087_70"
     slices:
       - "^slice_037\\.50deg$"
+  - target: "XENTTPCDNewAnodePart4794Part4794_1"
+    replace_index_with_line: 8
+    slices:
+      - "^slice_022\\.50deg$"
 
 
 # Material classification for the generated slice Python.

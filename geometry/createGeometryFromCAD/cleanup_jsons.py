@@ -655,6 +655,64 @@ def _load_component_from_source(source, all_files, in_dir, slice_input_scale, sl
   raise ValueError(f"unsupported replacement source: {source!r}")
 
 
+def _replacement_line_indices(rule):
+  indexes = []
+
+  single = rule.get("replace_index_with_line")
+  if single is not None:
+    indexes.append(single)
+
+  many = rule.get("replace_indices_with_lines")
+  if many is not None:
+    if not isinstance(many, list):
+      raise ValueError("replace_indices_with_lines must be a list: %r" % (rule,))
+    indexes.extend(many)
+
+  out = []
+  for idx in indexes:
+    if not isinstance(idx, int):
+      raise ValueError("line replacement index must be an integer: %r in %r" % (idx, rule))
+    if idx < 0:
+      raise ValueError("line replacement index must be >= 0: %r in %r" % (idx, rule))
+    out.append(idx)
+  return list(dict.fromkeys(out))
+
+
+def _replace_component_indices_with_lines(component, indexes, context_name):
+  if not indexes:
+    return component
+  if not isinstance(component, dict):
+    raise ValueError("cannot apply line replacements to non-component %r" % (context_name,))
+
+  pts = component.get("pts")
+  if not isinstance(pts, list):
+    raise ValueError("component %s has no pts list for line replacement" % (context_name,))
+
+  new_pts = copy.deepcopy(pts)
+  for idx in indexes:
+    if idx >= len(new_pts):
+      raise IndexError(
+        "line replacement index %d out of range for %s (pts=%d)"
+        % (idx, context_name, len(new_pts))
+      )
+    row = new_pts[idx]
+    if (
+      not isinstance(row, list)
+      or len(row) < 3
+      or not isinstance(row[1], (int, float))
+      or not isinstance(row[2], (int, float))
+    ):
+      raise ValueError(
+        "cannot replace pts[%d] with line for %s; entry is not a coordinate instruction: %r"
+        % (idx, context_name, row)
+      )
+    new_pts[idx] = ["line", float(row[1]), float(row[2])]
+
+  out = copy.deepcopy(component)
+  out["pts"] = new_pts
+  return out
+
+
 def apply_replacements(all_files, file_meta, replacement_rules, slice_name, in_dir, slice_input_scale, slice_offset_y):
   if not replacement_rules:
     return all_files, file_meta, []
@@ -675,11 +733,20 @@ def apply_replacements(all_files, file_meta, replacement_rules, slice_name, in_d
     missing = [name for name in targets if name not in all_files]
     if missing:
       raise KeyError("replacement targets missing from slice %s: %s" % (slice_name, ", ".join(sorted(missing))))
+    line_replace_indexes = _replacement_line_indices(rule)
     source = rule.get("source")
-    if source is None:
+    if source is None and not line_replace_indexes:
       raise ValueError(f"replacement rule missing source: {rule!r}")
     output_name = rule.get("output_name") or targets[0]
-    source_component = _load_component_from_source(source, all_files, in_dir, slice_input_scale, slice_offset_y)
+    if source is None:
+      if len(targets) != 1:
+        raise ValueError(
+          "replacement rule without source requires exactly one target when using line replacements: %r"
+          % (rule,)
+        )
+      source_component = copy.deepcopy(all_files[targets[0]])
+    else:
+      source_component = _load_component_from_source(source, all_files, in_dir, slice_input_scale, slice_offset_y)
     target_min_x = min(file_meta[name]["min_x"] for name in targets)
     target_min_y = min(file_meta[name]["min_y"] for name in targets)
     source_min_x, source_min_y = _component_anchor(source_component)
@@ -687,6 +754,11 @@ def apply_replacements(all_files, file_meta, replacement_rules, slice_name, in_d
       source_component,
       dx=target_min_x - source_min_x,
       dy=target_min_y - source_min_y,
+    )
+    replacement_component = _replace_component_indices_with_lines(
+      replacement_component,
+      line_replace_indexes,
+      output_name,
     )
     for name in targets:
       all_files.pop(name, None)
@@ -700,7 +772,12 @@ def apply_replacements(all_files, file_meta, replacement_rules, slice_name, in_d
     applied.append({
       "output_name": output_name,
       "targets": targets,
-      "source": source if isinstance(source, str) else source.get("path"),
+      "source": (
+        source
+        if isinstance(source, str)
+        else (source.get("path") if isinstance(source, dict) else None)
+      ),
+      "line_replacements": line_replace_indexes,
     })
   return all_files, file_meta, applied
 
