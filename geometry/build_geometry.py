@@ -41,7 +41,7 @@ external_boundary_name = config["mesh"].get("external_boundary_name", "BC_Cryost
 split_axis_boundary = config["mesh"].get("split_axis_boundary", is_tpc)
 axis_boundary_name = config["mesh"].get("axis_boundary_name", "BC_r0")
 axis_boundary_tol = float(config["mesh"].get("axis_boundary_tol", 1e-9))
-
+min_ptfe_area = 1e-5 # TODO Config entry
 # If it looks like a file, strip filename
 if '.' in mesh_path.split('/')[-1]:
     mesh_path = os.path.dirname(mesh_path)
@@ -484,7 +484,7 @@ try:
     ElectrodeGrp = None
     GXeGrp = None
     LXeGrp = None
-    if len(ptfe_face_map) > 0:      PTFEGrp = makeGroupByName(Cryostat_doc, "PTFE", ptfe_face_map) 
+    if len(ptfe_face_map) > 0:      PTFEGrp = makeGroupByName(Cryostat_doc, "PTFE", {i:ptfe_face_map[i] for i in ptfe_face_map.keys() if get_area(ptfe_face_map[i], Cryostat_doc) > min_ptfe_area}) 
     if len(electrode_face_map) > 0: ElectrodeGrp = makeGroupByName(Cryostat_doc, "Electrodes", electrode_face_map) 
     if xenon_face_map["GXe_0"]:      GXeGrp = makeGroupByName(Cryostat_doc, "GXe", {"GXe_0":xenon_face_map["GXe_0"]})
     if xenon_face_map["LXe_0"]:      LXeGrp = makeGroupByName(Cryostat_doc, "LXe", {"LXe_0":xenon_face_map["LXe_0"]})
