@@ -38,11 +38,6 @@ struct GeometryConfigResolution
     std::string source;
 };
 
-struct VoltageApplyResult
-{
-    std::set<std::string> matched_boundaries;
-};
-
 static std::filesystem::path resolve_against_dir(const std::filesystem::path &maybe_relative,
                                                  const std::filesystem::path &base_dir)
 {
@@ -1180,165 +1175,6 @@ static bool has_nonempty_boundary_group(const YAML::Node &boundaries,
     return (b && b.IsMap());
 }
 
-static std::optional<std::string>
-resolve_boundary_name_best_effort(const std::string &raw_key,
-                                  const YAML::Node &boundaries,
-                                  std::string &error_msg)
-{
-    YAML::Node exact = boundaries[raw_key];
-    if (exact && exact.IsMap()) {
-        return raw_key;
-    }
-
-    const std::string raw_norm = canonicalize_boundary_key(raw_key);
-    if (raw_norm.empty()) {
-        error_msg = "voltage_config.values key '" + raw_key +
-                    "' is empty after normalization.";
-        return std::nullopt;
-    }
-
-    std::vector<std::string> norm_match;
-    std::vector<std::string> fuzzy_match;
-
-    for (auto it = boundaries.begin(); it != boundaries.end(); ++it) {
-        const std::string bname = it->first.as<std::string>();
-        const std::string bnorm = canonicalize_boundary_key(bname);
-        if (bnorm == raw_norm) {
-            norm_match.push_back(bname);
-            continue;
-        }
-
-        if (!bnorm.empty() &&
-            (bnorm.find(raw_norm) != std::string::npos ||
-             raw_norm.find(bnorm) != std::string::npos)) {
-            fuzzy_match.push_back(bname);
-        }
-    }
-
-    if (norm_match.size() == 1) {
-        return norm_match.front();
-    }
-    if (norm_match.size() > 1) {
-        std::sort(norm_match.begin(), norm_match.end());
-        error_msg = "voltage_config.values key '" + raw_key +
-                    "' is ambiguous after normalization; candidates: " +
-                    join_list(norm_match);
-        return std::nullopt;
-    }
-
-    if (fuzzy_match.size() == 1) {
-        return fuzzy_match.front();
-    }
-    if (fuzzy_match.size() > 1) {
-        std::sort(fuzzy_match.begin(), fuzzy_match.end());
-        error_msg = "voltage_config.values key '" + raw_key +
-                    "' is ambiguous in fuzzy matching; candidates: " +
-                    join_list(fuzzy_match);
-        return std::nullopt;
-    }
-
-    if (raw_norm == "AXIS") {
-        error_msg =
-            "voltage_config.values key '" + raw_key +
-            "' did not match any boundary. Expected boundary group 'BC_Axis' is missing "
-            "from loaded geometry config.";
-        return std::nullopt;
-    }
-    if (raw_norm == "WALLCHARGE") {
-        error_msg =
-            "voltage_config.values key '" + raw_key +
-            "' did not match any boundary. Expected boundary group 'BC_WallCharge' is missing "
-            "from loaded geometry config.";
-        return std::nullopt;
-    }
-
-    error_msg = "voltage_config.values key '" + raw_key +
-                "' did not match any boundary (normalized as '" + raw_norm + "').";
-    return std::nullopt;
-}
-
-static VoltageApplyResult apply_voltage_values(YAML::Node &root)
-{
-    VoltageApplyResult result;
-    YAML::Node vcfg = get_voltage_cfg_node(root);
-    if (!vcfg) {
-        return result;
-    }
-    if (!vcfg.IsMap()) {
-        throw std::runtime_error("voltage_config must be a mapping.");
-    }
-
-    const YAML::Node values = vcfg["values"];
-    if (!values) {
-        return result;
-    }
-    if (!values.IsMap()) {
-        throw std::runtime_error("voltage_config.values must be a mapping of boundary -> voltage.");
-    }
-
-    YAML::Node boundaries = root["boundaries"];
-    if (!boundaries || !boundaries.IsMap()) {
-        throw std::runtime_error(
-            "voltage_config.values provided but boundaries mapping is missing. "
-            "Provide mesh.geometry_config or boundaries.");
-    }
-
-    std::vector<std::string> unresolved_errors;
-    std::map<std::string, std::string> matched_by_key;
-
-    for (auto it = values.begin(); it != values.end(); ++it) {
-        const std::string raw_key = it->first.as<std::string>();
-        double v = 0.0;
-        try {
-            v = it->second.as<double>();
-        } catch (...) {
-            throw std::runtime_error(
-                "voltage_config.values['" + raw_key + "'] must be numeric.");
-        }
-
-        std::string resolve_error;
-        const auto resolved_name =
-            resolve_boundary_name_best_effort(raw_key, boundaries, resolve_error);
-        if (!resolved_name) {
-            unresolved_errors.push_back(resolve_error);
-            continue;
-        }
-
-        const auto prev_it = matched_by_key.find(*resolved_name);
-        if (prev_it != matched_by_key.end()) {
-            unresolved_errors.push_back(
-                "voltage_config.values has multiple entries resolving to boundary '" +
-                *resolved_name + "': '" + prev_it->second + "' and '" + raw_key + "'.");
-            continue;
-        }
-        matched_by_key[*resolved_name] = raw_key;
-
-        YAML::Node bnd = boundaries[*resolved_name];
-        if (!bnd || !bnd.IsMap()) {
-            throw std::runtime_error("Internal error: resolved boundary '" +
-                                     *resolved_name + "' is not a mapping.");
-        }
-
-        if (!bnd["type"]) {
-            bnd["type"] = "dirichlet";
-        }
-        bnd["value"] = v;
-        result.matched_boundaries.insert(*resolved_name);
-    }
-
-    if (!unresolved_errors.empty()) {
-        std::sort(unresolved_errors.begin(), unresolved_errors.end());
-        std::ostringstream oss;
-        oss << "voltage_config.values matching failed:";
-        for (const auto &e : unresolved_errors) {
-            oss << "\n  - " << e;
-        }
-        throw std::runtime_error(oss.str());
-    }
-
-    return result;
-}
-
 static std::set<std::string>
 collect_fieldcage_auto_assigned_boundaries(const YAML::Node &root)
 {
@@ -1666,7 +1502,8 @@ static int run_sim(Config init_cfg, ConfigDocument config_doc) {
     const bool sweeps_modify_mesh_inputs =
         sweep_mode && sweeps_touch_mesh_inputs(sweeps);
 
-    if (init_cfg.mesh.amr.enable && (!sweep_mode || !sweeps_modify_mesh_inputs))
+    if (!init_cfg.debug.dry_run &&
+        init_cfg.mesh.amr.enable && (!sweep_mode || !sweeps_modify_mesh_inputs))
     {
         std::cout << "[MAIN] Producing AMR Mesh" << std::endl;
         std::string mesh_path = PrecomputeAMRMesh(init_cfg);
@@ -1674,7 +1511,8 @@ static int run_sim(Config init_cfg, ConfigDocument config_doc) {
         config_doc.SetPath("mesh.path", YAML::Node(mesh_path), true);
         used_precomputed_amr_mesh = true;
     }
-    else if (init_cfg.mesh.amr.enable && sweep_mode && sweeps_modify_mesh_inputs)
+    else if (!init_cfg.debug.dry_run &&
+             init_cfg.mesh.amr.enable && sweep_mode && sweeps_modify_mesh_inputs)
     {
         std::cout << "[MAIN] AMR precompute skipped: sweep modifies mesh inputs; "
                      "AMR will run per sweep point" << std::endl;
@@ -1860,14 +1698,22 @@ int main(int argc, char** argv)
     // ---------------------- Load Config ------------------------------
     const auto exe_dir_opt = detect_executable_dir(argv[0]);
     ConfigDocument config_doc = ConfigDocument::Load(config_path_str, MPI_COMM_WORLD);
-    maybe_expand_geometry_sweep(
-        config_doc,
-        std::filesystem::absolute(std::filesystem::path(config_path_str)).parent_path(),
-        exe_dir_opt);
-    hydrate_config_document_for_runtime(
-        config_doc,
-        std::filesystem::path(config_path_str),
-        exe_dir_opt);
+    if (cmd != "metrics")
+    {
+        maybe_expand_geometry_sweep(
+            config_doc,
+            std::filesystem::absolute(std::filesystem::path(config_path_str)).parent_path(),
+            exe_dir_opt);
+        hydrate_config_document_for_runtime(
+            config_doc,
+            std::filesystem::path(config_path_str),
+            exe_dir_opt);
+    }
+    else if (rank == 0)
+    {
+        std::cout << "[METRICS] Using saved run artifacts; geometry generation "
+                     "and simulation setup are disabled.\n";
+    }
     Config init_cfg = config_doc.ToConfig(cmd);
     // MPI Set Up
     parallel::init_environment(init_cfg);
