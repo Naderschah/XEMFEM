@@ -121,4 +121,3 @@ inline double ComputeGlobalMinEdgeLength(mfem::ParMesh &mesh, bool debug)
 void DumpElectronPathsCSV(const Config                          &cfg,
                           const std::vector<ElectronTraceResult> &out_results);
 
-                          

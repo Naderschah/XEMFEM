@@ -17,6 +17,7 @@ FIXME  Lots of dead code here
 #include <optional>
 #include <functional>
 #include <string>
+#include <cstdint>
 
 #if HAVE_VTK
     #include <vtkSmartPointer.h>
@@ -120,6 +121,12 @@ struct BoostTraceContext
 // ----------------------------
 struct ElectronFieldLineTracer
 {
+    struct Statistics
+    {
+        std::uint64_t electron_count = 0;
+        double elapsed_seconds = 0.0;
+    };
+
     using TraceFn = std::function<void(
         const Seeds &seeds,
         std::vector<ElectronTraceResult> &out_results,
@@ -150,6 +157,11 @@ struct ElectronFieldLineTracer
         std::optional<VTKTraceContext>   vtk;
     #endif
     std::optional<MPITraceContext>   mpitracer;
+    std::optional<ReplicatedMPITraceContext> replicated_mpitracer;
+
+    // Cumulative over all Trace calls since Setup/Reset. This matters for CIV
+    // strategies that trace several seed batches with one tracer.
+    mutable Statistics statistics;
 
     // Hot-path callable:
     TraceFn trace_fn;
@@ -170,11 +182,14 @@ struct ElectronFieldLineTracer
                bool save_paths,
                const double *z_max_overrides = nullptr) const;
 
+    const Statistics &GetStatistics() const { return statistics; }
+
 private:
     void BuildBOOST_(bool debug);
     #if HAVE_VTK 
         void BuildVTK_(bool axisymmetric, bool debug);
     #endif
     void BuildMPITracer_(bool debug);
+    void BuildReplicatedMPITracer_(bool debug);
     void SelectProvider_(const std::string &provider, bool axisymmetric);
 };
