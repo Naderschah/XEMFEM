@@ -19,6 +19,22 @@ static bool IsChargeInsensitive(const ElectronTraceResult &res)
     return (res.exit_code == ElectronExitCode::HitWall);
 }
 
+static double GridSampleRMin(const Config &cfg)
+{
+    return std::isfinite(cfg.civ_params.sample_r_min)
+        ? cfg.civ_params.sample_r_min
+        : cfg.tracing_params.r_min;
+}
+
+static double FullCivRegionVolume(const Config &cfg)
+{
+    const auto &tp = cfg.tracing_params;
+    const double dz = tp.z_max - tp.z_min;
+    if (cfg.solver.axisymmetric)
+        return M_PI * (tp.r_max * tp.r_max - tp.r_min * tp.r_min) * dz;
+    return (tp.r_max - tp.r_min) * dz;
+}
+
 static Seeds ExtractCivSeeds(const Config &cfg, const SimulationResult &result)
 {
     using namespace mfem;
@@ -97,7 +113,7 @@ static Seeds ExtractCivFixedGridSeeds(const Config            &cfg,
 
     const auto &tp = cfg.tracing_params;
 
-    const double r0 = tp.r_min;
+    const double r0 = GridSampleRMin(cfg);
     const double r1 = tp.r_max;
     const double z0 = tp.z_min;
     const double z1 = tp.z_max;
@@ -658,7 +674,8 @@ double IntegrateCIVFromBoundary(const Config &cfg,
 
 // -------------------- Random Sample -----------------------
 double ComputeCIV_RandomSample(const Config            &cfg,
-                               const SimulationResult &result)
+                               const SimulationResult &result,
+                               ElectronFieldLineTracer::Statistics *trace_stats)
 {
     using namespace mfem;
     MPI_Comm comm = result.mesh->GetComm();
@@ -705,11 +722,13 @@ double ComputeCIV_RandomSample(const Config            &cfg,
     if (cfg.debug.debug) { std::cout << "Traced " << seeds.positions.size() << " seed points" << std::endl;}
     double civ = (V_total > 0.0) ? (V_civ / V_total) : 0.0;
     MPI_Bcast(&civ, 1, MPI_DOUBLE, 0, comm);
+    if (trace_stats) { *trace_stats = tracer.GetStatistics(); }
     return civ;
 }
 // --------------------------  Fixed Grid ---------------------------
 double ComputeCIV_FixedGrid(const Config &cfg,
-                            const SimulationResult &result)
+                            const SimulationResult &result,
+                            ElectronFieldLineTracer::Statistics *trace_stats)
 {
     MPI_Comm comm = result.mesh->GetComm();
     int rank = 0, size = 1;
@@ -782,13 +801,15 @@ double ComputeCIV_FixedGrid(const Config &cfg,
             throw std::runtime_error(oss.str());
         }
 
-        double V_total = 0.0;
+        // The grid may deliberately omit an inner seed region known not to
+        // contribute to CIV. Normalize to the complete tracing volume so the
+        // reported value remains a full-detector CIV fraction.
+        const double V_total = FullCivRegionVolume(cfg);
         double V_civ   = 0.0;
 
         for (std::size_t i = 0; i < seeds.positions.size(); ++i)
         {
             const double dV = seeds.volumes[i];
-            V_total += dV;
             if (IsChargeInsensitive(trace_results[i])) { V_civ += dV; }
         }
 
@@ -797,6 +818,7 @@ double ComputeCIV_FixedGrid(const Config &cfg,
 
     // Broadcast result so all ranks return same value.
     MPI_Bcast(&civ, 1, MPI_DOUBLE, 0, comm);
+    if (trace_stats) { *trace_stats = tracer.GetStatistics(); }
     return civ;
 }
 
@@ -820,7 +842,8 @@ static inline void BcastIntVector(MPI_Comm comm,
     }
 }
 double ComputeCIV_AdaptiveGrid(const Config &cfg,
-                               const SimulationResult &result)
+                               const SimulationResult &result,
+                               ElectronFieldLineTracer::Statistics *trace_stats)
 {
     MPI_Comm comm = result.mesh->GetComm();
     int rank = 0, size = 1;
@@ -980,13 +1003,15 @@ double ComputeCIV_AdaptiveGrid(const Config &cfg,
         civ_fraction = IntegrateCIVFromBoundary(cfg, result, final_level, leftmost_final);
     }
     MPI_Bcast(&civ_fraction, 1, MPI_DOUBLE, 0, comm);
+    if (trace_stats) { *trace_stats = tracer.GetStatistics(); }
     return civ_fraction;
 }
 
 
 
 double ComputeCIV_RowSweep(const Config &cfg,
-                           const SimulationResult &result)
+                           const SimulationResult &result,
+                           ElectronFieldLineTracer::Statistics *trace_stats)
 {
     MPI_Comm comm = result.mesh->GetComm();
     int rank = 0, size = 1;
@@ -1117,5 +1142,6 @@ double ComputeCIV_RowSweep(const Config &cfg,
     }
 
     MPI_Bcast(&civ, 1, MPI_DOUBLE, 0, comm);
+    if (trace_stats) { *trace_stats = tracer.GetStatistics(); }
     return civ;
 }

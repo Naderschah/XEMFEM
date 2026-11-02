@@ -41,6 +41,7 @@ struct ElectricFieldCoeff : public mfem::VectorCoefficient
     {
         T.SetIntPoint(&ip);
         phi.GetGradient(T, V);
+        V *= sign;
     }
 };
 
@@ -1290,27 +1291,6 @@ static void TraceElectronFieldLinesInnerPreparedBOOST(
     }
 #endif
 // --------------------------- Tracing Object holders
-// 2) Context build: identical mesh prep + FindPointsGSLIB setup as BOOST
-void MPITraceContext::Build(mfem::ParMesh &mesh, bool debug)
-{
-    h_ref = ComputeGlobalMinEdgeLength(mesh, debug);
-
-    // Ensure nodes exist (same as BOOST)
-    if (mesh.GetNodes() == nullptr)
-    {
-        const int order = 1;
-        const bool discont = false;
-        const int space_dim = mesh.SpaceDimension();
-        const int ordering = mfem::Ordering::byVDIM;
-        mesh.SetCurvature(order, discont, space_dim, ordering);
-    }
-
-    finder = std::make_unique<mfem::FindPointsGSLIB>(mesh.GetComm());
-    finder->Setup(mesh);
-    finder->SetDefaultInterpolationValue(std::numeric_limits<double>::quiet_NaN());
-    // THis is averaging across MPI partitions (each side has a different value due to the polynomial representation)
-    finder->SetL2AvgType(mfem::FindPointsGSLIB::AvgType::ARITHMETIC);
-}
 void BoostTraceContext::Build(mfem::ParMesh &mesh, bool debug)
 {
     const int sdim = mesh.SpaceDimension();
@@ -1367,6 +1347,8 @@ void ElectronFieldLineTracer::Reset()
     trace_fn = nullptr;
 
     mpitracer.reset();
+    replicated_mpitracer.reset();
+    statistics = Statistics{};
 }
 void ElectronFieldLineTracer::Setup(const SimulationResult &result,
                                     const ElectronTraceParams &tp,
@@ -1383,41 +1365,71 @@ void ElectronFieldLineTracer::Setup(const SimulationResult &result,
     phi = result.V.get();
     MFEM_VERIFY(phi, "SimulationResult.V is null");
 
-    const int dim = pmesh->SpaceDimension();
-
-    const mfem::FiniteElementSpace *fes_phi = phi->FESpace();
-    MFEM_VERIFY(fes_phi, "phi has no FESpace");
-    const int order = fes_phi->GetMaxElementOrder();
-
-    // Build vector FE space for E
-    if (!tp.use_l2_electric_field)
+    // Build E on the original distributed mesh for every provider.  In the
+    // ram-expensive MPI path this is important: the discrete gradient is
+    // assembled and applied collectively here, before the resulting field is
+    // gathered and copied to the private tracing meshes.
     {
-        fec_vec = std::make_unique<mfem::H1_FECollection>(order, dim);
-    }
-    else
-    {
-        fec_vec = std::make_unique<mfem::L2_FECollection>(order, dim);
-    }
-    fes_vec = std::make_unique<mfem::ParFiniteElementSpace>(
-        pmesh, fec_vec.get(), dim, mfem::Ordering::byVDIM);
+        const int dim = pmesh->SpaceDimension();
+        auto *fes_phi = dynamic_cast<mfem::ParFiniteElementSpace*>(
+            phi->FESpace());
+        MFEM_VERIFY(fes_phi, "phi has no FESpace");
+        const int order = fes_phi->GetFE(0)->GetOrder();
 
-    E_gf_owned = std::make_unique<mfem::ParGridFunction>(fes_vec.get());
-    *E_gf_owned = 0.0;
+        if (tp.use_l2_electric_field)
+        {
+            // Match ElectricFieldPostprocessor exactly: H1(p) -> vector
+            // L2(p-1) through the assembled discrete gradient.
+            fec_vec = std::make_unique<mfem::L2_FECollection>(
+                std::max(order - 1, 0), dim);
+            fes_vec = std::make_unique<mfem::ParFiniteElementSpace>(
+                pmesh, fec_vec.get(), dim);
+            E_gf_owned = std::make_unique<mfem::ParGridFunction>(
+                fes_vec.get());
+            mfem::DiscreteLinearOperator gradient(fes_phi, fes_vec.get());
+            gradient.AddDomainInterpolator(new mfem::GradientInterpolator);
+            gradient.Assemble();
+            gradient.Finalize();
+            gradient.Mult(*phi, *E_gf_owned);
+            *E_gf_owned *= -1.0;
+        }
+        else
+        {
+            fec_vec = std::make_unique<mfem::H1_FECollection>(order, dim);
+            fes_vec = std::make_unique<mfem::ParFiniteElementSpace>(
+                pmesh, fec_vec.get(), dim, mfem::Ordering::byVDIM);
+            E_gf_owned = std::make_unique<mfem::ParGridFunction>(
+                fes_vec.get());
+            *E_gf_owned = 0.0;
+            ElectricFieldCoeff E_coeff(*phi, -1.0);
+            E_gf_owned->ProjectCoefficient(E_coeff);
+        }
+        E_gf_owned->ExchangeFaceNbrData();
+        E_gf = E_gf_owned.get();
+    }
 
-    ElectricFieldCoeff E_coeff(*phi, -1.0);
-    E_gf_owned->ProjectCoefficient(E_coeff);
-    
     phi->ExchangeFaceNbrData();
-    E_gf_owned->ExchangeFaceNbrData();
-
-    E_gf = E_gf_owned.get();
 
     params = tp;
     cfg    = cfg_;
     if (params.provider == "MPITracer")
     {
         // MPITracer is intended for multi-rank; allow size==1 too (for debugging).
-        BuildMPITracer_(cfg.debug.debug);
+        if (params.ram_expensive)
+        {
+            BuildReplicatedMPITracer_(cfg.debug.debug);
+
+            // ReplicatedMPITraceContext now owns the complete field used for
+            // tracing.  The distributed copy was only needed to construct it.
+            E_gf = nullptr;
+            E_gf_owned.reset();
+            fes_vec.reset();
+            fec_vec.reset();
+        }
+        else
+        {
+            BuildMPITracer_(cfg.debug.debug);
+        }
         SelectProvider_(params.provider, axisymmetric);
     }
     else if (params.provider == "BOOST")
@@ -1457,7 +1469,13 @@ void ElectronFieldLineTracer::Trace(const Seeds &seeds,
             const double *z_max_overrides) const
 {
     MFEM_VERIFY((bool)trace_fn, "SelectProvider(...) must be called before Trace().");
+    const auto trace_start = std::chrono::steady_clock::now();
     trace_fn(seeds, out_results, axisymmetric, save_paths, z_max_overrides);
+    const auto trace_stop = std::chrono::steady_clock::now();
+    statistics.electron_count +=
+        static_cast<std::uint64_t>(seeds.positions.size());
+    statistics.elapsed_seconds +=
+        std::chrono::duration<double>(trace_stop - trace_start).count();
     // Misc things
     PrintExitConditionSummary(cfg, seeds, out_results);
     DumpElectronPathsCSV(cfg, out_results);
@@ -1488,13 +1506,32 @@ void ElectronFieldLineTracer::BuildMPITracer_(bool debug)
     mpitracer.emplace();
     mpitracer->Build(*pmesh, debug);
 }
+void ElectronFieldLineTracer::BuildReplicatedMPITracer_(bool debug)
+{
+    if (!pmesh || !E_gf)
+    {
+        throw std::logic_error(
+            "BuildReplicatedMPITracer_: mesh/electric field not attached.");
+    }
+    replicated_mpitracer.emplace();
+    replicated_mpitracer->Build(*pmesh, *E_gf, debug);
+}
 void ElectronFieldLineTracer::SelectProvider_(const std::string &provider, bool axisymmetric)
 {   
     if (provider == "MPITracer")
     {
-        if (!mpitracer || !mpitracer->Ready())
+        if (params.ram_expensive)
         {
-            throw std::logic_error("SelectProvider_: MPITracer context not ready.");
+            if (!replicated_mpitracer || !replicated_mpitracer->Ready())
+            {
+                throw std::logic_error(
+                    "SelectProvider_: replicated MPITracer context not ready.");
+            }
+        }
+        else if (!mpitracer || !mpitracer->Ready())
+        {
+            throw std::logic_error(
+                "SelectProvider_: distributed MPITracer context not ready.");
         }
 
         trace_fn = [this](const Seeds &seeds,
@@ -1511,19 +1548,39 @@ void ElectronFieldLineTracer::SelectProvider_(const std::string &provider, bool 
             // z_max_overrides not supported in this provider yet (miniapp-style particles)
             // If you need it later, incorporate per-particle z_max into tags/fields.
 
-            mpitracing::TraceDistributed(
-                *pmesh,
-                *mpitracer->finder,
-                *phi,
-                params,
-                seeds,
-                out_results,
-                mpitracer->h_ref,
-                axisymmetric,
-                /*redistribution_every=*/cfg.tracing_params.redistribution_every, // add to Config
-                /*debug=*/cfg.debug.debug,
-                /*debug_every=*/0,
-                cfg.debug.dumpdata);
+            if (params.ram_expensive)
+            {
+                mpitracing::TraceReplicated(
+                    pmesh->GetComm(),
+                    *replicated_mpitracer->replicated_mesh,
+                    *replicated_mpitracer->finder,
+                    *replicated_mpitracer->replicated_field,
+                    params,
+                    seeds,
+                    out_results,
+                    replicated_mpitracer->h_ref,
+                    axisymmetric,
+                    cfg.tracing_params.redistribution_every,
+                    cfg.debug.printTraceProgress,
+                    cfg.debug.dumpdata);
+            }
+            else
+            {
+                mpitracing::TraceDistributed(
+                    *pmesh,
+                    *mpitracer->finder,
+                    *E_gf,
+                    params,
+                    seeds,
+                    out_results,
+                    mpitracer->h_ref,
+                    axisymmetric,
+                    /*redistribution_every=*/cfg.tracing_params.redistribution_every,
+                    /*debug=*/cfg.debug.debug,
+                    /*debug_every=*/0,
+                    cfg.debug.dumpdata,
+                    /*progress_interval_seconds=*/0.0);
+            }
         };
     }
     else if (provider == "BOOST")

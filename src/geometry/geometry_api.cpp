@@ -869,6 +869,115 @@ private:
       "\n");
   }
 
+  std::vector<int> explicitWallChargeCurves() const {
+    std::vector<int> curves;
+    for(const auto &[curveTag, owners] : finalCurveCandidates_) {
+      if(owners.count(kWallBoundaryName)) curves.push_back(curveTag);
+    }
+    dedup(curves);
+    return curves;
+  }
+
+  void retainInnermostVerticalWallCurves(
+    std::map<std::string, std::vector<int>> &bcCurvesByName,
+    const std::vector<int> &exteriorCurves,
+    const bool requireExplicitProvenance) const {
+    auto itWall = bcCurvesByName.find(kWallBoundaryName);
+    if(itWall == bcCurvesByName.end()) return;
+
+    std::vector<int> candidates = itWall->second;
+    dedup(candidates);
+    if(candidates.empty()) return;
+
+    std::unordered_map<int, CurveBounds> curveBounds;
+    curveBounds.reserve(candidates.size());
+    for(const int curveTag : candidates) {
+      CurveBounds bounds;
+      if(getCurveBounds(curveTag, bounds)) {
+        curveBounds.emplace(curveTag, bounds);
+      }
+    }
+
+    const double scale = estimateCurveCoordinateScale(curveBounds);
+    const double tolX = std::max(1e-7, 5e-6 * scale);
+    const double constantXTol = std::max(tolX, 2e-5 * scale);
+    const double wallTolX = std::max(constantXTol, 2e-4 * scale);
+    const double minVerticalSpan = std::max(10.0 * tolX, 1e-6 * scale);
+    constexpr double minVerticalAspect = 4.0;
+
+    double wallMinX = std::numeric_limits<double>::infinity();
+    for(const int curveTag : candidates) {
+      const auto found = curveBounds.find(curveTag);
+      if(found == curveBounds.end()) continue;
+      if(!isVerticalConstantXCurve(
+           found->second, constantXTol, minVerticalSpan, minVerticalAspect)) {
+        continue;
+      }
+      wallMinX = std::min(wallMinX, representativeX(found->second));
+    }
+
+    std::vector<int> wallCurves;
+    std::vector<int> rejectedCurves;
+    for(const int curveTag : candidates) {
+      const auto found = curveBounds.find(curveTag);
+      if(found != curveBounds.end() && std::isfinite(wallMinX) &&
+         isVerticalConstantXCurve(
+           found->second, constantXTol, minVerticalSpan, minVerticalAspect) &&
+         std::abs(representativeX(found->second) - wallMinX) <= wallTolX) {
+        wallCurves.push_back(curveTag);
+      } else {
+        rejectedCurves.push_back(curveTag);
+      }
+    }
+
+    if(wallCurves.empty()) {
+      throw std::runtime_error(
+        "BC_WallCharge was explicitly identified, but it has no vertical boundary curves.");
+    }
+
+    dedup(wallCurves);
+    itWall->second = std::move(wallCurves);
+    // Only exterior curves need to fall back to the ordinary zero-flux
+    // boundary group. Rejected curves from an explicitly charged material
+    // contour are internal interfaces and must not be exported as unrelated
+    // boundary conditions.
+    std::vector<int> rejectedExteriorCurves;
+    for(const int curveTag : rejectedCurves) {
+      if(std::binary_search(exteriorCurves.begin(), exteriorCurves.end(), curveTag)) {
+        rejectedExteriorCurves.push_back(curveTag);
+      }
+    }
+    if(!rejectedExteriorCurves.empty()) {
+      auto &fallback = bcCurvesByName[kFallbackBoundaryName];
+      fallback.insert(
+        fallback.end(), rejectedExteriorCurves.begin(), rejectedExteriorCurves.end());
+      dedup(fallback);
+    }
+
+    if(requireExplicitProvenance) {
+      for(const int curveTag : itWall->second) {
+        const auto found = finalCurveCandidates_.find(curveTag);
+        if(found == finalCurveCandidates_.end() ||
+           !found->second.count(kWallBoundaryName)) {
+          throw std::runtime_error(
+            "BC_WallCharge selected curve " + std::to_string(curveTag) +
+            " without provenance from the explicitly charged DXF component.");
+        }
+      }
+    }
+
+    debugLog(
+      "[wall selector] charged candidates=",
+      candidates.size(),
+      " retained_inner_vertical=",
+      itWall->second.size(),
+      " rejected=",
+      rejectedCurves.size(),
+      " wall_min_x=",
+      wallMinX,
+      "\n");
+  }
+
   void assignBoundaryOwners(const std::vector<int> &boundaryCurves,
                           std::map<std::string, std::vector<int>> &bcCurvesByName) const {
     bcCurvesByName.clear();
@@ -895,6 +1004,31 @@ private:
       dedup(tags);
     }
     splitAxisAndWallFromFallbackBoundary(bcCurvesByName);
+
+    // A charged PTFE/LXe wall is a material interface, not part of the
+    // exterior boundary of the union of all meshed materials. Recover its
+    // post-fragment curves directly from source provenance. Previously this
+    // step was missing, so the outer detector envelope was silently selected
+    // as BC_WallCharge instead.
+    std::vector<int> explicitWall = explicitWallChargeCurves();
+    const bool hasExplicitWall = !explicitWall.empty();
+    if(hasExplicitWall) {
+      auto existingWall = bcCurvesByName.find(kWallBoundaryName);
+      if(existingWall != bcCurvesByName.end()) {
+        auto &fallback = bcCurvesByName[kFallbackBoundaryName];
+        fallback.insert(
+          fallback.end(), existingWall->second.begin(), existingWall->second.end());
+        dedup(fallback);
+      }
+      bcCurvesByName[kWallBoundaryName] = std::move(explicitWall);
+    }
+
+    std::vector<int> sortedExterior = boundaryCurves;
+    dedup(sortedExterior);
+    retainInnermostVerticalWallCurves(
+      bcCurvesByName,
+      sortedExterior,
+      hasExplicitWall);
   }
 
   void buildComponentRecursive(const Component &component,
@@ -1441,6 +1575,138 @@ static bool identifyFaulty1DSegments() {
     faulty,
     "\n");
   return faulty > 0;
+}
+
+static void validateWallChargeInterfaceMesh() {
+  using NodeId = std::size_t;
+  using Edge = std::pair<NodeId, NodeId>;
+
+  int wallPhysicalTag = -1;
+  std::vector<std::pair<int, int>> physicalGroups;
+  gmsh::model::getPhysicalGroups(physicalGroups, 1);
+  for(const auto &[dim, tag] : physicalGroups) {
+    std::string name;
+    gmsh::model::getPhysicalName(dim, tag, name);
+    if(name == kWallBoundaryName) {
+      if(wallPhysicalTag >= 0) {
+        throw std::runtime_error(
+          "multiple 1D physical groups named BC_WallCharge were generated");
+      }
+      wallPhysicalTag = tag;
+    }
+  }
+  if(wallPhysicalTag < 0) {
+    throw std::runtime_error(
+      "generated mesh is missing the BC_WallCharge physical group");
+  }
+
+  std::vector<int> wallEntities;
+  gmsh::model::getEntitiesForPhysicalGroup(1, wallPhysicalTag, wallEntities);
+  if(wallEntities.empty()) {
+    throw std::runtime_error(
+      "generated BC_WallCharge physical group contains no curve entities");
+  }
+
+  std::map<Edge, int> adjacentTriangles;
+  std::vector<int> triangleTypes;
+  std::vector<std::vector<std::size_t>> triangleTags, triangleNodes;
+  gmsh::model::mesh::getElements(
+    triangleTypes, triangleTags, triangleNodes, 2);
+  for(std::size_t t = 0; t < triangleTypes.size(); ++t) {
+    if(triangleTypes[t] != 2) continue;
+    const auto &nodes = triangleNodes[t];
+    for(std::size_t i = 0; i + 2 < nodes.size(); i += 3) {
+      const std::array<Edge, 3> edges = {
+        std::minmax(nodes[i], nodes[i + 1]),
+        std::minmax(nodes[i + 1], nodes[i + 2]),
+        std::minmax(nodes[i + 2], nodes[i])};
+      for(const Edge &edge : edges) ++adjacentTriangles[edge];
+    }
+  }
+
+  std::vector<std::size_t> allNodeTags;
+  std::vector<double> allCoordinates, parametricCoordinates;
+  gmsh::model::mesh::getNodes(
+    allNodeTags, allCoordinates, parametricCoordinates,
+    -1, -1, true, false);
+  std::unordered_map<NodeId, std::array<double, 3>> coordinates;
+  coordinates.reserve(allNodeTags.size());
+  for(std::size_t i = 0; i < allNodeTags.size(); ++i) {
+    coordinates[allNodeTags[i]] = {
+      allCoordinates[3 * i],
+      allCoordinates[3 * i + 1],
+      allCoordinates[3 * i + 2]};
+  }
+
+  std::size_t segmentCount = 0;
+  std::size_t nonInterfaceCount = 0;
+  double rMin = std::numeric_limits<double>::infinity();
+  double rMax = -std::numeric_limits<double>::infinity();
+  double zMin = std::numeric_limits<double>::infinity();
+  double zMax = -std::numeric_limits<double>::infinity();
+
+  for(const int entityTag : wallEntities) {
+    std::vector<int> types;
+    std::vector<std::vector<std::size_t>> elementTags, elementNodes;
+    gmsh::model::mesh::getElements(
+      types, elementTags, elementNodes, 1, entityTag);
+    for(std::size_t t = 0; t < types.size(); ++t) {
+      if(types[t] != 1) {
+        throw std::runtime_error(
+          "BC_WallCharge validation currently requires first-order line elements");
+      }
+      const auto &nodes = elementNodes[t];
+      for(std::size_t i = 0; i + 1 < nodes.size(); i += 2) {
+        const Edge edge = std::minmax(nodes[i], nodes[i + 1]);
+        const auto adjacent = adjacentTriangles.find(edge);
+        if(adjacent == adjacentTriangles.end() || adjacent->second != 2) {
+          ++nonInterfaceCount;
+        }
+        for(const NodeId node : {nodes[i], nodes[i + 1]}) {
+          const auto point = coordinates.find(node);
+          if(point == coordinates.end()) {
+            throw std::runtime_error(
+              "BC_WallCharge references a node without coordinates");
+          }
+          rMin = std::min(rMin, point->second[0]);
+          rMax = std::max(rMax, point->second[0]);
+          zMin = std::min(zMin, point->second[1]);
+          zMax = std::max(zMax, point->second[1]);
+        }
+        ++segmentCount;
+      }
+    }
+  }
+
+  if(segmentCount == 0) {
+    throw std::runtime_error(
+      "generated BC_WallCharge physical group contains no line elements");
+  }
+  if(nonInterfaceCount != 0) {
+    std::ostringstream oss;
+    oss << "BC_WallCharge is not an internal material interface: "
+        << nonInterfaceCount << "/" << segmentCount
+        << " segments do not have exactly two adjacent triangles"
+        << " (r=[" << rMin << ", " << rMax << "]"
+        << ", z=[" << zMin << ", " << zMax << "]).";
+    throw std::runtime_error(oss.str());
+  }
+
+  const double scale = std::max({1.0, std::abs(rMin), std::abs(rMax),
+                                 std::abs(zMin), std::abs(zMax)});
+  const double radialTolerance = std::max(1e-7, 2e-5 * scale);
+  if(std::abs(rMax - rMin) > radialTolerance) {
+    std::ostringstream oss;
+    oss << "BC_WallCharge must be a vertical constant-radius interface, got "
+        << "r=[" << rMin << ", " << rMax << "]"
+        << " and z=[" << zMin << ", " << zMax << "].";
+    throw std::runtime_error(oss.str());
+  }
+
+  debugLog(
+    "[wall mesh validation] segments=", segmentCount,
+    " adjacent_triangles=2 r=[", rMin, ", ", rMax,
+    "] z=[", zMin, ", ", zMax, "]\n");
 }
 
 static bool checkTriangleOrientation() {
@@ -2082,6 +2348,7 @@ MeshingResult make_mesh(
       if(countTriangleElements() == 0) {
         throw std::runtime_error("generated mesh contains no triangle elements");
       }
+      validateWallChargeInterfaceMesh();
     } else {
       if(countElementsInDimension(3) == 0) {
         throw std::runtime_error("generated mesh contains no 3D volume elements");
@@ -2132,6 +2399,7 @@ MeshingResult make_mesh(
       if(countTriangleElements() == 0) {
         throw std::runtime_error("written mesh contains no triangle elements");
       }
+      validateWallChargeInterfaceMesh();
     } else {
       if(countElementsInDimension(3) == 0) {
         throw std::runtime_error("written mesh contains no 3D volume elements");

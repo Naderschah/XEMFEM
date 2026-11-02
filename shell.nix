@@ -12,6 +12,7 @@ let
     scipy
     matplotlib
     pandas
+    pyyaml
     jupyterlab
     meshio
     h5py

@@ -6,6 +6,7 @@ Requires a function that takes const std::vector<T>& returning T
 No built in bounds or constraints -> We need to handle these manually
 */
 #include <vector>
+#include <cstdint>
 #include <string>
 #include <utility>
 #include <iostream>
@@ -36,6 +37,9 @@ No built in bounds or constraints -> We need to handle these manually
 struct OptimizationMetrics {
     double CIV = 0.0;          // Charge Insensitive Volume
     double FieldSpread = 0.0; 
+    FieldHomogeneityMetrics field_homogeneity;
+    std::uint64_t traced_electrons = 0;
+    double tracing_seconds = 0.0;
 };
 // For writing the meta file 
 struct OptRunRecord
@@ -71,7 +75,9 @@ double evaluate_one_optimization_point(const ConfigDocument &base_doc, const Opt
 
 ObjectiveFn make_objective_function(const OptimizationSettings &opt);
 
-double compute_civ(const Config &cfg, const SimulationResult &result);
+double compute_civ(const Config &cfg,
+                   const SimulationResult &result,
+                   ElectronFieldLineTracer::Statistics *trace_stats = nullptr);
 
 OptimizationMetrics compute_metrics(const Config &cfg, const SimulationResult &result);
 

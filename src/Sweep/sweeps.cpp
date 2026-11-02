@@ -383,6 +383,24 @@ void sweep_recursive_cfg(const Config &base_cfg,
     // ---------------------------------------------------------------------
     if (idx == sweeps.size())
     {
+        if (base_cfg.run_selection.wall_charge != "all")
+        {
+            const auto wall = std::find_if(
+                active_params.begin(), active_params.end(),
+                [](const auto &entry) { return entry.first == "wall_charge"; });
+            if (wall == active_params.end())
+            {
+                throw std::runtime_error(
+                    "run_selection.wall_charge requires a sweep named 'wall_charge'.");
+            }
+            if (wall->second != base_cfg.run_selection.wall_charge)
+            {
+                // Preserve the full Cartesian sweep's stable run numbering.
+                ++run_counter;
+                return;
+            }
+        }
+
         auto skip_leaf = [&](const std::string &reason) {
             if (rank == 0) {
                 std::cerr << "[sweep skip] run_index=" << run_counter
@@ -401,6 +419,12 @@ void sweep_recursive_cfg(const Config &base_cfg,
             // Per-leaf merge ensures geometry/material/boundary IDs follow
             // the geometry_config assigned by this sweep point.
             hydrate_leaf_geometry_mapping(root);
+
+            // Runtime hydration resolves voltage_config into boundary values
+            // only once for the base document. A voltage sweep changes the
+            // requested leaf value after that point, so resolve it again here
+            // before run_one solves the field-cage network.
+            apply_voltage_values(root);
 
             // Do not call make_run_folder() before broadcasting: it contains WORLD collectives.
             // All ranks call make_run_folder() after receiving the YAML payload.

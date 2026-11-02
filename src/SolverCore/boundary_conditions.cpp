@@ -1,5 +1,11 @@
 #include "boundary_conditions.h"
 
+#include <algorithm>
+#include <cmath>
+#include <iomanip>
+#include <limits>
+#include <sstream>
+
 
 // Build a safe boundary marker for the given attribute IDs.
 static Array<int> MakeBdrMarker(const Mesh *mesh,
@@ -111,6 +117,120 @@ static std::unique_ptr<mfem::Coefficient> MakeLinearZProfileCoeff(double z_bot, 
     return std::make_unique<FunctionCoefficient>(f);
 }
 
+static void ValidateAndReportWallChargeBoundary(
+    mfem::ParFiniteElementSpace &pfes,
+    const Config &cfg,
+    const Boundary &bc,
+    mfem::Coefficient &axisymmetric_sigma)
+{
+    mfem::Mesh &mesh = *pfes.GetMesh();
+    MPI_Comm comm = pfes.GetComm();
+    int rank = 0;
+    MPI_Comm_rank(comm, &rank);
+
+    long long local_elements = 0;
+    double local_r_min = std::numeric_limits<double>::infinity();
+    double local_r_max = -std::numeric_limits<double>::infinity();
+    double local_z_min = std::numeric_limits<double>::infinity();
+    double local_z_max = -std::numeric_limits<double>::infinity();
+    double local_integrated_charge = 0.0;
+
+    for(int be = 0; be < mesh.GetNBE(); ++be)
+    {
+        if(mesh.GetBdrAttribute(be) != bc.bdr_id) continue;
+        ++local_elements;
+
+        mfem::Array<int> vertices;
+        mesh.GetBdrElementVertices(be, vertices);
+        for(int i = 0; i < vertices.Size(); ++i)
+        {
+            const double *point = mesh.GetVertex(vertices[i]);
+            local_r_min = std::min(local_r_min, point[0]);
+            local_r_max = std::max(local_r_max, point[0]);
+            local_z_min = std::min(local_z_min, point[1]);
+            local_z_max = std::max(local_z_max, point[1]);
+        }
+
+        mfem::ElementTransformation *T =
+            mesh.GetBdrElementTransformation(be);
+        MFEM_VERIFY(T != nullptr,
+                    "BC_WallCharge has no boundary element transformation.");
+        const mfem::Geometry::Type geometry =
+            mesh.GetBdrElement(be)->GetGeometryType();
+        const mfem::IntegrationRule &rule =
+            mfem::IntRules.Get(geometry, 4);
+        for(int q = 0; q < rule.GetNPoints(); ++q)
+        {
+            const mfem::IntegrationPoint &ip = rule.IntPoint(q);
+            T->SetIntPoint(&ip);
+            local_integrated_charge +=
+                ip.weight * T->Weight() * axisymmetric_sigma.Eval(*T, ip);
+        }
+    }
+
+    long long global_elements = 0;
+    double global_r_min = 0.0;
+    double global_r_max = 0.0;
+    double global_z_min = 0.0;
+    double global_z_max = 0.0;
+    double global_integrated_charge = 0.0;
+    MPI_Allreduce(&local_elements, &global_elements, 1,
+                  MPI_LONG_LONG, MPI_SUM, comm);
+    MPI_Allreduce(&local_r_min, &global_r_min, 1,
+                  MPI_DOUBLE, MPI_MIN, comm);
+    MPI_Allreduce(&local_r_max, &global_r_max, 1,
+                  MPI_DOUBLE, MPI_MAX, comm);
+    MPI_Allreduce(&local_z_min, &global_z_min, 1,
+                  MPI_DOUBLE, MPI_MIN, comm);
+    MPI_Allreduce(&local_z_max, &global_z_max, 1,
+                  MPI_DOUBLE, MPI_MAX, comm);
+    MPI_Allreduce(&local_integrated_charge, &global_integrated_charge, 1,
+                  MPI_DOUBLE, MPI_SUM, comm);
+
+    MFEM_VERIFY(global_elements > 0,
+                "BC_WallCharge has no boundary elements after MFEM mesh loading.");
+
+    const double scale = std::max(
+        {1.0, std::abs(global_r_min), std::abs(global_r_max),
+         std::abs(global_z_min), std::abs(global_z_max)});
+    const double coordinate_tolerance = std::max(1e-8, 1e-7 * scale);
+    MFEM_VERIFY(std::abs(global_r_max - global_r_min) <= coordinate_tolerance,
+                "BC_WallCharge is not a constant-radius surface after MFEM loading: r=["
+                << global_r_min << ", " << global_r_max << "].");
+    MFEM_VERIFY(std::abs(global_z_min - bc.z_bot) <= coordinate_tolerance &&
+                std::abs(global_z_max - bc.z_top) <= coordinate_tolerance,
+                "BC_WallCharge z extent does not match its charge profile: mesh z=["
+                << global_z_min << ", " << global_z_max
+                << "], configured z=[" << bc.z_bot << ", " << bc.z_top << "].");
+
+    if(cfg.solver.axisymmetric)
+    {
+        const double radius = 0.5 * (global_r_min + global_r_max);
+        const double expected_charge =
+            2.0 * M_PI * radius * (bc.z_top - bc.z_bot) *
+            0.5 * (bc.value_bot + bc.value_top);
+        const double charge_tolerance =
+            std::max(1e-15, 1e-9 * std::abs(expected_charge));
+        MFEM_VERIFY(
+            std::abs(global_integrated_charge - expected_charge) <= charge_tolerance,
+            "BC_WallCharge assembled charge does not match the configured linear profile: "
+            << "integrated=" << global_integrated_charge
+            << " C, expected=" << expected_charge << " C.");
+
+        if(rank == 0)
+        {
+            std::cout << std::setprecision(17)
+                      << "[BC_WallCharge validation] bdr_id=" << bc.bdr_id
+                      << " elements=" << global_elements
+                      << " r=" << radius
+                      << " z=[" << global_z_min << ", " << global_z_max << "]"
+                      << " sigma=[" << bc.value_bot << ", " << bc.value_top << "]"
+                      << " integrated_charge_C=" << global_integrated_charge
+                      << " expected_charge_C=" << expected_charge << "\n";
+        }
+    }
+}
+
 void ApplyNeumannValues(ParLinearForm &b,
                         const Array<int> & /*neumann_attr*/,
                         const std::shared_ptr<const Config> &cfg,
@@ -140,12 +260,26 @@ void ApplyNeumannValues(ParLinearForm &b,
         owned_markers.emplace_back(MakeBdrMarker(mesh, {bc.bdr_id}));
         mfem::Array<int> &marker = owned_markers.back();
 
-        // If this MPI rank has no boundary attributes, or this attribute is absent, skip.
-        if (marker.Size() == 0) { continue; }
-        if (marker.Max() == 0)  { continue; }
+        const bool local_marker_present =
+            marker.Size() > 0 && marker.Max() == 1;
+        if (name == "BC_WallCharge")
+        {
+            // Wall validation contains collectives, so every rank must enter
+            // it even when a partition owns no wall segments locally.
+            const int local_present = local_marker_present ? 1 : 0;
+            int global_present = 0;
+            MPI_Allreduce(&local_present, &global_present, 1,
+                          MPI_INT, MPI_MAX, pfes->GetComm());
+            MFEM_VERIFY(global_present == 1,
+                        "BC_WallCharge is absent from the distributed mesh.");
+        }
+        else if (!local_marker_present)
+        {
+            continue;
+        }
 
         // Shouldn't be higher
-        if (marker.Max() != 1)
+        if (marker.Size() > 0 && marker.Max() > 1)
         {
             std::cerr << "\033[33m"
                       << "WARNING: boundary " << name << "'(bdr_id= " << bc.bdr_id
@@ -159,6 +293,15 @@ void ApplyNeumannValues(ParLinearForm &b,
             auto wg = std::make_unique<ProductCoefficient>(w, *g);  // axisym weight
 
             b.AddBoundaryIntegrator(new BoundaryLFIntegrator(*wg), marker);
+
+            if (name == "BC_WallCharge")
+            {
+                Boundary zero_charge = bc;
+                zero_charge.value_bot = bc.value;
+                zero_charge.value_top = bc.value;
+                ValidateAndReportWallChargeBoundary(
+                    *pfes, *cfg, zero_charge, *wg);
+            }
 
             owned_coeffs.emplace_back(std::move(g));
             owned_coeffs.emplace_back(std::move(wg));
@@ -187,6 +330,12 @@ void ApplyNeumannValues(ParLinearForm &b,
             auto wg = std::make_unique<ProductCoefficient>(w, *g);
 
             b.AddBoundaryIntegrator(new BoundaryLFIntegrator(*wg), marker);
+
+            if (name == "BC_WallCharge")
+            {
+                ValidateAndReportWallChargeBoundary(
+                    *pfes, *cfg, bc, *wg);
+            }
 
             owned_coeffs.emplace_back(std::move(g));
             owned_coeffs.emplace_back(std::move(wg));

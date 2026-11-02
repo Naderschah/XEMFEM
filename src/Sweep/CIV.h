@@ -6,10 +6,14 @@
 // ------------------ CIV Computation Methods ------------------
 // Sample n random points and trace (requires too many samples)
 double ComputeCIV_RandomSample(const Config           &cfg,
-                               const SimulationResult &result);
+                               const SimulationResult &result,
+                               ElectronFieldLineTracer::Statistics *trace_stats = nullptr);
 double ComputeCIV_FixedGrid(const Config            &cfg,
-                            const SimulationResult &result);
+                            const SimulationResult &result,
+                            ElectronFieldLineTracer::Statistics *trace_stats = nullptr);
 double ComputeCIV_AdaptiveGrid(const Config            &cfg,
-                               const SimulationResult &result);
+                               const SimulationResult &result,
+                               ElectronFieldLineTracer::Statistics *trace_stats = nullptr);
 double ComputeCIV_RowSweep(const Config            &cfg,
-                           const SimulationResult &result);
+                           const SimulationResult &result,
+                           ElectronFieldLineTracer::Statistics *trace_stats = nullptr);

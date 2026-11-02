@@ -2,6 +2,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <set>
 #include <limits>
 #include <mpi.h>
 #include <yaml-cpp/yaml.h>
@@ -155,7 +156,8 @@ struct DebugSettings
     bool dry_run                 = false; // TODO Remove? 
     bool printBoundaryConditions = false;
     bool printHypreWarnings      = false;
-
+    // Print periodic electron-tracing workload and ETA diagnostics.
+    bool printTraceProgress      = false;
     // Dump data to file where applicable
     bool dumpdata              = false;
 };
@@ -166,6 +168,13 @@ struct VoltageSettings
     // If true, fail when a resistor-network connected component has no fixed node.
     // This catches floating electrodes after field-cage solve.
     bool error_on_floating_after_resistor_chain = true;
+};
+
+struct RunSelectionSettings
+{
+    // "all", "charged", or "uncharged". Sweep enumeration still advances
+    // over excluded leaves so run_XXXX identifiers remain stable.
+    std::string wall_charge = "all";
 };
 
 // -------------------- Circuit Computation --------------------------
@@ -265,6 +274,9 @@ struct CIVSettings {
     // For grid searches
     int nr = 100;
     int nz = 12;
+    // Optional lower radial/x bound for Grid seed placement. Tracing and CIV
+    // normalization still use the full trace_params volume.
+    double sample_r_min = std::numeric_limits<double>::quiet_NaN();
     // For adaptive grid
     int max_levels = 5;
     // For row scanning 
@@ -307,12 +319,19 @@ struct ElectronTraceParams
 {
     std::string provider  = "VTK";
     std::string method    = "RK34";
-    // Relative to the smallest mesh element 
+    // Step multiplier. With local_element_step, this is relative to the
+    // characteristic size of each particle's current element; otherwise it is
+    // relative to the global minimum edge length (legacy behavior).
     double c_step         = 2;
+    bool local_element_step = false;
     // Tolerance for r,z boundary checks (axis clamp, z-range, etc.)
     double geom_tol       = 1e-12;
     // For MPI 
     int redistribution_every = 1;
+
+    // Replicate the complete tracing mesh and potential on every MPI rank.
+    // The default preserves the existing distributed MPI tracer.
+    bool ram_expensive = false;
 
     bool use_l2_electric_field = true;
 
@@ -324,7 +343,10 @@ struct ElectronTraceParams
     // Overwrite for z_max to speed up tracing
     double tracing_z_max;
 
-    // Steps to let electrons traverse n times, if 0 infinite loop
+    // Maximum nominal path length in drift-region traversals. In legacy
+    // fixed-step mode this is converted to a step count; with local element
+    // stepping it is accumulated separately for every particle. Zero disables
+    // the limit.
     double max_traversals = 10;
 };
 // ------------------------- Interpolation --------------
@@ -370,6 +392,7 @@ struct Config {
     ComputeSettings compute;
     DebugSettings  debug;
     VoltageSettings voltage;
+    RunSelectionSettings run_selection;
     SolverSettings solver;
 
     std::unordered_map<std::string, Boundary> boundaries;
@@ -410,7 +433,11 @@ struct Config {
 };
 std::string ReadConfigString(const std::string& path, MPI_Comm comm);
 
+struct VoltageApplyResult
+{
+    std::set<std::string> matched_boundaries;
+};
 
-
+VoltageApplyResult apply_voltage_values(YAML::Node &root);
 void apply_fieldcage_network(YAML::Node &root);
 void apply_fieldcage_network(Config &cfg);

@@ -335,7 +335,9 @@ ObjectiveFn make_objective_function(const OptimizationSettings &opt)
     throw std::runtime_error("Unknown optimization objective: '" + name + "'");
 }
 
-double compute_civ(const Config &cfg, const SimulationResult &result)
+double compute_civ(const Config &cfg,
+                   const SimulationResult &result,
+                   ElectronFieldLineTracer::Statistics *trace_stats)
 /*
 Compute Charge Insensitive Volume on the mesh
 Ie 1-(Volume where electrons reach liquid gas interface) / (Total Volume)
@@ -352,19 +354,19 @@ Ie 1-(Volume where electrons reach liquid gas interface) / (Total Volume)
 
     if (method == "RandomSample")
     {
-        civ = ComputeCIV_RandomSample(cfg, result);
+        civ = ComputeCIV_RandomSample(cfg, result, trace_stats);
     }
     else if (method == "Grid")
     {
-        civ = ComputeCIV_FixedGrid(cfg, result);
+        civ = ComputeCIV_FixedGrid(cfg, result, trace_stats);
     }
     else if (method == "AdaptiveGrid")
     {
-        civ = ComputeCIV_AdaptiveGrid(cfg, result);
+        civ = ComputeCIV_AdaptiveGrid(cfg, result, trace_stats);
     }
     else if (method == "RowSweep")
     {
-        civ = ComputeCIV_RowSweep(cfg, result);
+        civ = ComputeCIV_RowSweep(cfg, result, trace_stats);
     }
     else
     {
@@ -389,7 +391,10 @@ OptimizationMetrics compute_metrics(const Config &cfg, const SimulationResult &r
     OptimizationMetrics m;
     if ((cfg.optimize.objective == "CIV") || (cfg.optimize.objective == "self_weighting"))
     {
-        m.CIV = compute_civ(cfg, result);
+        ElectronFieldLineTracer::Statistics trace_stats;
+        m.CIV = compute_civ(cfg, result, &trace_stats);
+        m.traced_electrons = trace_stats.electron_count;
+        m.tracing_seconds = trace_stats.elapsed_seconds;
         if (cfg.optimize.print_results)
         {
             std::cout << "[OPT] CIV: " << m.CIV << std::endl;
@@ -399,7 +404,8 @@ OptimizationMetrics compute_metrics(const Config &cfg, const SimulationResult &r
 
     if ((cfg.optimize.objective == "FieldSpread") || (cfg.optimize.objective == "self_weighting"))
     {
-        m.FieldSpread = computeFieldSpreadMetric(cfg, result);
+        m.FieldSpread = computeFieldSpreadMetric(
+            cfg, result, &m.field_homogeneity);
         if (cfg.optimize.print_results)
         {
             std::cout << "[OPT] FieldSpread: " << m.FieldSpread << std::endl;
@@ -636,21 +642,376 @@ void OptimizationLogger::append_record(const OptRunRecord &rec)
 
 void run_metrics_only(const Config &cfg)
 {
-    for (const auto& run_dir : targets_from_save_root(cfg))
+    MPI_Comm comm = MPI_COMM_WORLD;
+    int rank = 0;
+    MPI_Comm_rank(comm, &rank);
+
+    const bool requested_civ =
+        cfg.optimize.objective == "CIV" ||
+        cfg.optimize.objective == "self_weighting";
+    const bool requested_field_metrics =
+        cfg.optimize.objective == "FieldSpread" ||
+        cfg.optimize.objective == "self_weighting";
+    const bool field_metrics_only =
+        requested_field_metrics && !requested_civ;
+
+    const auto targets = targets_from_save_root(cfg);
+    struct MetricRecord
+    {
+        std::filesystem::path run_dir;
+        OptimizationMetrics metrics;
+        double top_ring_voltage = std::numeric_limits<double>::quiet_NaN();
+        std::string wall_charge_state;
+    };
+    std::vector<MetricRecord> records;
+    records.reserve(targets.size());
+
+    auto load_preserved_metrics = [&](const std::filesystem::path &run_dir)
+    {
+        OptimizationMetrics preserved;
+        const std::filesystem::path combined_path = run_dir / "metrics.yaml";
+        if (!std::filesystem::exists(combined_path))
+        {
+            throw std::runtime_error(
+                "Selected metrics reuse requires existing file: " +
+                combined_path.string());
+        }
+        const YAML::Node combined = YAML::LoadFile(combined_path.string());
+        if (requested_civ)
+        {
+            if (!combined["CIV"])
+            {
+                throw std::runtime_error(
+                    "Existing metrics file has no CIV: " + combined_path.string());
+            }
+            preserved.CIV = combined["CIV"].as<double>();
+            if (combined["tracing"])
+            {
+                preserved.traced_electrons =
+                    combined["tracing"]["electron_count"].as<std::uint64_t>(0);
+                preserved.tracing_seconds =
+                    combined["tracing"]["elapsed_seconds"].as<double>(0.0);
+            }
+        }
+
+        if (requested_field_metrics)
+        {
+            YAML::Node field = combined;
+            const std::filesystem::path field_path =
+                run_dir / "field_metrics.yaml";
+            if (std::filesystem::exists(field_path))
+            {
+                field = YAML::LoadFile(field_path.string());
+            }
+            if (!field["FieldSpread"] || !field["field_homogeneity"])
+            {
+                throw std::runtime_error(
+                    "Existing metrics have no field homogeneity data for " +
+                    run_dir.string());
+            }
+            preserved.FieldSpread = field["FieldSpread"].as<double>();
+            const YAML::Node h = field["field_homogeneity"];
+            preserved.field_homogeneity.integration_volume =
+                h["integration_volume"].as<double>();
+            preserved.field_homogeneity.mean_magnitude =
+                h["mean_magnitude_V_per_m"].as<double>();
+            preserved.field_homogeneity.lower_quantile =
+                h["lower_quantile_V_per_m"].as<double>();
+            preserved.field_homogeneity.upper_quantile =
+                h["upper_quantile_V_per_m"].as<double>();
+            preserved.field_homogeneity.relative_rms_magnitude =
+                h["relative_rms_magnitude"].as<double>();
+            preserved.field_homogeneity.relative_rms_radial =
+                h["relative_rms_radial_to_mean_abs_axial"].as<double>();
+            preserved.field_homogeneity.relative_rms_axial =
+                h["relative_rms_axial_to_mean_abs_axial"].as<double>();
+            preserved.field_homogeneity.mean_axial =
+                h["mean_axial_V_per_m"].as<double>();
+            preserved.field_homogeneity.mean_abs_axial =
+                h["mean_abs_axial_V_per_m"].as<double>();
+        }
+        return preserved;
+    };
+
+    for (const auto& run_dir : targets)
     {
         std::cout << "[METRICS] Loading results from " << run_dir << "\n";
 
-        SimulationResult result = load_results(cfg, run_dir);
+        // Prefer the resolved leaf configuration saved with a sweep point. It
+        // contains the actual voltage/wall-charge assignments and is the
+        // authoritative record if the source sweep config changes later.
+        Config local_cfg = cfg;
+        const std::filesystem::path leaf_config = run_dir / "config.yaml";
+        if (std::filesystem::exists(leaf_config))
+        {
+            // Replace a historical analysis method before validation. In
+            // particular, completed simulations may predate the AdaptiveGrid
+            // ban; their simulated state remains valid and reusable.
+            YAML::Node leaf_node = YAML::LoadFile(leaf_config.string());
+            leaf_node["optimize"]["civ_params"]["method"] =
+                cfg.civ_params.method;
+            local_cfg = Config::LoadFromNode(leaf_node, "metrics");
+        }
+        // The leaf config remains authoritative for the simulated state
+        // (voltages, wall charge, mesh, and solver settings). Analysis controls
+        // come from the config supplied to the metrics command so CIV methods
+        // and sampling can be changed without rerunning the field solves.
+        local_cfg.tracing_params = cfg.tracing_params;
+        local_cfg.civ_params = cfg.civ_params;
+        local_cfg.field_spread = cfg.field_spread;
+        local_cfg.optimize.objective = cfg.optimize.objective;
+        local_cfg.optimize.print_results = cfg.optimize.print_results;
+        local_cfg.optimize.r_min = cfg.optimize.r_min;
+        local_cfg.optimize.r_max = cfg.optimize.r_max;
+        local_cfg.optimize.z_min = cfg.optimize.z_min;
+        local_cfg.optimize.z_max = cfg.optimize.z_max;
+        local_cfg.debug = cfg.debug;
+        local_cfg.run_mode = "metrics";
+        local_cfg.save_path = run_dir.string();
+
+        double top_ring_voltage = std::numeric_limits<double>::quiet_NaN();
+        const auto top_ring = local_cfg.boundaries.find("BC_FieldShapingRings_0");
+        if (top_ring != local_cfg.boundaries.end()) {
+            top_ring_voltage = top_ring->second.value;
+        }
+        const auto wall = local_cfg.boundaries.find("BC_WallCharge");
+        const bool wall_is_charged =
+            wall != local_cfg.boundaries.end() && wall->second.depth_dependent;
+        const std::string wall_charge_state =
+            wall_is_charged ? "charged" : "uncharged";
+
+        if (cfg.run_selection.wall_charge != "all" &&
+            wall_charge_state != cfg.run_selection.wall_charge)
+        {
+            if (rank == 0)
+            {
+                std::cout << "[METRICS] Reusing existing "
+                          << wall_charge_state << " metrics for "
+                          << run_dir.filename() << "\n";
+                records.push_back(MetricRecord{
+                    run_dir,
+                    load_preserved_metrics(run_dir),
+                    top_ring_voltage,
+                    wall_charge_state});
+            }
+            continue;
+        }
+
+        SimulationResult result = load_results(local_cfg, run_dir);
         if (!result.success) {
             std::cerr << "[METRICS] Failed to load results: "
                       << result.error_message << "\n";
             std::exit(1);
         }
-        Config local_cfg = cfg;          // copy
-        local_cfg.save_path = run_dir; 
 
         OptimizationMetrics m = compute_metrics(local_cfg, result);
-        std::cout << "[METRICS] CIV = " << m.CIV << "\n";
-        std::cout << "[METRICS] FieldSpread = " << m.FieldSpread << "\n";
+        if (rank == 0)
+        {
+            if (requested_civ)
+            {
+                std::cout << "[METRICS] CIV = " << m.CIV << "\n";
+                std::cout << "[METRICS] Electron tracing: electrons="
+                          << m.traced_electrons
+                          << " elapsed_s=" << m.tracing_seconds << "\n";
+            }
+            if (requested_field_metrics)
+            {
+                std::cout << "[METRICS] FieldSpread = "
+                          << m.FieldSpread << "\n";
+                std::cout << "[METRICS] Field homogeneity: mean|E|="
+                          << m.field_homogeneity.mean_magnitude
+                          << " relative_rms|E|="
+                          << m.field_homogeneity.relative_rms_magnitude
+                          << " relative_rms_Er="
+                          << m.field_homogeneity.relative_rms_radial
+                          << " relative_rms_Ez="
+                          << m.field_homogeneity.relative_rms_axial << "\n";
+            }
+        }
+
+        if (rank == 0)
+        {
+            YAML::Node metrics;
+            metrics["top_field_shaping_V"] = top_ring_voltage;
+            metrics["wall_charge"] = wall_is_charged ? "charged" : "uncharged";
+            if (wall_is_charged) {
+                metrics["wall_charge_profile"]["z_bot"] = wall->second.z_bot;
+                metrics["wall_charge_profile"]["z_top"] = wall->second.z_top;
+                metrics["wall_charge_profile"]["value_bot_C_per_m2"] = wall->second.value_bot;
+                metrics["wall_charge_profile"]["value_top_C_per_m2"] = wall->second.value_top;
+            }
+            if (requested_civ)
+            {
+                metrics["CIV"] = m.CIV;
+                metrics["civ_method"] = local_cfg.civ_params.method;
+                metrics["tracing"]["provider"] =
+                    local_cfg.tracing_params.provider;
+                metrics["tracing"]["ram_expensive"] =
+                    local_cfg.tracing_params.ram_expensive;
+                metrics["tracing"]["local_element_step"] =
+                    local_cfg.tracing_params.local_element_step;
+                metrics["tracing"]["c_step"] =
+                    local_cfg.tracing_params.c_step;
+                metrics["tracing"]["electron_count"] =
+                    static_cast<unsigned long long>(m.traced_electrons);
+                metrics["tracing"]["elapsed_seconds"] =
+                    m.tracing_seconds;
+                if (local_cfg.civ_params.method == "RandomSample") {
+                    metrics["civ_num_seed_elements"] =
+                        local_cfg.civ_params.num_seed_elements;
+                } else {
+                    metrics["civ_nr"] = local_cfg.civ_params.nr;
+                    metrics["civ_nz"] = local_cfg.civ_params.nz;
+                    if (std::isfinite(local_cfg.civ_params.sample_r_min)) {
+                        metrics["civ_sample_r_min"] =
+                            local_cfg.civ_params.sample_r_min;
+                    }
+                }
+                metrics["civ_roi"]["r_min"] = local_cfg.tracing_params.r_min;
+                metrics["civ_roi"]["r_max"] = local_cfg.tracing_params.r_max;
+                metrics["civ_roi"]["z_min"] = local_cfg.tracing_params.z_min;
+                metrics["civ_roi"]["z_max"] = local_cfg.tracing_params.z_max;
+            }
+            if (requested_field_metrics)
+            {
+                const auto &h = m.field_homogeneity;
+                metrics["FieldSpread"] = m.FieldSpread;
+                metrics["field_homogeneity"]["weighting"] =
+                    local_cfg.solver.axisymmetric
+                        ? "axisymmetric_volume_2pi_r_dr_dz"
+                        : "cartesian_volume";
+                metrics["field_homogeneity"]["integration_volume"] =
+                    h.integration_volume;
+                metrics["field_homogeneity"]["mean_magnitude_V_per_m"] =
+                    h.mean_magnitude;
+                metrics["field_homogeneity"]["lower_quantile_V_per_m"] =
+                    h.lower_quantile;
+                metrics["field_homogeneity"]["upper_quantile_V_per_m"] =
+                    h.upper_quantile;
+                metrics["field_homogeneity"]["lower_quantile_fraction"] =
+                    local_cfg.field_spread.lower;
+                metrics["field_homogeneity"]["upper_quantile_fraction"] =
+                    local_cfg.field_spread.upper;
+                metrics["field_homogeneity"]["relative_rms_magnitude"] =
+                    h.relative_rms_magnitude;
+                metrics["field_homogeneity"]["relative_rms_radial_to_mean_abs_axial"] =
+                    h.relative_rms_radial;
+                metrics["field_homogeneity"]["relative_rms_axial_to_mean_abs_axial"] =
+                    h.relative_rms_axial;
+                metrics["field_homogeneity"]["mean_axial_V_per_m"] =
+                    h.mean_axial;
+                metrics["field_homogeneity"]["mean_abs_axial_V_per_m"] =
+                    h.mean_abs_axial;
+                metrics["field_homogeneity"]["roi"]["r_min"] =
+                    local_cfg.optimize.r_min;
+                metrics["field_homogeneity"]["roi"]["r_max"] =
+                    local_cfg.optimize.r_max;
+                metrics["field_homogeneity"]["roi"]["z_min"] =
+                    local_cfg.optimize.z_min;
+                metrics["field_homogeneity"]["roi"]["z_max"] =
+                    local_cfg.optimize.z_max;
+            }
+
+            const std::filesystem::path metrics_path =
+                run_dir / (field_metrics_only
+                    ? "field_metrics.yaml"
+                    : "metrics.yaml");
+            std::ofstream out(metrics_path);
+            if (!out)
+            {
+                throw std::runtime_error(
+                    "Unable to write metrics file " + metrics_path.string());
+            }
+            out << metrics << '\n';
+            records.push_back(MetricRecord{
+                run_dir,
+                m,
+                top_ring_voltage,
+                wall_charge_state});
+        }
     }
+
+    if (rank == 0)
+    {
+        const std::filesystem::path summary_path =
+            std::filesystem::path(cfg.save_path) /
+            (field_metrics_only ? "field_metrics.csv" : "metrics.csv");
+        std::ofstream summary(summary_path);
+        if (!summary)
+        {
+            throw std::runtime_error(
+                "Unable to write aggregate metrics file: " + summary_path.string());
+        }
+        summary << "run,top_field_shaping_V,wall_charge,CIV,FieldSpread,"
+                   "FieldMeanMagnitude,FieldRMSRelative,RadialRMSRelative,"
+                   "AxialRMSRelative\n";
+        summary << std::setprecision(17);
+        for (const auto &record : records)
+        {
+            summary << record.run_dir.filename().string() << ','
+                    << record.top_ring_voltage << ','
+                    << record.wall_charge_state << ',';
+            if (requested_civ) { summary << record.metrics.CIV; }
+            summary << ',';
+            if (requested_field_metrics)
+            {
+                summary << record.metrics.FieldSpread << ','
+                        << record.metrics.field_homogeneity.mean_magnitude << ','
+                        << record.metrics.field_homogeneity.relative_rms_magnitude << ','
+                        << record.metrics.field_homogeneity.relative_rms_radial << ','
+                        << record.metrics.field_homogeneity.relative_rms_axial;
+            }
+            else
+            {
+                summary << ",,,,";
+            }
+            summary << '\n';
+        }
+        std::cout << "[METRICS] Wrote aggregate summary to " << summary_path << "\n";
+
+        if (requested_civ)
+        {
+            const std::filesystem::path civ_path =
+                std::filesystem::path(cfg.save_path) / "civ.csv";
+            std::ofstream civ(civ_path);
+            if (!civ) {
+                throw std::runtime_error(
+                    "Unable to write aggregate CIV file: " + civ_path.string());
+            }
+            civ << "top_field_shaping_V,wall_charge,CIV\n"
+                << std::setprecision(17);
+            for (const auto &record : records) {
+                civ << record.top_ring_voltage << ','
+                    << record.wall_charge_state << ','
+                    << record.metrics.CIV << '\n';
+            }
+        }
+
+        if (requested_field_metrics && !field_metrics_only)
+        {
+            const std::filesystem::path field_path =
+                std::filesystem::path(cfg.save_path) / "field_metrics.csv";
+            std::ofstream field(field_path);
+            if (!field) {
+                throw std::runtime_error(
+                    "Unable to write aggregate field metrics file: " +
+                    field_path.string());
+            }
+            field << "run,top_field_shaping_V,wall_charge,FieldSpread,"
+                     "FieldMeanMagnitude,FieldRMSRelative,RadialRMSRelative,"
+                     "AxialRMSRelative\n"
+                  << std::setprecision(17);
+            for (const auto &record : records) {
+                field << record.run_dir.filename().string() << ','
+                      << record.top_ring_voltage << ','
+                      << record.wall_charge_state << ','
+                      << record.metrics.FieldSpread << ','
+                      << record.metrics.field_homogeneity.mean_magnitude << ','
+                      << record.metrics.field_homogeneity.relative_rms_magnitude << ','
+                      << record.metrics.field_homogeneity.relative_rms_radial << ','
+                      << record.metrics.field_homogeneity.relative_rms_axial << '\n';
+            }
+        }
+    }
+    MPI_Barrier(comm);
 }

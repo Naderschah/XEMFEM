@@ -8,6 +8,8 @@
 #include <cmath>
 #include <cctype>
 #include <cstdint>
+#include <map>
+#include <optional>
 #include <unordered_set>
 #include <mpi.h>
 
@@ -445,6 +447,8 @@ static void parse_trace_params(Config &cfg, const YAML::Node &root)
     params.method = O["method"].as<std::string>(cfg.tracing_params.method);
 
     params.c_step = O["c_step"].as<double>(cfg.tracing_params.c_step);
+    params.local_element_step =
+        O["local_element_step"].as<bool>(cfg.tracing_params.local_element_step);
     params.geom_tol = O["geom_tol"].as<double>(cfg.tracing_params.geom_tol);
 
     params.r_min = O["r_min"].as<double>(cfg.optimize.r_min);
@@ -456,6 +460,7 @@ static void parse_trace_params(Config &cfg, const YAML::Node &root)
     params.max_traversals = O["max_traversals"].as<double>(cfg.tracing_params.max_traversals);
 
     params.redistribution_every = O["redistribution_every"].as<int>(cfg.tracing_params.redistribution_every);
+    params.ram_expensive = O["ram_expensive"].as<bool>(cfg.tracing_params.ram_expensive);
 
     if (params.method != "Euler-Cauchy" &&
         params.method != "RK4" &&
@@ -470,7 +475,11 @@ static void parse_trace_params(Config &cfg, const YAML::Node &root)
     if (params.provider != "VTK" &&
         params.provider != "MPITracer" &&
         params.provider != "BOOST") 
-    { Error("trace_params.provider must be one of {VTK, BOOST}"); }
+    { Error("trace_params.provider must be one of {VTK, MPITracer, BOOST}"); }
+    if (params.ram_expensive && params.provider != "MPITracer")
+        Error("trace_params.ram_expensive is supported only with provider: MPITracer");
+    if (params.local_element_step && params.provider != "MPITracer")
+        Error("trace_params.local_element_step is supported only with provider: MPITracer");
     cfg.tracing_params = params;
 
     if ((params.provider == "MPITracer") && (params.method != "Euler-Cauchy") && (params.method != "RK4"))
@@ -498,6 +507,8 @@ static void parse_civ_params(Config &cfg, const YAML::Node &root)
     cfg.civ_params.num_seed_elements = O["num_seed_elements"].as<int>(cfg.civ_params.num_seed_elements);
     cfg.civ_params.nr = O["nr"].as<int>(cfg.civ_params.nr);
     cfg.civ_params.nz = O["nz"].as<int>(cfg.civ_params.nz);
+    cfg.civ_params.sample_r_min =
+        O["sample_r_min"].as<double>(cfg.civ_params.sample_r_min);
     cfg.civ_params.max_levels = O["max_levels"].as<int>(cfg.civ_params.max_levels);
     cfg.civ_params.block_size = O["block_size"].as<int>(cfg.civ_params.block_size);
 }
@@ -625,6 +636,7 @@ static void parse_debug_settings(Config &cfg, const YAML::Node &root)
 
     dbg.printBoundaryConditions = gated("printBoundaryConditions", dbg.printBoundaryConditions);
     dbg.printHypreWarnings      = gated("printHypreWarnings",      dbg.printHypreWarnings);
+    dbg.printTraceProgress      = gated("printTraceProgress",      dbg.printTraceProgress);
     dbg.dumpdata                = gated("dumpdata",                dbg.dumpdata);
 
     cfg.debug = dbg;
@@ -634,8 +646,10 @@ static void parse_voltage_settings(Config &cfg, const YAML::Node &root)
 {
     VoltageSettings voltage = cfg.voltage;
 
-    YAML::Node vn = root["voltage_config"];
-    if (!vn) { vn = root["voltage"]; } // compatibility alias
+    const YAML::Node voltage_config = root["voltage_config"];
+    const YAML::Node vn = voltage_config
+        ? voltage_config
+        : root["voltage"]; // compatibility alias
     if (!vn) {
         cfg.voltage = voltage;
         return;
@@ -852,7 +866,12 @@ static void parse_boundary_params(Config &cfg, const YAML::Node &root)
             b.value_top = node["value_top"] ? node["value_top"].as<double>(b.value_top) : b.value_top;
         }
 
-        if (b.bdr_id <= 0)
+        // Metrics reads already-solved fields from each saved run. The
+        // top-level analysis config may intentionally contain partial boundary
+        // overrides (for example the wall-charge sweep profile) whose bdr_id
+        // exists only in the saved leaf config. A boundary id is mandatory
+        // only when preparing a simulation.
+        if (b.bdr_id <= 0 && cfg.run_mode != "metrics")
             throw std::runtime_error("Boundary '" + name + "' is missing a valid bdr_id");
 
         if (b.depth_dependent && (b.z_bot >= b.z_top))
@@ -863,18 +882,57 @@ static void parse_boundary_params(Config &cfg, const YAML::Node &root)
 }
 static void verify_cross_dependence(Config cfg)
 {
+    const bool metrics_path =
+        (cfg.run_mode == "metrics") ||
+        ((cfg.run_mode == "sim") && cfg.optimize.enabled);
+
+    if (cfg.civ_params.method == "AdaptiveGrid")
+        throw std::runtime_error(
+            "AdaptiveGrid CIV is disabled because it does not provide the required sampling semantics and will be removed; use Grid or RandomSample");
+
+    if (metrics_path &&
+        cfg.civ_params.method != "RandomSample" &&
+        cfg.civ_params.method != "Grid" &&
+        cfg.civ_params.method != "RowSweep")
+        throw std::runtime_error(
+            "Unknown CIV method '" + cfg.civ_params.method +
+            "'; expected one of {RandomSample, Grid, RowSweep}");
+
+    if (metrics_path && cfg.civ_params.method == "RandomSample" &&
+        cfg.civ_params.num_seed_elements <= 0)
+        throw std::runtime_error(
+            "RandomSample CIV requires civ_params.num_seed_elements > 0");
+
+    if (metrics_path && (cfg.civ_params.method == "Grid" ||
+         cfg.civ_params.method == "RowSweep") &&
+        (cfg.civ_params.nr <= 0 || cfg.civ_params.nz <= 0))
+        throw std::runtime_error(
+            "Grid-based CIV requires civ_params.nr and civ_params.nz > 0");
+
+    if (std::isfinite(cfg.civ_params.sample_r_min)) {
+        if (cfg.civ_params.method != "Grid")
+            throw std::runtime_error(
+                "civ_params.sample_r_min is supported only by the Grid CIV method");
+        if (cfg.civ_params.sample_r_min < cfg.tracing_params.r_min ||
+            cfg.civ_params.sample_r_min >= cfg.tracing_params.r_max)
+            throw std::runtime_error(
+                "civ_params.sample_r_min must lie in [trace_params.r_min, trace_params.r_max)");
+    }
+
     // Verify compute block 
     int world_size = 0;
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
     bool mpi_enabled = (world_size > 1);
-    bool metrics_path = (cfg.run_mode == "metrics") || ((cfg.run_mode == "sim") && cfg.optimize.enabled);
-    bool mpi_safe_method = (cfg.tracing_params.provider == "MPITracer") && ((cfg.civ_params.method != "RandomSample") && (cfg.civ_params.method != "Grid"));
+    const bool mpi_unsafe_civ_method =
+        (cfg.tracing_params.provider == "MPITracer") &&
+        (cfg.civ_params.method != "RandomSample") &&
+        (cfg.civ_params.method != "Grid");
 
     if (cfg.compute.threads.enabled && mpi_enabled)
         throw std::runtime_error("MPI and Threading via OpenMP simulataneously is not supported, use as many MPI nodes as you intend to use threads");
 
-    if (mpi_enabled && mpi_safe_method)
+    if (metrics_path && mpi_enabled && mpi_unsafe_civ_method)
         throw std::runtime_error("Fancy CIV methods not supported for MPI due to performance limitations of tracing (one to two machines will end up tracing at a time)");
 }
 
@@ -907,6 +965,19 @@ static Config _LoadFromNode(const YAML::Node &root, Config cfg) {
   }
   cfg.save_path = root["save_path"].as<std::string>();
   cfg.delete_files_present = root["delete_files_present"].as<bool>(false);
+
+  if (const YAML::Node selection = root["run_selection"])
+  {
+    cfg.run_selection.wall_charge =
+      selection["wall_charge"].as<std::string>(cfg.run_selection.wall_charge);
+    if (cfg.run_selection.wall_charge != "all" &&
+        cfg.run_selection.wall_charge != "charged" &&
+        cfg.run_selection.wall_charge != "uncharged")
+    {
+      throw std::runtime_error(
+        "run_selection.wall_charge must be one of: all, charged, uncharged");
+    }
+  }
 
   parse_debug_settings(cfg, root);
   parse_voltage_settings(cfg, root);
@@ -1058,6 +1129,203 @@ Config Config::LoadFromString(const std::string& yaml_str, std::string run_mode)
 
 
 
+
+namespace
+{
+YAML::Node GetVoltageConfigNode(YAML::Node &root)
+{
+    YAML::Node voltage = root["voltage_config"];
+    if (!voltage) { voltage = root["voltage"]; }
+    return voltage;
+}
+
+std::string CanonicalizeBoundaryKey(const std::string &name)
+{
+    std::string normalized;
+    normalized.reserve(name.size());
+    for (const unsigned char c : name)
+    {
+        if (std::isalnum(c))
+        {
+            normalized.push_back(static_cast<char>(std::toupper(c)));
+        }
+    }
+    if (normalized.rfind("BC", 0) == 0) { normalized.erase(0, 2); }
+    return normalized;
+}
+
+std::string JoinBoundaryNames(const std::vector<std::string> &names)
+{
+    std::ostringstream out;
+    for (std::size_t i = 0; i < names.size(); ++i)
+    {
+        if (i) { out << ", "; }
+        out << names[i];
+    }
+    return out.str();
+}
+
+std::optional<std::string> ResolveVoltageBoundary(
+    const std::string &raw_key,
+    const YAML::Node &boundaries,
+    std::string &error)
+{
+    const YAML::Node exact = boundaries[raw_key];
+    if (exact && exact.IsMap()) { return raw_key; }
+
+    const std::string raw_normalized = CanonicalizeBoundaryKey(raw_key);
+    if (raw_normalized.empty())
+    {
+        error = "voltage_config.values key '" + raw_key +
+                "' is empty after normalization.";
+        return std::nullopt;
+    }
+
+    std::vector<std::string> normalized_matches;
+    std::vector<std::string> fuzzy_matches;
+    for (auto it = boundaries.begin(); it != boundaries.end(); ++it)
+    {
+        const std::string boundary_name = it->first.as<std::string>();
+        const std::string boundary_normalized =
+            CanonicalizeBoundaryKey(boundary_name);
+        if (boundary_normalized == raw_normalized)
+        {
+            normalized_matches.push_back(boundary_name);
+            continue;
+        }
+        if (!boundary_normalized.empty() &&
+            (boundary_normalized.find(raw_normalized) != std::string::npos ||
+             raw_normalized.find(boundary_normalized) != std::string::npos))
+        {
+            fuzzy_matches.push_back(boundary_name);
+        }
+    }
+
+    if (normalized_matches.size() == 1) { return normalized_matches.front(); }
+    if (normalized_matches.size() > 1)
+    {
+        std::sort(normalized_matches.begin(), normalized_matches.end());
+        error = "voltage_config.values key '" + raw_key +
+                "' is ambiguous after normalization; candidates: " +
+                JoinBoundaryNames(normalized_matches);
+        return std::nullopt;
+    }
+    if (fuzzy_matches.size() == 1) { return fuzzy_matches.front(); }
+    if (fuzzy_matches.size() > 1)
+    {
+        std::sort(fuzzy_matches.begin(), fuzzy_matches.end());
+        error = "voltage_config.values key '" + raw_key +
+                "' is ambiguous in fuzzy matching; candidates: " +
+                JoinBoundaryNames(fuzzy_matches);
+        return std::nullopt;
+    }
+
+    if (raw_normalized == "AXIS")
+    {
+        error = "voltage_config.values key '" + raw_key +
+                "' did not match any boundary. Expected boundary group "
+                "'BC_Axis' is missing from loaded geometry config.";
+    }
+    else if (raw_normalized == "WALLCHARGE")
+    {
+        error = "voltage_config.values key '" + raw_key +
+                "' did not match any boundary. Expected boundary group "
+                "'BC_WallCharge' is missing from loaded geometry config.";
+    }
+    else
+    {
+        error = "voltage_config.values key '" + raw_key +
+                "' did not match any boundary (normalized as '" +
+                raw_normalized + "').";
+    }
+    return std::nullopt;
+}
+}
+
+VoltageApplyResult apply_voltage_values(YAML::Node &root)
+{
+    VoltageApplyResult result;
+    const YAML::Node voltage = GetVoltageConfigNode(root);
+    if (!voltage) { return result; }
+    if (!voltage.IsMap())
+    {
+        throw std::runtime_error("voltage_config must be a mapping.");
+    }
+
+    const YAML::Node values = voltage["values"];
+    if (!values) { return result; }
+    if (!values.IsMap())
+    {
+        throw std::runtime_error(
+            "voltage_config.values must be a mapping of boundary -> voltage.");
+    }
+
+    YAML::Node boundaries = root["boundaries"];
+    if (!boundaries || !boundaries.IsMap())
+    {
+        throw std::runtime_error(
+            "voltage_config.values provided but boundaries mapping is missing. "
+            "Provide mesh.geometry_config or boundaries.");
+    }
+
+    std::vector<std::string> errors;
+    std::map<std::string, std::string> matched_by_key;
+    for (auto it = values.begin(); it != values.end(); ++it)
+    {
+        const std::string raw_key = it->first.as<std::string>();
+        double value = 0.0;
+        try
+        {
+            value = it->second.as<double>();
+        }
+        catch (...)
+        {
+            throw std::runtime_error(
+                "voltage_config.values['" + raw_key + "'] must be numeric.");
+        }
+
+        std::string resolve_error;
+        const auto boundary_name =
+            ResolveVoltageBoundary(raw_key, boundaries, resolve_error);
+        if (!boundary_name)
+        {
+            errors.push_back(resolve_error);
+            continue;
+        }
+
+        const auto previous = matched_by_key.find(*boundary_name);
+        if (previous != matched_by_key.end())
+        {
+            errors.push_back(
+                "voltage_config.values has multiple entries resolving to boundary '" +
+                *boundary_name + "': '" + previous->second + "' and '" +
+                raw_key + "'.");
+            continue;
+        }
+        matched_by_key[*boundary_name] = raw_key;
+
+        YAML::Node boundary = boundaries[*boundary_name];
+        if (!boundary || !boundary.IsMap())
+        {
+            throw std::runtime_error(
+                "Internal error: resolved boundary '" + *boundary_name +
+                "' is not a mapping.");
+        }
+        if (!boundary["type"]) { boundary["type"] = "dirichlet"; }
+        boundary["value"] = value;
+        result.matched_boundaries.insert(*boundary_name);
+    }
+
+    if (!errors.empty())
+    {
+        std::sort(errors.begin(), errors.end());
+        std::ostringstream message;
+        message << "voltage_config.values matching failed:";
+        for (const auto &error : errors) { message << "\n  - " << error; }
+        throw std::runtime_error(message.str());
+    }
+    return result;
+}
 
 // -----------------------------------------------------------------------------
 // Solve Circuit network

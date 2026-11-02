@@ -652,28 +652,32 @@ SimulationResult load_results(const Config &cfg,
     // ---------------------------------------------------------------------
     // 4) Load E and/or Emag (optional) + Emag rebuild if only E exists
     // ---------------------------------------------------------------------
-    // If you saved E/Emag as parallel pgf files, load them.
-    // Otherwise, we do NOT compute E here (no ElectricFieldCoeff in this module).
-    const bool haveE    = load_pgf("E", result.E);
-    const bool haveEmag = load_pgf("Emag", result.Emag);
-
-    // If Emag not saved but E is available, compute Emag from E (same tool you use)
-    if (!haveEmag && haveE)
+    // Metrics derive all field quantities from V. Avoid loading the legacy E
+    // and Emag files, which are both unnecessary and large for a sweep pass.
+    if (cfg.run_mode != "metrics")
     {
-        try
+        // If you saved E/Emag as parallel pgf files, load them.
+        const bool haveE    = load_pgf("E", result.E);
+        const bool haveEmag = load_pgf("Emag", result.Emag);
+
+        // If Emag not saved but E is available, compute Emag from E.
+        if (!haveEmag && haveE)
         {
-            ElectricFieldPostprocessor efpp(*result.pfes);
-            auto Emag = efpp.MakeEmag();
-            efpp.ComputeFieldMagnitude(*result.E, *Emag);
-            Emag->ExchangeFaceNbrData();
-            result.Emag = std::move(Emag);
-        }
-        catch (const std::exception &e)
-        {
-            if (rank == 0)
+            try
             {
-                std::cerr << "load_results: failed to rebuild Emag from E: "
-                          << e.what() << "\n";
+                ElectricFieldPostprocessor efpp(*result.pfes);
+                auto Emag = efpp.MakeEmag();
+                efpp.ComputeFieldMagnitude(*result.E, *Emag);
+                Emag->ExchangeFaceNbrData();
+                result.Emag = std::move(Emag);
+            }
+            catch (const std::exception &e)
+            {
+                if (rank == 0)
+                {
+                    std::cerr << "load_results: failed to rebuild Emag from E: "
+                              << e.what() << "\n";
+                }
             }
         }
     }

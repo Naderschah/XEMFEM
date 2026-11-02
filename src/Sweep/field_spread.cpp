@@ -97,7 +97,8 @@ static void WeightedQuantilesOnRoot_Gather(
 }
 
 double computeFieldSpreadMetric(const Config &cfg,
-                                const SimulationResult &result)
+                                const SimulationResult &result,
+                                FieldHomogeneityMetrics *homogeneity)
 {
     using namespace mfem;
 
@@ -129,6 +130,11 @@ double computeFieldSpreadMetric(const Config &cfg,
 
     double local_total_w = 0.0;
     double local_sum_w_e = 0.0;
+    double local_sum_w_e2 = 0.0;
+    double local_sum_w_er2 = 0.0;
+    double local_sum_w_ez = 0.0;
+    double local_sum_w_ez2 = 0.0;
+    double local_sum_w_abs_ez = 0.0;
 
     const int order    = fes.GetOrder(0);
     const int ir_order = 2 * order;
@@ -155,24 +161,57 @@ double computeFieldSpreadMetric(const Config &cfg,
             grad *= -1.0;
 
             const double e = grad.Norml2();
-            const double w = ip.weight * T->Weight();
+            const double er = grad[0];
+            const double ez = grad[1];
+            double w = ip.weight * T->Weight();
+            if (cfg.solver.axisymmetric)
+            {
+                // The computational mesh is the (r,z) meridional section.
+                // Physical volume is dV = 2*pi*r*dr*dz.
+                w *= 2.0 * M_PI * x[0];
+            }
 
             e_vals.push_back(e);
             w_vals.push_back(w);
 
             local_total_w += w;
             local_sum_w_e += w * e;
+            local_sum_w_e2 += w * e * e;
+            local_sum_w_er2 += w * er * er;
+            local_sum_w_ez += w * ez;
+            local_sum_w_ez2 += w * ez * ez;
+            local_sum_w_abs_ez += w * std::abs(ez);
         }
     }
 
     // Global reductions for mean(|E|)
     double global_total_w = local_total_w;
     double global_sum_w_e = local_sum_w_e;
+    double global_sum_w_e2 = local_sum_w_e2;
+    double global_sum_w_er2 = local_sum_w_er2;
+    double global_sum_w_ez = local_sum_w_ez;
+    double global_sum_w_ez2 = local_sum_w_ez2;
+    double global_sum_w_abs_ez = local_sum_w_abs_ez;
 
     if (size > 1)
     {
-        MPI_Allreduce(&local_total_w, &global_total_w, 1, MPI_DOUBLE, MPI_SUM, comm);
-        MPI_Allreduce(&local_sum_w_e, &global_sum_w_e, 1, MPI_DOUBLE, MPI_SUM, comm);
+        const double local_sums[] = {
+            local_total_w,
+            local_sum_w_e,
+            local_sum_w_e2,
+            local_sum_w_er2,
+            local_sum_w_ez,
+            local_sum_w_ez2,
+            local_sum_w_abs_ez};
+        double global_sums[7]{};
+        MPI_Allreduce(local_sums, global_sums, 7, MPI_DOUBLE, MPI_SUM, comm);
+        global_total_w = global_sums[0];
+        global_sum_w_e = global_sums[1];
+        global_sum_w_e2 = global_sums[2];
+        global_sum_w_er2 = global_sums[3];
+        global_sum_w_ez = global_sums[4];
+        global_sum_w_ez2 = global_sums[5];
+        global_sum_w_abs_ez = global_sums[6];
     }
 
     if (global_total_w == 0.0)
@@ -221,6 +260,36 @@ double computeFieldSpreadMetric(const Config &cfg,
     }
 
     const double spread = (Q95 - Q5) / mean_E;
+
+    const double mean_E2 = global_sum_w_e2 / global_total_w;
+    const double mean_Ez = global_sum_w_ez / global_total_w;
+    const double mean_Ez2 = global_sum_w_ez2 / global_total_w;
+    const double mean_abs_Ez = global_sum_w_abs_ez / global_total_w;
+    const double rms_magnitude = std::sqrt(std::max(
+        0.0, mean_E2 - mean_E * mean_E));
+    const double rms_radial = std::sqrt(std::max(
+        0.0, global_sum_w_er2 / global_total_w));
+    const double rms_axial = std::sqrt(std::max(
+        0.0, mean_Ez2 - mean_Ez * mean_Ez));
+
+    if (homogeneity)
+    {
+        homogeneity->integration_volume = global_total_w;
+        homogeneity->mean_magnitude = mean_E;
+        homogeneity->lower_quantile = Q5;
+        homogeneity->upper_quantile = Q95;
+        homogeneity->relative_rms_magnitude =
+            mean_E > 0.0 ? rms_magnitude / mean_E
+                         : std::numeric_limits<double>::quiet_NaN();
+        homogeneity->relative_rms_radial =
+            mean_abs_Ez > 0.0 ? rms_radial / mean_abs_Ez
+                              : std::numeric_limits<double>::quiet_NaN();
+        homogeneity->relative_rms_axial =
+            mean_abs_Ez > 0.0 ? rms_axial / mean_abs_Ez
+                              : std::numeric_limits<double>::quiet_NaN();
+        homogeneity->mean_axial = mean_Ez;
+        homogeneity->mean_abs_axial = mean_abs_Ez;
+    }
 
     if (!std::isfinite(spread) && rank == 0)
     {

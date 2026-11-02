@@ -23,6 +23,7 @@ struct LayerMetadata {
   std::string baseName;
   std::optional<std::string> material;
   bool perComponentVoltage = false;
+  bool chargedBoundary = false;
 };
 
 struct DxfCodePair {
@@ -129,6 +130,9 @@ static LayerMetadata parseLayerMetadata(const std::string &layerName) {
     } else if(token == "voltage_per_component") {
       key = "voltage";
       value = "per_component";
+    } else if(token == "charged") {
+      key = "charged";
+      value = "true";
     } else {
       throw std::runtime_error("DXF layer '" + layerName +
                                "' has invalid metadata token '" + token + "'.");
@@ -146,6 +150,8 @@ static LayerMetadata parseLayerMetadata(const std::string &layerName) {
                                  "'. Only 'per_component' is supported.");
       }
       out.perComponentVoltage = true;
+    } else if(key == "charged") {
+      out.chargedBoundary = true;
     } else {
       throw std::runtime_error("DXF layer '" + layerName +
                                "' has unsupported metadata key '" + key + "'.");
@@ -156,6 +162,10 @@ static LayerMetadata parseLayerMetadata(const std::string &layerName) {
   if(out.material && out.perComponentVoltage) {
     throw std::runtime_error("DXF layer '" + layerName +
                              "' mixes volumetric material metadata with voltage splitting.");
+  }
+  if(out.perComponentVoltage && out.chargedBoundary) {
+    throw std::runtime_error("DXF layer '" + layerName +
+                             "' cannot combine voltage splitting with a charged boundary.");
   }
 
   return out;
@@ -442,6 +452,56 @@ static EndpointKey quantizePoint(const Vec2 &p, const double tol) {
   };
 }
 
+static bool coincidentSegment(const CurveSegment &a,
+                              const CurveSegment &b,
+                              const double tol) {
+  if(a.kind != b.kind) return false;
+  const bool sameDirection =
+    samePoint(a.start, b.start, tol) && samePoint(a.end, b.end, tol);
+  const bool oppositeDirection =
+    samePoint(a.start, b.end, tol) && samePoint(a.end, b.start, tol);
+  if(!sameDirection && !oppositeDirection) return false;
+
+  if(a.kind == CurveSegment::Kind::Line) return true;
+  if(a.kind == CurveSegment::Kind::Arc) {
+    if(!a.center || !b.center || !samePoint(*a.center, *b.center, tol)) return false;
+    return sameDirection ? (a.orientation == b.orientation)
+                         : (a.orientation != b.orientation);
+  }
+  return false;
+}
+
+static std::vector<CurveSegment>
+cancelPairedCoincidentSegments(const std::vector<CurveSegment> &segments) {
+  if(segments.size() < 2) return segments;
+  const double tol = estimateTolerance(segments);
+  std::vector<bool> consumed(segments.size(), false);
+  std::vector<CurveSegment> out;
+  out.reserve(segments.size());
+  std::size_t cancelled = 0;
+
+  for(std::size_t i = 0; i < segments.size(); ++i) {
+    if(consumed[i]) continue;
+    std::vector<std::size_t> group{i};
+    consumed[i] = true;
+    for(std::size_t j = i + 1; j < segments.size(); ++j) {
+      if(consumed[j]) continue;
+      if(coincidentSegment(segments[i], segments[j], tol)) {
+        consumed[j] = true;
+        group.push_back(j);
+      }
+    }
+
+    // Same-material faces commonly export their shared edge twice. Those
+    // paired copies are internal to the material union and must cancel. Keep
+    // one copy only when the multiplicity is odd.
+    cancelled += group.size() - (group.size() % 2);
+    if(group.size() % 2 == 1) out.push_back(segments[group.front()]);
+  }
+
+  return out;
+}
+
 static std::vector<std::vector<CurveSegment>>
 splitIntoClosedLoops(const std::vector<CurveSegment> &segments,
                      const std::string &label) {
@@ -685,7 +745,11 @@ static std::vector<Component> loadComponentsFromDxf(const std::filesystem::path 
   roots.reserve(byLayer.size());
   for(auto &[layerName, segments] : byLayer) {
     LayerMetadata meta = parseLayerMetadata(layerName);
-    const std::vector<std::vector<CurveSegment>> loops = splitIntoClosedLoops(segments, layerName);
+    if(meta.material) {
+      segments = cancelPairedCoincidentSegments(segments);
+    }
+    const std::vector<std::vector<CurveSegment>> loops =
+      splitIntoClosedLoops(segments, layerName);
     const std::vector<LoopRecord> classified = classifyLoops(loops);
     std::vector<Component> children = buildTopLevelComponents(classified);
     if(children.empty()) {
@@ -698,6 +762,13 @@ static std::vector<Component> loadComponentsFromDxf(const std::filesystem::path 
     root.children = std::move(children);
     if(meta.material) {
       root.material = *meta.material;
+      if(meta.chargedBoundary) {
+        // The geometry builder normalizes this to BC_WallCharge and narrows
+        // the marked component to its innermost vertical boundary.
+        root.boundaryName = "WallCharge";
+        root.markBoundary = true;
+        root.groupBoundary = true;
+      }
     } else {
       root.material = "ELECTRODE";
       root.boundaryName = meta.baseName;
